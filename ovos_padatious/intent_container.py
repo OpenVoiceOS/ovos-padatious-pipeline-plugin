@@ -15,7 +15,7 @@ import inspect
 import json
 import os
 
-import padaos
+from ovos_padatious import padaos
 import sys
 from functools import wraps
 from subprocess import call, check_output
