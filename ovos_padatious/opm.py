@@ -198,7 +198,7 @@ class PadatiousPipeline(PipelinePlugin):
 
         if not samples and isfile(file_name):
             with open(file_name) as f:
-                samples = [l.strip() for l in f.readlines()]
+                samples = [line.strip() for line in f.readlines()]
 
         register_func(name, samples)
 
