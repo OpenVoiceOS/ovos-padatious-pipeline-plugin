@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from padatious.intent import Intent
-from padatious.match_data import MatchData
-from padatious.training_manager import TrainingManager
-from padatious.util import tokenize
+from ovos_padatious.intent import Intent
+from ovos_padatious.match_data import MatchData
+from ovos_padatious.training_manager import TrainingManager
+from ovos_padatious.util import tokenize
 
 
 class IntentManager(TrainingManager):

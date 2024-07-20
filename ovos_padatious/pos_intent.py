@@ -14,8 +14,8 @@
 
 import math
 
-from padatious.entity_edge import EntityEdge
-from padatious.match_data import MatchData
+from ovos_padatious.entity_edge import EntityEdge
+from ovos_padatious.match_data import MatchData
 
 
 class PosIntent(object):

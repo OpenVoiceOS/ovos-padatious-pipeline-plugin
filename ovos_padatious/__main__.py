@@ -4,7 +4,7 @@ from os.path import basename, splitext
 
 from argparse import ArgumentParser
 
-from padatious import IntentContainer
+from ovos_padatious import IntentContainer
 
 
 def train_setup(parser):
@@ -44,7 +44,7 @@ def train(parser, args):
 
 
 def main():
-    parser = ArgumentParser(description='Tool to interact with padatious via command line')
+    parser = ArgumentParser(description='Tool to interact with ovos_padatious via command line')
     p = parser.add_subparsers(dest='action')
     p.required = True
     train_setup(p.add_parser('train'))

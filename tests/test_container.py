@@ -20,7 +20,7 @@ from os import mkdir
 from os.path import isdir, join
 from shutil import rmtree
 
-from padatious.intent_container import IntentContainer
+from ovos_padatious.intent_container import IntentContainer
 
 
 class TestIntentContainer:

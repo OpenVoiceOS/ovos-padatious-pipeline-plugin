@@ -16,8 +16,8 @@ from os import mkdir
 from os.path import isdir
 from shutil import rmtree
 
-from padatious.intent import Intent
-from padatious.train_data import TrainData
+from ovos_padatious.intent import Intent
+from ovos_padatious.train_data import TrainData
 
 
 class TestIntent:

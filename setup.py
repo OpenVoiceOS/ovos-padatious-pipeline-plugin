@@ -9,17 +9,16 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(
-    name='padatious',
-    version='0.4.8',  # Also change in padatious/__init__.py
+    name='ovos-padatious',
+    version='0.4.8',  # Also change in ovos_padatious/__init__.py
     description='A neural network intent parser',
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url='http://github.com/MycroftAI/padatious',
+    url='https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin',
     author='Matthew Scholefield',
-    author_email='matthew331199@gmail.com',
     license='Apache-2.0',
     packages=[
-        'padatious'
+        'ovos_padatious'
     ],
     install_requires=requirements,
     zip_safe=True,
@@ -42,10 +41,5 @@ setup(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
     ],
-    entry_points={
-        'console_scripts': [
-            'padatious=padatious.__main__:main'
-        ]
-    },
     keywords='intent-parser parser text text-processing',
 )

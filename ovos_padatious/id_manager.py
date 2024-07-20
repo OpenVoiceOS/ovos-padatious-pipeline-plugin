@@ -14,7 +14,7 @@
 
 import json
 
-from padatious.util import StrEnum
+from ovos_padatious.util import StrEnum
 
 
 class IdManager(object):

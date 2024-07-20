@@ -21,11 +21,11 @@ from functools import wraps
 from subprocess import call, check_output
 from threading import Thread
 
-from padatious.match_data import MatchData
-from padatious.entity import Entity
-from padatious.entity_manager import EntityManager
-from padatious.intent_manager import IntentManager
-from padatious.util import tokenize
+from ovos_padatious.match_data import MatchData
+from ovos_padatious.entity import Entity
+from ovos_padatious.entity_manager import EntityManager
+from ovos_padatious.intent_manager import IntentManager
+from ovos_padatious.util import tokenize
 
 
 def _save_args(func):
@@ -262,7 +262,7 @@ class IntentContainer(object):
             bool: True for success, False if timed out
         """
         ret = call([
-            sys.executable, '-m', 'padatious', 'train', self.cache_dir,
+            sys.executable, '-m', 'ovos_padatious', 'train', self.cache_dir,
             '-d', json.dumps(self.serialized_args),
             '-a', json.dumps(args),
             '-k', json.dumps(kwargs),

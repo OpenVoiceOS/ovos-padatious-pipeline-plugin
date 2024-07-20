@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from padatious.entity import Entity
-from padatious.training_manager import TrainingManager
+from ovos_padatious.entity import Entity
+from ovos_padatious.training_manager import TrainingManager
 
 
 class EntityManager(TrainingManager):

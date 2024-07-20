@@ -16,9 +16,9 @@ from functools import partial
 from multiprocessing.context import TimeoutError
 from os.path import join, isfile, isdir, splitext
 
-import padatious
-from padatious.train_data import TrainData
-from padatious.util import lines_hash
+import ovos_padatious
+from ovos_padatious.train_data import TrainData
+from ovos_padatious.util import lines_hash
 
 
 def _train_and_save(obj, cache, data, print_updates):
@@ -63,7 +63,7 @@ class TrainingManager(object):
             if isfile(hash_fn):
                 with open(hash_fn, 'rb') as g:
                     old_hsh = g.read()
-            min_ver = splitext(padatious.__version__)[0]
+            min_ver = splitext(ovos_padatious.__version__)[0]
             new_hsh = lines_hash([min_ver] + lines)
             if reload_cache or old_hsh != new_hsh:
                 self.objects_to_train.append(self.cls(name=name, hsh=new_hsh))

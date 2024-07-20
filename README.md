@@ -47,8 +47,9 @@ Padatious also works in Python 2 if you are unable to upgrade.
 Here's a simple example of how to use Padatious:
 
 #### program.py
+
 ```Python
-from padatious import IntentContainer
+from ovos_padatious import IntentContainer
 
 container = IntentContainer('intent_cache')
 container.add_intent('hello', ['Hi there!', 'Hello.'])

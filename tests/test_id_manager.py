@@ -16,7 +16,7 @@ import os
 from os.path import isdir
 from shutil import rmtree
 
-from padatious.id_manager import IdManager
+from ovos_padatious.id_manager import IdManager
 
 
 class TestIdManager:

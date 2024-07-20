@@ -6,7 +6,7 @@ from builtins import input
 from glob import glob
 from os.path import basename
 
-from padatious import IntentContainer
+from ovos_padatious import IntentContainer
 
 reload_cache = len(sys.argv) > 1 and sys.argv[1] == '-r'
 container = IntentContainer('intent_cache')

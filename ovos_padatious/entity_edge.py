@@ -14,8 +14,8 @@
 
 from fann2 import libfann as fann
 
-from padatious.id_manager import IdManager
-from padatious.util import StrEnum, resolve_conflicts
+from ovos_padatious.id_manager import IdManager
+from ovos_padatious.util import StrEnum, resolve_conflicts
 
 
 class Ids(StrEnum):

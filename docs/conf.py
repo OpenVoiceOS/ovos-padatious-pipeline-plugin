@@ -61,7 +61,7 @@ latex_documents = [
 # Options for manual page output
 
 man_pages = [
-    (master_doc, 'padatious', 'Padatious Documentation',
+    (master_doc, 'ovos_padatious', 'Padatious Documentation',
      [author], 1)
 ]
 

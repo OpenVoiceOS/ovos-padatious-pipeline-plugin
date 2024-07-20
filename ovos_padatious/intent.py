@@ -16,10 +16,10 @@ import json
 import math
 from os.path import join
 
-from padatious.match_data import MatchData
-from padatious.pos_intent import PosIntent
-from padatious.simple_intent import SimpleIntent
-from padatious.trainable import Trainable
+from ovos_padatious.match_data import MatchData
+from ovos_padatious.pos_intent import PosIntent
+from ovos_padatious.simple_intent import SimpleIntent
+from ovos_padatious.trainable import Trainable
 
 
 class Intent(Trainable):

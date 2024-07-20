@@ -14,8 +14,8 @@
 
 from os.path import join
 
-from padatious.simple_intent import SimpleIntent
-from padatious.trainable import Trainable
+from ovos_padatious.simple_intent import SimpleIntent
+from ovos_padatious.trainable import Trainable
 
 
 class Entity(SimpleIntent, Trainable):

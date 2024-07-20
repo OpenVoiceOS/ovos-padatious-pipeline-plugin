@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from padatious.util import lines_hash, tokenize, resolve_conflicts, StrEnum, expand_parentheses
+from ovos_padatious.util import lines_hash, tokenize, resolve_conflicts, StrEnum, expand_parentheses
 
 
 def test_lines_hash():

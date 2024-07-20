@@ -14,7 +14,7 @@
 import os
 from os.path import isfile
 
-from padatious.train_data import TrainData
+from ovos_padatious.train_data import TrainData
 
 
 class TestTrainData:

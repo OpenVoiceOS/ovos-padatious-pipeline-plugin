@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from padatious.entity_edge import EntityEdge
-from padatious.train_data import TrainData
+from ovos_padatious.entity_edge import EntityEdge
+from ovos_padatious.train_data import TrainData
 
 
 class TestEntityEdge:
