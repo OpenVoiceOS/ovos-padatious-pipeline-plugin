@@ -8,6 +8,9 @@ with open(join(dirname(abspath(__file__)), 'requirements.txt')) as f:
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
+PLUGIN_ENTRY_POINT = 'ovos-padatious-pipeline-plugin=ovos_padatious.opm:PadatiousPipeline'
+
+
 setup(
     name='ovos-padatious',
     version='0.4.8',  # Also change in ovos_padatious/__init__.py
@@ -42,4 +45,5 @@ setup(
         'Programming Language :: Python :: 3.8',
     ],
     keywords='intent-parser parser text text-processing',
+    entry_points={'opm.pipeline': PLUGIN_ENTRY_POINT}
 )
