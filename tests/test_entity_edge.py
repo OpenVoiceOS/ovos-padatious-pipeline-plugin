@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import unittest
 from ovos_padatious.entity_edge import EntityEdge
 from ovos_padatious.train_data import TrainData
 
 
-class TestEntityEdge:
-    def setup(self):
+class TestEntityEdge(unittest.TestCase):
+    def setUp(self):
         self.data = TrainData()
         self.data.add_lines('', ['a {word} here', 'the {word} here'])
         self.le = EntityEdge(-1, '{word}', '')

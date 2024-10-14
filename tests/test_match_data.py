@@ -11,12 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import unittest
 from ovos_padatious.match_data import MatchData
 
 
-class TestMatchData:
-    def setup(self):
+class TestMatchData(unittest.TestCase):
+    def setUp(self):
         self.match = MatchData('name', ['one', 'two'], {'{word}': ['value', 'tokens']}, 0.5)
         self.sentence = ["it", "'", "s", "a", "new", "sentence"]
         self.sentence2 = ["the", "parents", "'", "house"]

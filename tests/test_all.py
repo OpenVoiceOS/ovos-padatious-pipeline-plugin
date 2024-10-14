@@ -11,15 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import unittest
 from os.path import isdir
 from shutil import rmtree
 
 from ovos_padatious.intent_container import IntentContainer
 
 
-class TestAll:
-    def setup(self):
+class TestAll(unittest.TestCase):
+    def setUp(self):
         self.cont = IntentContainer('temp')
 
     def test_simple(self):
