@@ -4,7 +4,7 @@ on:
     branches:
       - dev
     paths-ignore:
-      - 'ovos_bus_client/version.py'
+      - 'ovos_padatious/version.py'
       - 'examples/**'
       - '.github/**'
       - '.gitignore'
@@ -17,7 +17,7 @@ on:
     branches:
       - master
     paths-ignore:
-      - 'ovos_bus_client/version.py'
+      - 'ovos_padatious/version.py'
       - 'requirements/**'
       - 'examples/**'
       - '.github/**'
@@ -33,7 +33,7 @@ jobs:
   unit_tests:
     strategy:
       matrix:
-        python-version: [ 3.7, 3.8, 3.9, '3.10']
+        python-version: [3.9, '3.10']
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
