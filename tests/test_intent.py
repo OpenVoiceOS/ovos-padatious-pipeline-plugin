@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import unittest
 from os import mkdir
 from os.path import isdir
 from shutil import rmtree
@@ -20,8 +20,8 @@ from ovos_padatious.intent import Intent
 from ovos_padatious.train_data import TrainData
 
 
-class TestIntent:
-    def setup(self):
+class TestIntent(unittest.TestCase):
+    def setUp(self):
         self.data = TrainData()
         self.data.add_lines('hi', ['hello', 'hi', 'hi there'])
         self.data.add_lines('bye', ['goodbye', 'bye', 'bye {person}', 'see you later'])
