@@ -25,7 +25,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt install python3-dev swig libssl-dev
+          sudo apt install python3-dev swig libfann-dev
       - name: Build Distribution Packages
         run: |
           python setup.py bdist_wheel

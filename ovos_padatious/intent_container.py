@@ -98,18 +98,20 @@ class IntentContainer(object):
 
             if f.startswith('{') and f.endswith('}.hash'):
                 entity_name = f[1:f.find('}.hash')]
-                self.add_entity(
-                    name=entity_name,
-                    lines=entity_traindata[entity_name],
-                    reload_cache=False,
-                    must_train=False)
+                if entity_name in entity_traindata:
+                    self.add_entity(
+                        name=entity_name,
+                        lines=entity_traindata[entity_name],
+                        reload_cache=False,
+                        must_train=False)
             elif not f.startswith('{') and f.endswith('.hash'):
                 intent_name = f[0:f.find('.hash')]
-                self.add_intent(
-                    name=intent_name,
-                    lines=intent_traindata[intent_name],
-                    reload_cache=False,
-                    must_train=False)
+                if intent_name in intent_traindata:
+                    self.add_intent(
+                        name=intent_name,
+                        lines=intent_traindata[intent_name],
+                        reload_cache=False,
+                        must_train=False)
 
     @_save_args
     def add_intent(self, name, lines, reload_cache=False, must_train=True):

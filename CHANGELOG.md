@@ -1,17 +1,28 @@
 # Changelog
 
-## [0.1.0a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/0.1.0a2) (2024-10-14)
+## [0.1.2a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/0.1.2a2) (2024-10-15)
 
-[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/9927485b5fdc8f1fa5b34a01c9011189579f3c9b...0.1.0a2)
-
-**Closed issues:**
-
-- automations missing [\#1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/issues/1)
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/0.1.2a1...0.1.2a2)
 
 **Merged pull requests:**
 
-- feat:semver [\#3](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/3) ([JarbasAl](https://github.com/JarbasAl))
-- feat/opm\_pipeline [\#2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/2) ([JarbasAl](https://github.com/JarbasAl))
+- allow workshop 1.0.0 [\#10](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/10) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.1.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/0.1.2a1) (2024-10-15)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/0.1.1a1...0.1.2a1)
+
+**Merged pull requests:**
+
+- fix:license tests [\#6](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/6) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.1.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/0.1.1a1) (2024-10-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/0.1.0...0.1.1a1)
+
+**Merged pull requests:**
+
+- tests [\#4](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/4) ([JarbasAl](https://github.com/JarbasAl))
 
 
 

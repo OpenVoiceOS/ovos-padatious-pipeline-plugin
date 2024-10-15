@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from time import monotonic
-
+import unittest
 import os
 import pytest
 import random
@@ -23,7 +23,7 @@ from shutil import rmtree
 from ovos_padatious.intent_container import IntentContainer
 
 
-class TestIntentContainer:
+class TestFromDisk(unittest.TestCase):
     test_lines = ['this is a test\n', 'another test\n']
     other_lines = ['something else\n', 'this is a different thing\n']
     test_lines_with_entities = ['this is a {test}\n', 'another {test}\n']
@@ -33,37 +33,16 @@ class TestIntentContainer:
     test_entities = ['test\n', 'assessment\n']
     other_entities = ['else\n', 'different\n']
 
-    def setup(self):
+    def setUp(self):
         self.cont = IntentContainer('temp')
 
-    def test_add_intent(self):
+    def _add_intent(self):
         self.cont.add_intent('test', self.test_lines)
         self.cont.add_intent('other', self.other_lines)
-
-    def test_load_intent(self):
-        if not isdir('temp'):
-            mkdir('temp')
-
-        fn1 = join('temp', 'test.txt')
-        with open(fn1, 'w') as f:
-            f.writelines(self.test_lines)
-
-        fn2 = join('temp', 'other.txt')
-        with open(fn2, 'w') as f:
-            f.writelines(self.other_lines)
-
-        self.cont.load_intent('test', fn1)
-        self.cont.load_intent('other', fn1)
-        assert len(self.cont.intents.train_data.sent_lists) == 2
-
-    def test_train(self):
-        def test(a, b):
-            self.setup()
-            self.test_add_intent()
-            self.cont.train(a, b)
-
-        test(False, False)
-        test(True, True)
+        self.cont.add_entity('test', self.test_entities)
+        self.cont.add_entity('other', self.other_entities)
+        self.cont.train()
+        self._write_train_data()
 
     def _write_train_data(self):
 
@@ -88,23 +67,61 @@ class TestIntentContainer:
 
     def test_instantiate_from_disk(self):
         # train and cache (i.e. persist)
-        self.setup()
-        self.test_add_intent()
-        self.cont.add_entity('test', self.test_entities)
-        self.cont.add_entity('other', self.other_entities)
-        self.cont.train()
-        self._write_train_data()
+        self._add_intent()
 
         # instantiate from disk (load cached files)
-        self.setup()
-        self.cont.instantiate_from_disk()
+        cont = IntentContainer('temp')
+        cont.instantiate_from_disk()
 
-        assert len(self.cont.intents.train_data.sent_lists) == 0
-        assert len(self.cont.intents.objects_to_train) == 0
-        assert len(self.cont.intents.objects) == 2
+        assert len(cont.intents.train_data.sent_lists) == 0
+        assert len(cont.intents.objects_to_train) == 0
+        assert len(cont.intents.objects) == 2
 
-        result = self.cont.calc_intent('something different')
+        result = cont.calc_intent('something different')
         assert result.matches['other'] == 'different'
+
+
+class TestIntentContainer(unittest.TestCase):
+    test_lines = ['this is a test\n', 'another test\n']
+    other_lines = ['something else\n', 'this is a different thing\n']
+    test_lines_with_entities = ['this is a {test}\n', 'another {test}\n']
+    other_lines_with_entities = [
+        'something {other}\n',
+        'this is a {other} thing\n']
+    test_entities = ['test\n', 'assessment\n']
+    other_entities = ['else\n', 'different\n']
+
+    def setUp(self):
+        self.cont = IntentContainer('temp')
+
+    def _add_intent(self):
+        self.cont.add_intent('test', self.test_lines)
+        self.cont.add_intent('other', self.other_lines)
+
+    def test_load_intent(self):
+        if not isdir('temp'):
+            mkdir('temp')
+
+        fn1 = join('temp', 'test.txt')
+        with open(fn1, 'w') as f:
+            f.writelines(self.test_lines)
+
+        fn2 = join('temp', 'other.txt')
+        with open(fn2, 'w') as f:
+            f.writelines(self.other_lines)
+
+        self.cont.load_intent('test', fn1)
+        self.cont.load_intent('other', fn1)
+        assert len(self.cont.intents.train_data.sent_lists) == 2
+
+    def test_train(self):
+        def test(a, b):
+            self._add_intent()
+            self.cont.train(a, b)
+
+        test(False, False)
+        test(True, True)
+
 
     def _create_large_intent(self, depth):
         if depth == 0:
@@ -161,7 +178,7 @@ class TestIntentContainer:
         assert intent.matches == {'time': '3'}
 
     def test_calc_intents(self):
-        self.test_add_intent()
+        self._add_intent()
         self.cont.train(False)
 
         intents = self.cont.calc_intents('this is another test')
@@ -198,7 +215,7 @@ class TestIntentContainer:
         self._test_entities('SkillName:')
 
     def test_remove(self):
-        self.test_add_intent()
+        self._add_intent()
         self.cont.train(False)
         assert self.cont.calc_intent('This is a test').conf == 1.0
         self.cont.remove_intent('test')
