@@ -1,10 +1,9 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md) 
 # Padatious
 
-An efficient and agile neural network intent parser.
+An efficient and agile neural network intent parser powered by [fann](https://github.com/libfann/fann).
 
 This repository contains a OVOS pipeline plugin and bundles a fork of the original [padatious](https://github.com/MycroftAI/padatious) from the defunct MycroftAI
-
 
 ## Features
 
@@ -14,7 +13,6 @@ This repository contains a OVOS pipeline plugin and bundles a fork of the origin
  - Easily extract entities (ie. Find the nearest *gas station* -> `place: gas station`)
  - Fast training with a modular approach to neural networks
 
-## Getting Started
 
 ### Installing
 
@@ -38,14 +36,9 @@ pip3 install padatious
 ```
 Padatious also works in Python 2 if you are unable to upgrade.
 
-
-[fann]:https://github.com/libfann/fann
-
-### Example
+### Direct Usage
 
 Here's a simple example of how to use Padatious:
-
-#### program.py
 
 ```Python
 from ovos_padatious import IntentContainer
@@ -62,3 +55,8 @@ print(container.calc_intent('Search for cats on CatTube.'))
 container.remove_intent('goodbye')
 ```
 
+### License
+
+> **NOTE**: This plugin is an exception to [OVOS universal donor policy](https://openvoiceos.github.io/ovos-technical-manual/license/)
+
+It is licensed under the Apache 2 license, however it depends on fann2 which is licensed under the LGPL. [Why is this an issue?](https://softwareengineering.stackexchange.com/questions/119436/what-does-gpl-with-classpath-exception-mean-in-practice/326325#326325)
