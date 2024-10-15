@@ -25,6 +25,7 @@ from ovos_config.meta import get_xdg_base
 from ovos_padatious import IntentContainer as PadatiousIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_utils import flatten_list
+from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.log import LOG
 from ovos_utils.xdg_utils import xdg_data_home
 from ovos_plugin_manager.templates.pipeline import PipelinePlugin, IntentMatch
@@ -47,7 +48,7 @@ class PadatiousMatcher:
         LOG.debug(f'Padatious Matching confidence > {limit}')
         # call flatten in case someone is sending the old style list of tuples
         utterances = flatten_list(utterances)
-        lang = lang or self.service.lang
+        lang = standardize_lang_tag(lang or self.service.lang)
         padatious_intent = self.service.calc_intent(utterances, lang, message)
         if padatious_intent is not None and padatious_intent.conf > limit:
             skill_id = padatious_intent.name.split(':')[0]
@@ -92,8 +93,9 @@ class PadatiousPipeline(PipelinePlugin):
         self.bus = bus
 
         core_config = Configuration()
-        self.lang = core_config.get("lang", "en-us")
+        self.lang = standardize_lang_tag(core_config.get("lang", "en-US"))
         langs = core_config.get('secondary_langs') or []
+        langs = [standardize_lang_tag(l) for l in langs]
         if self.lang not in langs:
             langs.append(self.lang)
 
@@ -211,7 +213,7 @@ class PadatiousPipeline(PipelinePlugin):
             message (Message): message triggering action
         """
         lang = message.data.get('lang', self.lang)
-        lang = lang.lower()
+        lang = standardize_lang_tag(lang)
         if lang in self.containers:
             self.registered_intents.append(message.data['name'])
             self._register_object(message, 'intent', self.containers[lang].add_intent)
@@ -223,7 +225,7 @@ class PadatiousPipeline(PipelinePlugin):
             message (Message): message triggering action
         """
         lang = message.data.get('lang', self.lang)
-        lang = lang.lower()
+        lang = standardize_lang_tag(lang)
         if lang in self.containers:
             self.registered_entities.append(message.data)
             self._register_object(message, 'entity',
@@ -247,8 +249,9 @@ class PadatiousPipeline(PipelinePlugin):
             return None
 
         lang = lang or self.lang
-        lang = lang.lower()
+        lang = standardize_lang_tag(lang)
         sess = SessionManager.get(message)
+        # TODO - allow close langs, match dialects
         if lang in self.containers:
             intent_container = self.containers.get(lang)
             intents = [_calc_padatious_intent(utt, intent_container, sess)
