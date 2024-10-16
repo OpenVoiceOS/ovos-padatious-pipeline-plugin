@@ -1,6 +1,6 @@
 import re
 from threading import Lock
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Iterator
 from ovos_utils.log import LOG
 
 
@@ -207,8 +207,6 @@ class IntentContainer:
         }
         self.must_compile = False
 
-from typing import Dict, List, Optional, Union, Iterator
-
     def _calc_entities(self, query: str, regexes: List[re.Pattern]) -> Iterator[Dict[str, str]]:
         """
         Calculates entities from a given query using the provided regex patterns.
@@ -227,8 +225,6 @@ from typing import Dict, List, Optional, Union, Iterator
                     k.rsplit('__', 1)[0].replace('__colon__', ':'): v.strip()
                     for k, v in match.groupdict().items() if v
                 }
-
-from typing import Dict, List, Optional, Union, Iterator
 
     def calc_intents(self, query: str) -> Iterator[Dict[str, Union[str, Dict[str, str]]]]:
         """
