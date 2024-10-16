@@ -105,7 +105,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.containers = {lang: PadatiousIntentContainer(f"{intent_cache}/{lang}")
                            for lang in langs}
 
-        self.finished_training_event = Event()
+        self.finished_training_event = Event()  # DEPRECATED
         self.finished_initial_train = False
 
         self.registered_intents = []
@@ -116,12 +116,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on('padatious:register_entity', self.register_entity)
         self.bus.on('detach_intent', self.handle_detach_intent)
         self.bus.on('detach_skill', self.handle_detach_skill)
-        self.bus.on('mycroft.skills.initialized', self.train)
         self.bus.on('intent.service.padatious.get', self.handle_get_padatious)
         self.bus.on('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
         self.bus.on('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
 
-        LOG.debug('Loaded Padatious intent parser.')
+        LOG.debug('Loaded Padatious intent pipeline')
 
     @property
     def padatious_config(self) -> Dict:
@@ -188,26 +187,25 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             message (Message): optional triggering message
         """
-        self.finished_training_event.clear()
-        padatious_single_thread = self.config.get('single_thread', False)
-        if message is None:
-            single_thread = padatious_single_thread
-        else:
-            single_thread = message.data.get('single_thread',
-                                             padatious_single_thread)
-        for lang in self.containers:
-            self.containers[lang].train(single_thread=single_thread)
+        name = message.data["name"] if message else ""
+        if not any(engine.must_train
+                   for engine in self.containers.values()):
+            LOG.debug(f"Nothing new to train for '{name}'")
+            return
 
-        LOG.debug('Training complete.')
-        self.finished_training_event.set()
+        for lang in self.containers:
+            if self.containers[lang].must_train:
+                LOG.debug(f"Training '{name}' for lang '{lang}'")
+                self.containers[lang].train()
+
+        LOG.debug(f"Training complete for '{name}'!")
         if not self.finished_initial_train:
             self.bus.emit(Message('mycroft.skills.trained'))
             self.finished_initial_train = True
 
+    @deprecated("'wait_and_train' has been deprecated, use 'train' directly", "2.0.0")
     def wait_and_train(self):
         """Wait for minimum time between training and start training."""
-        if not self.finished_initial_train:
-            return
         self.train()
 
     def __detach_intent(self, intent_name):
@@ -264,7 +262,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
         register_func(name, samples)
 
-        self.wait_and_train()
+        self.train(message)
 
     def register_intent(self, message):
         """Messagebus handler for registering intents.
@@ -344,7 +342,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.remove('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
         self.bus.remove('detach_intent', self.handle_detach_intent)
         self.bus.remove('detach_skill', self.handle_detach_skill)
-        self.bus.remove('mycroft.skills.initialized', self.train)
 
     def handle_get_padatious(self, message):
         """messagebus handler for perfoming padatious parsing.
