@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import List, Optional, Any
+
 from ovos_padatious.intent import Intent
 from ovos_padatious.match_data import MatchData
 from ovos_padatious.training_manager import TrainingManager
@@ -19,14 +21,32 @@ from ovos_padatious.util import tokenize
 
 
 class IntentManager(TrainingManager):
-    def __init__(self, cache):
-        super(IntentManager, self).__init__(Intent, cache)
+    def __init__(self, cache: Optional[dict] = None):
+        """
+        Initializes the IntentManager with an optional cache.
 
-    def calc_intents(self, query, entity_manager):
+        Args:
+            cache (Optional[dict]): A cache to store previously computed intents.
+        """
+        super().__init__(Intent, cache)
+
+    def calc_intents(self, query: str, entity_manager: Any) -> List[MatchData]:
+        """
+        Calculates the matching intents for a given query.
+
+        Args:
+            query (str): The input query string to match against intents.
+            entity_manager (Any): The entity manager to assist in resolving entities.
+
+        Returns:
+            List[MatchData]: A list of MatchData objects representing matched intents.
+        """
         sent = tokenize(query)
-        matches = []
-        for i in self.objects:
-            match = i.match(sent, entity_manager)
-            match.detokenize()
+        matches: List[MatchData] = []
+
+        for intent in self.objects:
+            match = intent.match(sent, entity_manager)
+            match.detokenize()  # Detokenize to convert back to natural language
             matches.append(match)
+
         return matches

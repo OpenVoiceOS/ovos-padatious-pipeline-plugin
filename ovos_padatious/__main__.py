@@ -1,8 +1,7 @@
 import inspect
 import json
-from os.path import basename, splitext
-
 from argparse import ArgumentParser
+from os.path import basename, splitext
 
 from ovos_padatious import IntentContainer
 
