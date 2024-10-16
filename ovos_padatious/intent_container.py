@@ -18,6 +18,7 @@ from functools import wraps
 from typing import List, Dict, Any, Optional
 
 from ovos_utils.log import LOG
+
 from ovos_padatious import padaos
 from ovos_padatious.entity import Entity
 from ovos_padatious.entity_manager import EntityManager
@@ -33,6 +34,7 @@ def _save_args(func):
     Args:
         func (function): The function to be decorated.
     """
+
     @wraps(func)
     def wrapper(*args, **kwargs) -> None:
         func(*args, **kwargs)

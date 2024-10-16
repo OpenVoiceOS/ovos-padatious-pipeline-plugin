@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import List, Tuple, Dict, Optional, Any
+from typing import List, Optional, Any
 
 from ovos_padatious.entity_edge import EntityEdge
 from ovos_padatious.match_data import MatchData

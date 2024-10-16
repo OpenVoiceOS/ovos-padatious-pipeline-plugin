@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from typing import List, Optional
+
 from fann2 import libfann as fann
 
 from ovos_padatious.id_manager import IdManager
@@ -107,6 +108,7 @@ class SimpleIntent:
 
         def weight(sent: List[str]) -> None:
             """Calculates and adds weights for the words in a sentence."""
+
             def calc_weight(w: str) -> float:
                 return pow(len(w), 3.0)
 

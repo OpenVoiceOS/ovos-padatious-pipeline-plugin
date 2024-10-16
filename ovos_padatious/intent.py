@@ -15,7 +15,7 @@
 import json
 import math
 from os.path import join
-from typing import List, Optional, Union
+from typing import List, Optional
 
 from ovos_padatious.match_data import MatchData
 from ovos_padatious.pos_intent import PosIntent

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import json
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List
 
 from ovos_padatious.util import StrEnum
 

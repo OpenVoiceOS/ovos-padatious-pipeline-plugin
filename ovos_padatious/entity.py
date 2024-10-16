@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from os.path import join
-from typing import Any, Dict, Type
+from typing import Any, Type
 
 from ovos_padatious.simple_intent import SimpleIntent
 from ovos_padatious.trainable import Trainable

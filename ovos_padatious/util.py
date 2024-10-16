@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from xxhash import xxh32
+from typing import List, Tuple, Dict, Any
+
 # keep import for backwards compat
 from ovos_utils.bracket_expansion import SentenceTreeParser, expand_parentheses
-from typing import List, Tuple, Dict, Any
 
 
 def lines_hash(lines: List[str]) -> bytes:
@@ -86,7 +87,8 @@ def remove_comments(lines: List[str]) -> List[str]:
     return [line for line in lines if not line.startswith('//')]
 
 
-def resolve_conflicts(inputs: List[List[float]], outputs: List[List[float]]) -> Tuple[List[List[float]], List[List[float]]]:
+def resolve_conflicts(inputs: List[List[float]], outputs: List[List[float]]) -> Tuple[
+    List[List[float]], List[List[float]]]:
     """
     Resolves conflicts in the input/output pairs by removing duplicates
     and combining output vectors for duplicate inputs.

@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import List, Optional, Any
+
 from ovos_padatious.intent import Intent
 from ovos_padatious.match_data import MatchData
 from ovos_padatious.training_manager import TrainingManager
 from ovos_padatious.util import tokenize
-from typing import List, Optional, Any
 
 
 class IntentManager(TrainingManager):
