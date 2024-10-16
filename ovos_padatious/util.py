@@ -13,7 +13,8 @@
 # limitations under the License.
 
 from xxhash import xxh32
-from ovos_utils.bracket_expansion import SentenceTreeParser
+# keep import for backwards compat
+from ovos_utils.bracket_expansion import SentenceTreeParser, expand_parentheses
 from typing import List, Tuple, Dict, Any
 
 
@@ -70,30 +71,6 @@ def tokenize(sentence: str) -> List[str]:
         update(char, i)
     update(' ', len(sentence))  # finalize last token
     return tokens
-
-
-def expand_parentheses(sent: List[str]) -> List[List[str]]:
-    """
-    Expands sentences with parentheses into all possible alternatives.
-
-    For example:
-        'Will it (rain|pour) (today|tomorrow|)?'
-
-    Produces:
-        'Will it rain today?'
-        'Will it rain tomorrow?'
-        'Will it rain?'
-        'Will it pour today?'
-        'Will it pour tomorrow?'
-        'Will it pour?'
-
-    Args:
-        sent (List[str]): List of tokens containing parentheses for expansion.
-
-    Returns:
-        List[List[str]]: List of all possible expanded sentences as token lists.
-    """
-    return SentenceTreeParser(sent).expand_parentheses()
 
 
 def remove_comments(lines: List[str]) -> List[str]:

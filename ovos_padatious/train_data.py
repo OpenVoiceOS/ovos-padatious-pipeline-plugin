@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from typing import Dict, List, Generator
+
 from ovos_padatious.util import tokenize, expand_parentheses, remove_comments
 
 
@@ -27,7 +28,7 @@ class TrainData:
     """
 
     def __init__(self) -> None:
-        self.sent_lists: Dict[str, List[List[str]]] = {}
+        self.sent_lists: Dict[str, List[str]] = {}
 
     def add_lines(self, name: str, lines: List[str]) -> None:
         """
@@ -39,10 +40,11 @@ class TrainData:
         """
         lines = remove_comments(lines)
         self.sent_lists[name] = [
-            sent for line in lines
+            sent
+            for line in lines
             for sent in expand_parentheses(tokenize(line))
+            if sent
         ]
-        self.sent_lists[name] = [sent for sent in self.sent_lists[name] if sent]
 
     def remove_lines(self, name: str) -> None:
         """
