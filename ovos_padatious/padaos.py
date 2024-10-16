@@ -1,6 +1,6 @@
 import re
 from threading import Lock
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 from ovos_utils.log import LOG
 
 
@@ -207,7 +207,9 @@ class IntentContainer:
         }
         self.must_compile = False
 
-    def _calc_entities(self, query: str, regexes: List[re.Pattern]) -> Dict[str, str]:
+from typing import Dict, List, Optional, Union, Iterator
+
+    def _calc_entities(self, query: str, regexes: List[re.Pattern]) -> Iterator[Dict[str, str]]:
         """
         Calculates entities from a given query using the provided regex patterns.
 
@@ -226,7 +228,9 @@ class IntentContainer:
                     for k, v in match.groupdict().items() if v
                 }
 
-    def calc_intents(self, query: str) -> Union[Dict[str, Union[str, Dict[str, str]]], None]:
+from typing import Dict, List, Optional, Union, Iterator
+
+    def calc_intents(self, query: str) -> Iterator[Dict[str, Union[str, Dict[str, str]]]]:
         """
         Calculates intents for a given query.
 
@@ -247,7 +251,7 @@ class IntentContainer:
                     'entities': min(entities, key=lambda x: sum(map(len, x.values())))
                 }
 
-    def calc_intent(self, query: str) -> Union[str, None]:
+    def calc_intent(self, query: str) -> Dict[str, Union[str, Dict[str, str]]]:
         """
         Calculates the most likely intent for a given query.
 
@@ -255,7 +259,7 @@ class IntentContainer:
             query (str): The input query to process.
 
         Returns:
-            Union[str, None]: The name of the matched intent or None if no match is found.
+            Dict[str, Union[str, Dict[str, str]]]: A dictionary containing the intent name and entities.
         """
         return min(
             self.calc_intents(query),

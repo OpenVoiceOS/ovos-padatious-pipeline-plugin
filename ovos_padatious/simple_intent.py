@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Tuple, Optional
+from typing import List, Optional
 from fann2 import libfann as fann
 
 from ovos_padatious.id_manager import IdManager
