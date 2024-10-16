@@ -139,7 +139,8 @@ def shutdown(self):
         log_deprecation("self.padatious_config is deprecated, access self.config directly instead", "2.0.0")
         self.config = val
 
-    def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[IntentHandlerMatch]:
+    def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[
+        IntentHandlerMatch]:
         """Match intent and make sure a certain level of confidence is reached.
 
         Args:
@@ -296,7 +297,7 @@ def shutdown(self):
             self._register_object(message, 'entity',
                                   self.containers[lang].add_entity)
 
-    def calc_intent(self, utterances: List[str], lang: str = None,
+    def calc_intent(self, utterances: Union[str, List[str]], lang: Optional[str] = None,
                     message: Optional[Message] = None) -> Optional[PadatiousIntent]:
         """
         Get the best intent match for the given list of utterances. Utilizes a
@@ -355,10 +356,8 @@ def shutdown(self):
             message (Message): message triggering the method
         """
         utterance = message.data["utterance"]
-        norm = message.data.get('norm_utt', utterance)
-        intent = self.calc_intent(utterance)
-        if not intent and norm != utterance:
-            intent = self.calc_intent(norm)
+        lang = message.data.get("lang", self.lang)
+        intent = self.calc_intent(utterance, lang=lang)
         if intent:
             intent = intent.__dict__
         self.bus.emit(message.reply("intent.service.padatious.reply",
