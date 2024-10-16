@@ -14,7 +14,6 @@
 import inspect
 import json
 import os
-import time
 
 from ovos_padatious import padaos
 import sys
@@ -250,7 +249,6 @@ class IntentContainer(object):
             timeout=timeout
         ), daemon=True)
         self.train_thread.start()
-        time.sleep(0.5)
         self.train_thread.join(timeout)
 
         self.must_train = False
