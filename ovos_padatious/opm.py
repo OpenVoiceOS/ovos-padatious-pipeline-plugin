@@ -25,9 +25,11 @@ from ovos_config.meta import get_xdg_base
 from ovos_padatious import IntentContainer as PadatiousIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_utils import flatten_list
+from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.log import LOG
 from ovos_utils.xdg_utils import xdg_data_home
 from ovos_plugin_manager.templates.pipeline import PipelinePlugin, IntentMatch
+from langcodes import closest_match
 
 
 class PadatiousMatcher:
@@ -47,7 +49,7 @@ class PadatiousMatcher:
         LOG.debug(f'Padatious Matching confidence > {limit}')
         # call flatten in case someone is sending the old style list of tuples
         utterances = flatten_list(utterances)
-        lang = lang or self.service.lang
+        lang = standardize_lang_tag(lang or self.service.lang)
         padatious_intent = self.service.calc_intent(utterances, lang, message)
         if padatious_intent is not None and padatious_intent.conf > limit:
             skill_id = padatious_intent.name.split(':')[0]
@@ -92,8 +94,9 @@ class PadatiousPipeline(PipelinePlugin):
         self.bus = bus
 
         core_config = Configuration()
-        self.lang = core_config.get("lang", "en-us")
+        self.lang = standardize_lang_tag(core_config.get("lang", "en-US"))
         langs = core_config.get('secondary_langs') or []
+        langs = [standardize_lang_tag(l) for l in langs]
         if self.lang not in langs:
             langs.append(self.lang)
 
@@ -211,7 +214,7 @@ class PadatiousPipeline(PipelinePlugin):
             message (Message): message triggering action
         """
         lang = message.data.get('lang', self.lang)
-        lang = lang.lower()
+        lang = standardize_lang_tag(lang)
         if lang in self.containers:
             self.registered_intents.append(message.data['name'])
             self._register_object(message, 'intent', self.containers[lang].add_intent)
@@ -223,7 +226,7 @@ class PadatiousPipeline(PipelinePlugin):
             message (Message): message triggering action
         """
         lang = message.data.get('lang', self.lang)
-        lang = lang.lower()
+        lang = standardize_lang_tag(lang)
         if lang in self.containers:
             self.registered_entities.append(message.data)
             self._register_object(message, 'entity',
@@ -247,16 +250,32 @@ class PadatiousPipeline(PipelinePlugin):
             return None
 
         lang = lang or self.lang
-        lang = lang.lower()
+
+        lang = self._get_closest_lang(lang)
+        if lang is None:  # no intents registered for this lang
+            return None
+
         sess = SessionManager.get(message)
-        if lang in self.containers:
-            intent_container = self.containers.get(lang)
-            intents = [_calc_padatious_intent(utt, intent_container, sess)
-                       for utt in utterances]
-            intents = [i for i in intents if i is not None]
-            # select best
-            if intents:
-                return max(intents, key=lambda k: k.conf)
+
+        intent_container = self.containers.get(lang)
+        intents = [_calc_padatious_intent(utt, intent_container, sess)
+                   for utt in utterances]
+        intents = [i for i in intents if i is not None]
+        # select best
+        if intents:
+            return max(intents, key=lambda k: k.conf)
+
+    def _get_closest_lang(self, lang: str) -> Optional[str]:
+        if self.containers:
+            lang = standardize_lang_tag(lang)
+            closest, score = closest_match(lang, list(self.containers.keys()))
+            # https://langcodes-hickford.readthedocs.io/en/sphinx/index.html#distance-values
+            # 0 -> These codes represent the same language, possibly after filling in values and normalizing.
+            # 1- 3 -> These codes indicate a minor regional difference.
+            # 4 - 10 -> These codes indicate a significant but unproblematic regional difference.
+            if score < 10:
+                return closest
+        return None
 
     def shutdown(self):
         self.bus.remove('padatious:register_intent', self.register_intent)
