@@ -109,6 +109,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on('detach_intent', self.handle_detach_intent)
         self.bus.on('detach_skill', self.handle_detach_skill)
         self.bus.on('mycroft.skills.initialized', self.train)
+        self.bus.on('intent.service.padatious.get', self.handle_get_padatious)
+        self.bus.on('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
+        self.bus.on('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
 
         self.finished_training_event = Event()
         self.finished_initial_train = False
@@ -326,6 +329,42 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.remove('detach_intent', self.handle_detach_intent)
         self.bus.remove('detach_skill', self.handle_detach_skill)
         self.bus.remove('mycroft.skills.initialized', self.train)
+
+    def handle_get_padatious(self, message):
+        """messagebus handler for perfoming padatious parsing.
+
+        Args:
+            message (Message): message triggering the method
+        """
+        utterance = message.data["utterance"]
+        norm = message.data.get('norm_utt', utterance)
+        intent = self.calc_intent(utterance)
+        if not intent and norm != utterance:
+            intent = self.calc_intent(norm)
+        if intent:
+            intent = intent.__dict__
+        self.bus.emit(message.reply("intent.service.padatious.reply",
+                                    {"intent": intent}))
+
+    def handle_padatious_manifest(self, message):
+        """Messagebus handler returning the registered padatious intents.
+
+        Args:
+            message (Message): message triggering the method
+        """
+        self.bus.emit(message.reply(
+            "intent.service.padatious.manifest",
+            {"intents": self.registered_intents}))
+
+    def handle_entity_manifest(self, message):
+        """Messagebus handler returning the registered padatious entities.
+
+        Args:
+            message (Message): message triggering the method
+        """
+        self.bus.emit(message.reply(
+            "intent.service.padatious.entities.manifest",
+            {"entities": self.registered_entities}))
 
 
 @lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
