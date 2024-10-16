@@ -38,7 +38,7 @@ from ovos_padatious.match_data import MatchData as PadatiousIntent
 class PadatiousMatcher:
     """Matcher class to avoid redundancy in padatious intent matching."""
 
-    @deprecated("PadatiousMatcher class is deprecated!", "1.0.0")
+    @deprecated("PadatiousMatcher class is deprecated!", "2.0.0")
     def __init__(self, service: 'PadatiousPipeline'):
         self.service = service
 
@@ -71,7 +71,7 @@ class PadatiousMatcher:
         """
         return self._match_level(utterances, self.service.conf_med, lang, message)
 
-    def match_low(self, utterances, lang=None, message=None) -> Optional[IntentHandlerMatch]:
+    def match_low(self, utterances, lang=None, message=None) -> Optional[IntentMatch]:
         """Intent matcher for low confidence.
 
         Args:
@@ -124,12 +124,12 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
     @property
     def padatious_config(self) -> Dict:
-        log_deprecation("self.padatious_config is deprecated, access self.config directly instead", "1.0.0")
+        log_deprecation("self.padatious_config is deprecated, access self.config directly instead", "2.0.0")
         return self.config
 
     @padatious_config.setter
     def padatious_config(self, val):
-        log_deprecation("self.padatious_config is deprecated, access self.config directly instead", "1.0.0")
+        log_deprecation("self.padatious_config is deprecated, access self.config directly instead", "2.0.0")
         self.config = val
 
     def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[IntentHandlerMatch]:
