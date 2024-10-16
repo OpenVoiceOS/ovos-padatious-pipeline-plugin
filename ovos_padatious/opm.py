@@ -24,11 +24,11 @@ from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
 from ovos_config.config import Configuration
 from ovos_config.meta import get_xdg_base
-from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
+from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch, IntentMatch
 from ovos_utils import flatten_list
 from ovos_utils.fakebus import FakeBus
 from ovos_utils.lang import standardize_lang_tag
-from ovos_utils.log import LOG, deprecated
+from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.xdg_utils import xdg_data_home
 
 from ovos_padatious import IntentContainer as PadatiousIntentContainer
@@ -42,7 +42,7 @@ class PadatiousMatcher:
     def __init__(self, service: 'PadatiousPipeline'):
         self.service = service
 
-    def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[IntentHandlerMatch]:
+    def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[IntentMatch]:
         """Match intent and make sure a certain level of confidence is reached.
 
         Args:
@@ -50,9 +50,10 @@ class PadatiousMatcher:
                                          with optional normalized version.
             limit (float): required confidence level.
         """
-        return self.service._match_level(utterances, limit, lang, message)
+        m: IntentHandlerMatch = self.service._match_level(utterances, limit, lang, message)
+        return IntentMatch("Padatious", m.match_type, m.match_data, m.skill_id, m.utterance)
 
-    def match_high(self, utterances, lang=None, message=None) -> Optional[IntentHandlerMatch]:
+    def match_high(self, utterances, lang=None, message=None) -> Optional[IntentMatch]:
         """Intent matcher for high confidence.
 
         Args:
@@ -61,7 +62,7 @@ class PadatiousMatcher:
         """
         return self._match_level(utterances, self.service.conf_high, lang, message)
 
-    def match_medium(self, utterances, lang=None, message=None) -> Optional[IntentHandlerMatch]:
+    def match_medium(self, utterances, lang=None, message=None) -> Optional[IntentMatch]:
         """Intent matcher for medium confidence.
 
         Args:
@@ -120,6 +121,16 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.registered_entities = []
         self.max_words = 50  # if an utterance contains more words than this, don't attempt to match
         LOG.debug('Loaded Padatious intent parser.')
+
+    @property
+    def padatious_config(self) -> Dict:
+        log_deprecation("self.padatious_config is deprecated, access self.config directly instead", "1.0.0")
+        return self.config
+
+    @padatious_config.setter
+    def padatious_config(self, val):
+        log_deprecation("self.padatious_config is deprecated, access self.config directly instead", "1.0.0")
+        self.config = val
 
     def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[IntentHandlerMatch]:
         """Match intent and make sure a certain level of confidence is reached.
