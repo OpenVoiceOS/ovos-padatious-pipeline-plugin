@@ -18,11 +18,12 @@ from typing import List, Type, Union
 from ovos_utils.log import LOG
 
 import ovos_padatious
+from ovos_padatious.trainable import Trainable
 from ovos_padatious.train_data import TrainData
 from ovos_padatious.util import lines_hash
 
 
-def _train_and_save(obj: 'Trainable', cache: str, data: TrainData, print_updates: bool) -> None:
+def _train_and_save(obj: Trainable, cache: str, data: TrainData, print_updates: bool) -> None:
     """
     Internal function to train objects sequentially and save them.
 
@@ -47,7 +48,7 @@ class TrainingManager:
         cache_dir (str): Path to the cache directory.
     """
 
-    def __init__(self, cls: Type['Trainable'], cache_dir: str) -> None:
+    def __init__(self, cls: Type[Trainable], cache_dir: str) -> None:
         """
         Initializes the TrainingManager.
 
@@ -57,8 +58,8 @@ class TrainingManager:
         """
         self.cls = cls
         self.cache = cache_dir
-        self.objects: List['Trainable'] = []
-        self.objects_to_train: List['Trainable'] = []
+        self.objects: List[Trainable] = []
+        self.objects_to_train: List[Trainable] = []
         self.train_data = TrainData()
 
     def add(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> None:
@@ -140,6 +141,6 @@ class TrainingManager:
         for obj in self.objects_to_train:
             try:
                 self.objects.append(self.cls.from_file(name=obj.name, folder=self.cache))
-            except IOError:
-                LOG.error(f"Took too long to train {obj.name}")
+            except Exception as e:
+                LOG.exception(f"Failed to load trained object {obj.name}")
         self.objects_to_train = []
