@@ -16,26 +16,30 @@
 from functools import lru_cache
 from os.path import expanduser, isfile
 from threading import Event
-from typing import List, Optional
+from typing import Optional, Dict, List, Union
 
+from langcodes import closest_match
+from ovos_bus_client.client import MessageBusClient
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
 from ovos_config.config import Configuration
 from ovos_config.meta import get_xdg_base
+from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentMatch
+from ovos_utils import flatten_list
+from ovos_utils.fakebus import FakeBus
+from ovos_utils.lang import standardize_lang_tag
+from ovos_utils.log import LOG, deprecated
+from ovos_utils.xdg_utils import xdg_data_home
+
 from ovos_padatious import IntentContainer as PadatiousIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
-from ovos_utils import flatten_list
-from ovos_utils.lang import standardize_lang_tag
-from ovos_utils.log import LOG
-from ovos_utils.xdg_utils import xdg_data_home
-from ovos_plugin_manager.templates.pipeline import PipelinePlugin, IntentMatch
-from langcodes import closest_match
 
 
 class PadatiousMatcher:
     """Matcher class to avoid redundancy in padatious intent matching."""
 
-    def __init__(self, service):
+    @deprecated("PadatiousMatcher class is deprecated!", "1.0.0")
+    def __init__(self, service: 'PadatiousPipeline'):
         self.service = service
 
     def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[IntentMatch]:
@@ -46,16 +50,7 @@ class PadatiousMatcher:
                                          with optional normalized version.
             limit (float): required confidence level.
         """
-        LOG.debug(f'Padatious Matching confidence > {limit}')
-        # call flatten in case someone is sending the old style list of tuples
-        utterances = flatten_list(utterances)
-        lang = standardize_lang_tag(lang or self.service.lang)
-        padatious_intent = self.service.calc_intent(utterances, lang, message)
-        if padatious_intent is not None and padatious_intent.conf > limit:
-            skill_id = padatious_intent.name.split(':')[0]
-            return IntentMatch(
-                'Padatious', padatious_intent.name,
-                padatious_intent.matches, skill_id, padatious_intent.sent)
+        return self.service._match_level(utterances, limit, lang, message)
 
     def match_high(self, utterances, lang=None, message=None) -> Optional[IntentMatch]:
         """Intent matcher for high confidence.
@@ -85,13 +80,13 @@ class PadatiousMatcher:
         return self._match_level(utterances, self.service.conf_low, lang, message)
 
 
-class PadatiousPipeline(PipelinePlugin):
+class PadatiousPipeline(ConfidenceMatcherPipeline):
     """Service class for padatious intent matching."""
 
-    def __init__(self, bus, config):
-        super().__init__(config)
-        self.padatious_config = config
-        self.bus = bus
+    def __init__(self, bus: Optional[Union[MessageBusClient, FakeBus]] = None,
+                 config: Optional[Dict] = None):
+
+        super().__init__(bus, config)
 
         core_config = Configuration()
         self.lang = standardize_lang_tag(core_config.get("lang", "en-US"))
@@ -100,11 +95,11 @@ class PadatiousPipeline(PipelinePlugin):
         if self.lang not in langs:
             langs.append(self.lang)
 
-        self.conf_high = self.padatious_config.get("conf_high") or 0.95
-        self.conf_med = self.padatious_config.get("conf_med") or 0.8
-        self.conf_low = self.padatious_config.get("conf_low") or 0.5
+        self.conf_high = self.config.get("conf_high") or 0.95
+        self.conf_med = self.config.get("conf_med") or 0.8
+        self.conf_low = self.config.get("conf_low") or 0.5
 
-        intent_cache = expanduser(self.padatious_config.get('intent_cache') or
+        intent_cache = expanduser(self.config.get('intent_cache') or
                                   f"{xdg_data_home()}/{get_xdg_base()}/intent_cache")
         self.containers = {lang: PadatiousIntentContainer(f"{intent_cache}/{lang}")
                            for lang in langs}
@@ -123,6 +118,54 @@ class PadatiousPipeline(PipelinePlugin):
         self.max_words = 50  # if an utterance contains more words than this, don't attempt to match
         LOG.debug('Loaded Padatious intent parser.')
 
+    def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[IntentMatch]:
+        """Match intent and make sure a certain level of confidence is reached.
+
+        Args:
+            utterances (list of tuples): Utterances to parse, originals paired
+                                         with optional normalized version.
+            limit (float): required confidence level.
+        """
+        LOG.debug(f'Padatious Matching confidence > {limit}')
+        # call flatten in case someone is sending the old style list of tuples
+        utterances = flatten_list(utterances)
+        lang = standardize_lang_tag(lang or self.lang)
+        padatious_intent = self.calc_intent(utterances, lang, message)
+        if padatious_intent is not None and padatious_intent.conf > limit:
+            skill_id = padatious_intent.name.split(':')[0]
+            return IntentMatch(
+                match_type=padatious_intent.name,
+                match_data=padatious_intent.matches,
+                skill_id=skill_id,
+                utterance=padatious_intent.sent)
+
+    def match_high(self, utterances: List[str], lang: str, message: Message) -> Optional[IntentMatch]:
+        """Intent matcher for high confidence.
+
+        Args:
+            utterances (list of tuples): Utterances to parse, originals paired
+                                         with optional normalized version.
+        """
+        return self._match_level(utterances, self.conf_high, lang, message)
+
+    def match_medium(self, utterances: List[str], lang: str, message: Message) -> Optional[IntentMatch]:
+        """Intent matcher for medium confidence.
+
+        Args:
+            utterances (list of tuples): Utterances to parse, originals paired
+                                         with optional normalized version.
+        """
+        return self._match_level(utterances, self.conf_med, lang, message)
+
+    def match_low(self, utterances: List[str], lang: str, message: Message) -> Optional[IntentMatch]:
+        """Intent matcher for low confidence.
+
+        Args:
+            utterances (list of tuples): Utterances to parse, originals paired
+                                         with optional normalized version.
+        """
+        return self._match_level(utterances, self.conf_low, lang, message)
+
     def train(self, message=None):
         """Perform padatious training.
 
@@ -130,7 +173,7 @@ class PadatiousPipeline(PipelinePlugin):
             message (Message): optional triggering message
         """
         self.finished_training_event.clear()
-        padatious_single_thread = self.padatious_config.get('single_thread', False)
+        padatious_single_thread = self.config.get('single_thread', False)
         if message is None:
             single_thread = padatious_single_thread
         else:
