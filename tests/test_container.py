@@ -11,14 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from time import monotonic
-import unittest
 import os
-import pytest
 import random
-from os import mkdir
-from os.path import isdir, join
-from shutil import rmtree
+import unittest
+from os.path import join
+from time import monotonic
+
+import pytest
 
 from ovos_padatious.intent_container import IntentContainer
 
@@ -34,7 +33,7 @@ class TestFromDisk(unittest.TestCase):
     other_entities = ['else\n', 'different\n']
 
     def setUp(self):
-        self.cont = IntentContainer('temp')
+        self.cont = IntentContainer('/tmp/cache2')
 
     def _add_intent(self):
         self.cont.add_intent('test', self.test_lines)
@@ -45,23 +44,19 @@ class TestFromDisk(unittest.TestCase):
         self._write_train_data()
 
     def _write_train_data(self):
-
-        if not isdir('temp'):
-            mkdir('temp')
-
-        fn1 = join('temp', 'test.intent')
+        fn1 = join('/tmp/cache2', 'test.intent')
         with open(fn1, 'w') as f:
             f.writelines(self.test_lines_with_entities)
 
-        fn2 = join('temp', 'other.intent')
+        fn2 = join('/tmp/cache2', 'other.intent')
         with open(fn2, 'w') as f:
             f.writelines(self.other_lines_with_entities)
 
-        fn1 = join('temp', 'test.entity')
+        fn1 = join('/tmp/cache2', 'test.entity')
         with open(fn1, 'w') as f:
             f.writelines(self.test_entities)
 
-        fn2 = join('temp', 'other.entity')
+        fn2 = join('/tmp/cache2', 'other.entity')
         with open(fn2, 'w') as f:
             f.writelines(self.other_entities)
 
@@ -70,7 +65,7 @@ class TestFromDisk(unittest.TestCase):
         self._add_intent()
 
         # instantiate from disk (load cached files)
-        cont = IntentContainer('temp')
+        cont = IntentContainer('/tmp/cache2')
         cont.instantiate_from_disk()
 
         assert len(cont.intents.train_data.sent_lists) == 0
@@ -92,21 +87,18 @@ class TestIntentContainer(unittest.TestCase):
     other_entities = ['else\n', 'different\n']
 
     def setUp(self):
-        self.cont = IntentContainer('temp')
+        self.cont = IntentContainer('/tmp/cache')
 
     def _add_intent(self):
         self.cont.add_intent('test', self.test_lines)
         self.cont.add_intent('other', self.other_lines)
 
     def test_load_intent(self):
-        if not isdir('temp'):
-            mkdir('temp')
-
-        fn1 = join('temp', 'test.txt')
+        fn1 = join('/tmp', 'test.txt')
         with open(fn1, 'w') as f:
             f.writelines(self.test_lines)
 
-        fn2 = join('temp', 'other.txt')
+        fn2 = join('/tmp', 'other.txt')
         with open(fn2, 'w') as f:
             f.writelines(self.other_lines)
 
@@ -121,7 +113,6 @@ class TestIntentContainer(unittest.TestCase):
 
         test(False, False)
         test(True, True)
-
 
     def _create_large_intent(self, depth):
         if depth == 0:
@@ -183,8 +174,8 @@ class TestIntentContainer(unittest.TestCase):
 
         intents = self.cont.calc_intents('this is another test')
         assert (
-            intents[0].conf > intents[1].conf) == (
-            intents[0].name == 'test')
+                       intents[0].conf > intents[1].conf) == (
+                       intents[0].name == 'test')
         assert self.cont.calc_intent('this is another test').name == 'test'
 
     def test_empty(self):
@@ -252,7 +243,3 @@ class TestIntentContainer(unittest.TestCase):
         intent = self.cont.calc_intent('make a timer for 3 minute')
         assert intent.name == 'timer'
         assert intent.matches == {'time': '3'}
-
-    def teardown(self):
-        if isdir('temp'):
-            rmtree('temp')
