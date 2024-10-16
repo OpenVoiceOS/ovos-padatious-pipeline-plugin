@@ -110,9 +110,16 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on('detach_intent', self.handle_detach_intent)
         self.bus.on('detach_skill', self.handle_detach_skill)
         self.bus.on('mycroft.skills.initialized', self.train)
-        self.bus.on('intent.service.padatious.get', self.handle_get_padatious)
-        self.bus.on('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
-        self.bus.on('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
+def shutdown(self):
+    # Existing code...
+    self.bus.remove('padatious:register_intent', self.register_intent)
+    self.bus.remove('padatious:register_entity', self.register_entity)
+    self.bus.remove('detach_intent', self.handle_detach_intent)
+    self.bus.remove('detach_skill', self.handle_detach_skill)
+    self.bus.remove('mycroft.skills.initialized', self.train)
+    self.bus.remove('intent.service.padatious.get', self.handle_get_padatious)
+    self.bus.remove('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
+    self.bus.remove('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
 
         self.finished_training_event = Event()
         self.finished_initial_train = False
