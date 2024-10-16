@@ -105,18 +105,22 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.containers = {lang: PadatiousIntentContainer(f"{intent_cache}/{lang}")
                            for lang in langs}
 
-        self.bus.on('padatious:register_intent', self.register_intent)
-        self.bus.on('padatious:register_entity', self.register_entity)
-        self.bus.on('detach_intent', self.handle_detach_intent)
-        self.bus.on('detach_skill', self.handle_detach_skill)
-        self.bus.on('mycroft.skills.initialized', self.train)
-
         self.finished_training_event = Event()
         self.finished_initial_train = False
 
         self.registered_intents = []
         self.registered_entities = []
         self.max_words = 50  # if an utterance contains more words than this, don't attempt to match
+
+        self.bus.on('padatious:register_intent', self.register_intent)
+        self.bus.on('padatious:register_entity', self.register_entity)
+        self.bus.on('detach_intent', self.handle_detach_intent)
+        self.bus.on('detach_skill', self.handle_detach_skill)
+        self.bus.on('mycroft.skills.initialized', self.train)
+        self.bus.on('intent.service.padatious.get', self.handle_get_padatious)
+        self.bus.on('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
+        self.bus.on('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
+
         LOG.debug('Loaded Padatious intent parser.')
 
     @property
