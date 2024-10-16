@@ -12,23 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import inspect
-import json
 import os
+from functools import wraps
+from typing import List, Dict, Any, Optional
+
+from ovos_utils.log import LOG
 
 from ovos_padatious import padaos
-import sys
-from functools import wraps
-from subprocess import call, check_output
-from threading import Thread
-
-from ovos_padatious.match_data import MatchData
 from ovos_padatious.entity import Entity
 from ovos_padatious.entity_manager import EntityManager
 from ovos_padatious.intent_manager import IntentManager
+from ovos_padatious.match_data import MatchData
 from ovos_padatious.util import tokenize
 
 
 def _save_args(func):
+    """
+    Decorator that saves the arguments passed to the function in the serialized_args attribute of the class.
+
+    Args:
+        func (function): The function to be decorated.
+    """
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         func(*args, **kwargs)
@@ -41,41 +46,42 @@ def _save_args(func):
     return wrapper
 
 
-class IntentContainer(object):
+class IntentContainer:
     """
     Creates an IntentContainer object used to load and match intents
 
     Args:
-        cache_dir (str): Place to put all saved neural networks
+        cache_dir (str): Directory for caching the neural network models and intent/entity files.
     """
 
-    def __init__(self, cache_dir):
+    def __init__(self, cache_dir: str) -> None:
         os.makedirs(cache_dir, exist_ok=True)
-        self.cache_dir = cache_dir
-        self.must_train = False
-        self.intents = IntentManager(cache_dir)
-        self.entities = EntityManager(cache_dir)
-        self.padaos = padaos.IntentContainer()
-        self.train_thread = None  # type: Thread
-        self.serialized_args = []  # Arguments of all calls to register intents/entities
+        self.cache_dir: str = cache_dir
+        self.must_train: bool = False
+        self.intents: IntentManager = IntentManager(cache_dir)
+        self.entities: EntityManager = EntityManager(cache_dir)
+        self.padaos: padaos.IntentContainer = padaos.IntentContainer()
+        self.train_thread: Optional[Any] = None  # deprecated
+        self.serialized_args: List[Dict[str, Any]] = []  # Serialized calls for training intents/entities
 
-    def clear(self):
+    def clear(self) -> None:
+        """
+        Clears the current intent and entity managers and resets the container.
+        """
         os.makedirs(self.cache_dir, exist_ok=True)
         self.must_train = False
         self.intents = IntentManager(self.cache_dir)
         self.entities = EntityManager(self.cache_dir)
         self.padaos = padaos.IntentContainer()
-        self.train_thread = None
         self.serialized_args = []
 
-    def instantiate_from_disk(self):
+    def instantiate_from_disk(self) -> None:
         """
         Instantiates the necessary (internal) data structures when loading persisted model from disk.
         This is done via injecting entities and intents back from cached file versions.
         """
-
-        entity_traindata = {}
-        intent_traindata = {}
+        entity_traindata: Dict[str, List[str]] = {}
+        intent_traindata: Dict[str, List[str]] = {}
 
         # workaround: load training data for both entities and intents since
         # padaos regex needs it for (re)compilation until TODO is cleared
@@ -95,7 +101,6 @@ class IntentContainer(object):
         # TODO: padaos.compile (regex compilation) is redone when loading: find
         # a way to persist regex, as well!
         for f in os.listdir(self.cache_dir):
-
             if f.startswith('{') and f.endswith('}.hash'):
                 entity_name = f[1:f.find('}.hash')]
                 if entity_name in entity_traindata:
@@ -103,7 +108,8 @@ class IntentContainer(object):
                         name=entity_name,
                         lines=entity_traindata[entity_name],
                         reload_cache=False,
-                        must_train=False)
+                        must_train=False
+                    )
             elif not f.startswith('{') and f.endswith('.hash'):
                 intent_name = f[0:f.find('.hash')]
                 if intent_name in intent_traindata:
@@ -111,24 +117,26 @@ class IntentContainer(object):
                         name=intent_name,
                         lines=intent_traindata[intent_name],
                         reload_cache=False,
-                        must_train=False)
+                        must_train=False
+                    )
 
     @_save_args
-    def add_intent(self, name, lines, reload_cache=False, must_train=True):
+    def add_intent(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> None:
         """
         Creates a new intent, optionally checking the cache first
 
         Args:
-            name (str): The associated name of the intent
-            lines (list<str>): All the sentences that should activate the intent
-            reload_cache: Whether to ignore cached intent if exists
+            name (str): Name of the intent.
+            lines (List[str]): Sentences that will activate the intent.
+            reload_cache (bool): Whether to ignore cached intent.
+            must_train (bool): Whether the model needs training after adding the intent.
         """
         self.intents.add(name, lines, reload_cache, must_train)
         self.padaos.add_intent(name, lines)
         self.must_train = must_train
 
     @_save_args
-    def add_entity(self, name, lines, reload_cache=False, must_train=True):
+    def add_entity(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> None:
         """
         Adds an entity that matches the given lines.
 
@@ -137,9 +145,10 @@ class IntentContainer(object):
             self.add_entity('weekday', ['monday', 'tuesday', 'wednesday'])  # ...
 
         Args:
-            name (str): The name of the entity
-            lines (list<str>): Lines of example extracted entities
-            reload_cache (bool): Whether to refresh all of cache
+            name (str): Name of the entity.
+            lines (List[str]): Example extracted entities.
+            reload_cache (bool): Whether to refresh the cache.
+            must_train (bool): Whether the model needs training after adding the entity.
         """
         Entity.verify_name(name)
         self.entities.add(
@@ -151,12 +160,7 @@ class IntentContainer(object):
         self.must_train = must_train
 
     @_save_args
-    def load_entity(
-            self,
-            name,
-            file_name,
-            reload_cache=False,
-            must_train=True):
+    def load_entity(self, name: str, file_name: str, reload_cache: bool = False, must_train: bool = True) -> None:
         """
        Loads an entity, optionally checking the cache first
 
@@ -164,7 +168,8 @@ class IntentContainer(object):
            name (str): The associated name of the entity
            file_name (str): The location of the entity file
            reload_cache (bool): Whether to refresh all of cache
-       """
+            must_train (bool): Whether the model needs training after loading the entity.
+        """
         Entity.verify_name(name)
         self.entities.load(Entity.wrap_name(name), file_name, reload_cache)
         with open(file_name) as f:
@@ -177,12 +182,7 @@ class IntentContainer(object):
         self.load_intent(*args, **kwargs)
 
     @_save_args
-    def load_intent(
-            self,
-            name,
-            file_name,
-            reload_cache=False,
-            must_train=True):
+    def load_intent(self, name: str, file_name: str, reload_cache: bool = False, must_train: bool = True) -> None:
         """
         Loads an intent, optionally checking the cache first
 
@@ -190,6 +190,7 @@ class IntentContainer(object):
             name (str): The associated name of the intent
             file_name (str): The location of the intent file
             reload_cache (bool): Whether to refresh all of cache
+            must_train (bool): Whether the model needs training after loading the intent.
         """
         self.intents.load(name, file_name, reload_cache)
         with open(file_name) as f:
@@ -197,36 +198,30 @@ class IntentContainer(object):
         self.must_train = must_train
 
     @_save_args
-    def remove_intent(self, name):
-        """Unload an intent"""
+    def remove_intent(self, name: str) -> None:
+        """
+        Removes an intent by its name.
+
+        Args:
+            name (str): Name of the intent to remove.
+        """
         self.intents.remove(name)
         self.padaos.remove_intent(name)
         self.must_train = True
 
     @_save_args
-    def remove_entity(self, name):
-        """Unload an entity"""
+    def remove_entity(self, name: str) -> None:
+        """
+        Removes an entity by its name.
+
+        Args:
+            name (str): Name of the entity to remove.
+        """
         self.entities.remove(name)
         self.padaos.remove_entity(name)
 
-    def _train(self, *args, **kwargs):
-        t1 = Thread(
-            target=self.intents.train,
-            args=args,
-            kwargs=kwargs,
-            daemon=True)
-        t2 = Thread(
-            target=self.entities.train,
-            args=args,
-            kwargs=kwargs,
-            daemon=True)
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
-        self.entities.calc_ent_dict()
-
-    def train(self, debug=True, force=False, single_thread=False, timeout=20):
+    def train(self, debug: bool = True, force: bool = False, single_thread: Optional[bool] = None,
+              timeout: Optional[float] = None) -> bool:
         """
         Trains all the loaded intents that need to be updated
         If a cache file exists with the same hash as the intent file,
@@ -235,100 +230,72 @@ class IntentContainer(object):
         Args:
             debug (bool): Whether to print a message to stdout each time a new intent is trained
             force (bool): Whether to force training if already finished
-            single_thread (bool): Whether to force running in a single thread
-            timeout (float): Seconds before cancelling training
+            single_thread (bool): DEPRECATED
+            timeout (float): DEPRECATED
         Returns:
-            bool: True if training succeeded without timeout
+            bool: True if training succeeded
         """
+        if single_thread is not None:
+            LOG.warning("'single_thread' argument is deprecated and will be ignored")
+        if timeout is not None:
+            LOG.warning("'timeout' argument is deprecated and will be ignored")
         if not self.must_train and not force:
-            return
+            return True
         self.padaos.compile()
-        self.train_thread = Thread(target=self._train, kwargs=dict(
-            debug=debug,
-            single_thread=single_thread,
-            timeout=timeout
-        ), daemon=True)
-        self.train_thread.start()
-        self.train_thread.join(timeout)
+
+        # Train intents and entities
+        self.intents.train(debug=debug)
+        self.entities.train(debug=debug)
+
+        self.entities.calc_ent_dict()
 
         self.must_train = False
-        return not self.train_thread.is_alive()
+        return True
 
-    def train_subprocess(self, *args, **kwargs):
-        """
-        Trains in a subprocess which provides a timeout guarantees everything shuts down properly
-
-        Args:
-            See <train>
-        Returns:
-            bool: True for success, False if timed out
-        """
-        ret = call([
-            sys.executable, '-m', 'ovos_padatious', 'train', self.cache_dir,
-            '-d', json.dumps(self.serialized_args),
-            '-a', json.dumps(args),
-            '-k', json.dumps(kwargs),
-        ])
-        if ret == 2:
-            raise TypeError(
-                'Invalid train arguments: {} {}'.format(
-                    args, kwargs))
-        data = self.serialized_args
-        self.clear()
-        self.apply_training_args(data)
-        self.padaos.compile()
-        if ret == 0:
-            self.must_train = False
-            return True
-        elif ret == 10:  # timeout
-            return False
-        else:
-            raise ValueError(
-                'Training failed and returned code: {}'.format(ret))
-
-    def calc_intents(self, query):
+    def calc_intents(self, query: str) -> List[MatchData]:
         """
         Tests all the intents against the query and returns
         data on how well each one matched against the query
 
         Args:
-            query (str): Input sentence to test against intents
+            query (str): Input sentence to test against intents.
+
         Returns:
-            list<MatchData>: List of intent matches
-        See calc_intent() for a description of the returned MatchData
+            List[MatchData]: A list of all intent matches with confidence scores.
         """
         if self.must_train:
             self.train()
-        intents = {} if self.train_thread and self.train_thread.is_alive() else {
-            i.name: i for i in self.intents.calc_intents(query, self.entities)
-        }
+        intents = {i.name: i for i in self.intents.calc_intents(query, self.entities)}
         sent = tokenize(query)
         for perfect_match in self.padaos.calc_intents(query):
             name = perfect_match['name']
-            intents[name] = MatchData(
-                name, sent, matches=perfect_match['entities'], conf=1.0)
+            intents[name] = MatchData(name, sent, matches=perfect_match['entities'], conf=1.0)
         return list(intents.values())
 
-    def calc_intent(self, query):
+    def calc_intent(self, query: str) -> MatchData:
         """
-        Tests all the intents against the query and returns
-        match data of the best intent
+        Returns the best intent match for the given query.
 
         Args:
-            query (str): Input sentence to test against intents
+            query (str): Input sentence to test against intents.
+
         Returns:
-            MatchData: Best intent match
+            MatchData: The best matching intent.
         """
         matches = self.calc_intents(query)
-        if len(matches) == 0:
+        if not matches:
             return MatchData('', '')
         best_match = max(matches, key=lambda x: x.conf)
-        best_matches = (
-            match for match in matches if match.conf == best_match.conf)
-        return min(best_matches, key=lambda x: sum(
-            map(len, x.matches.values())))
+        best_matches = [match for match in matches if match.conf == best_match.conf]
+        return min(best_matches, key=lambda x: sum(map(len, x.matches.values())))
 
-    def get_training_args(self):
+    def get_training_args(self) -> List[Dict[str, Any]]:
+        """
+        Returns all serialized arguments used for training intents and entities.
+
+        Returns:
+            List[Dict[str, Any]]: List of serialized arguments for training.
+        """
         return self.serialized_args
 
     def apply_training_args(self, data):

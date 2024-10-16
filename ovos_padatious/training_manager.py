@@ -11,52 +11,71 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import multiprocessing as mp
 from functools import partial
-from multiprocessing.context import TimeoutError
-from os.path import join, isfile, isdir, splitext
+from os.path import join, isfile, splitext
+from typing import List, Type, Union
+
+from ovos_utils.log import LOG
 
 import ovos_padatious
+from ovos_padatious.trainable import Trainable
 from ovos_padatious.train_data import TrainData
 from ovos_padatious.util import lines_hash
 
 
-def _train_and_save(obj, cache, data, print_updates):
-    """Internal pickleable function used to train objects in another process"""
+def _train_and_save(obj: Trainable, cache: str, data: TrainData, print_updates: bool) -> None:
+    """
+    Internal function to train objects sequentially and save them.
+
+    Args:
+        obj (Trainable): Object to train (Intent or Entity).
+        cache (str): Path to the cache directory.
+        data (TrainData): Training data.
+        print_updates (bool): Whether to print updates during training.
+    """
     obj.train(data)
     if print_updates:
-        print('Regenerated ' + obj.name + '.')
+        LOG.debug('Regenerated ' + obj.name + '.')
     obj.save(cache)
 
 
-class TrainingManager(object):
+class TrainingManager:
     """
-    Manages multithreaded training of either Intents or Entities
+    Manages sequential training of either Intents or Entities.
 
     Args:
-        cls (Type[Trainable]): Class to wrap
-        cache_dir (str): Place to store cache files
+        cls (Type[Trainable]): Class to wrap (Intent or Entity).
+        cache_dir (str): Path to the cache directory.
     """
 
-    def __init__(self, cls, cache_dir):
+    def __init__(self, cls: Type[Trainable], cache_dir: str) -> None:
+        """
+        Initializes the TrainingManager.
+
+        Args:
+            cls (Type[Trainable]): Class to be managed (Intent or Entity).
+            cache_dir (str): Path where cache files are stored.
+        """
         self.cls = cls
         self.cache = cache_dir
-        self.objects = []
-        self.objects_to_train = []
-
+        self.objects: List[Trainable] = []
+        self.objects_to_train: List[Trainable] = []
         self.train_data = TrainData()
 
-    def add(self, name, lines, reload_cache=False, must_train=True):
+    def add(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> None:
+        """
+        Adds a new intent or entity for training or loading from cache.
 
-                # special case: load persisted (aka. cached) resource (i.e.
-                # entity or intent) from file into memory data structures
+        Args:
+            name (str): Name of the intent or entity.
+            lines (List[str]): Lines of training data.
+            reload_cache (bool): Whether to force reload of cache if it exists.
+            must_train (bool): Whether training is required for the new intent/entity.
+        """
         if not must_train:
-            self.objects.append(
-                self.cls.from_file(
-                    name=name,
-                    folder=self.cache))
-            # general case: load resource (entity or intent) to training queue
-            # or if no change occurred to memory data structures
+            self.objects.append(self.cls.from_file(name=name, folder=self.cache))
+        # general case: load resource (entity or intent) to training queue
+        # or if no change occurred to memory data structures
         else:
             hash_fn = join(self.cache, name + '.hash')
             old_hsh = None
@@ -68,51 +87,60 @@ class TrainingManager(object):
             if reload_cache or old_hsh != new_hsh:
                 self.objects_to_train.append(self.cls(name=name, hsh=new_hsh))
             else:
-                self.objects.append(
-                    self.cls.from_file(
-                        name=name, folder=self.cache))
+                self.objects.append(self.cls.from_file(name=name, folder=self.cache))
             self.train_data.add_lines(name, lines)
 
-    def load(self, name, file_name, reload_cache=False):
+    def load(self, name: str, file_name: str, reload_cache: bool = False) -> None:
+        """
+        Loads an entity or intent from a file and adds it for training or caching.
+
+        Args:
+            name (str): Name of the intent or entity.
+            file_name (str): Path to the file containing the training data.
+            reload_cache (bool): Whether to reload the cache for this intent/entity.
+        """
         with open(file_name) as f:
             self.add(name, f.read().split('\n'), reload_cache)
 
-    def remove(self, name):
+    def remove(self, name: str) -> None:
+        """
+        Removes an intent or entity from the training and cache.
+
+        Args:
+            name (str): Name of the intent or entity to remove.
+        """
         self.objects = [i for i in self.objects if i.name != name]
-        self.objects_to_train = [
-            i for i in self.objects_to_train if i.name != name]
+        self.objects_to_train = [i for i in self.objects_to_train if i.name != name]
         self.train_data.remove_lines(name)
 
-    def train(self, debug=True, single_thread=False, timeout=20):
-        train = partial(
-            _train_and_save,
-            cache=self.cache,
-            data=self.train_data,
-            print_updates=debug)
+    def train(self, debug: bool = True, single_thread: Union[None, bool] = None,
+              timeout: Union[None, int] = None) -> None:
+        """
+        Trains all intents and entities sequentially.
 
-        if single_thread:
-            for i in self.objects_to_train:
-                train(i)
-        else:
-            # Train in multiple processes to disk
-            pool = mp.Pool()
+        Args:
+            debug (bool): Whether to print debug messages.
+            single_thread (bool): DEPRECATED
+            timeout (float): DEPRECATED
+        """
+        if single_thread is not None:
+            LOG.warning("'single_thread' argument is deprecated and will be ignored")
+        if timeout is not None:
+            LOG.warning("'timeout' argument is deprecated and will be ignored")
+
+        train = partial(_train_and_save, cache=self.cache, data=self.train_data, print_updates=debug)
+
+        # Train objects sequentially
+        for obj in self.objects_to_train:
             try:
-                pool.map_async(train, self.objects_to_train).get(timeout)
-            except TimeoutError:
-                if debug:
-                    print('Some objects timed out while training')
-            finally:
-                pool.close()
-                pool.join()
+                train(obj)
+            except Exception as e:
+                LOG.error(f"Error training {obj.name}: {e}")
 
         # Load saved objects from disk
         for obj in self.objects_to_train:
             try:
-                self.objects.append(
-                    self.cls.from_file(
-                        name=obj.name,
-                        folder=self.cache))
-            except IOError:
-                if debug:
-                    print('Took too long to train', obj.name)
+                self.objects.append(self.cls.from_file(name=obj.name, folder=self.cache))
+            except Exception as e:
+                LOG.exception(f"Failed to load trained object {obj.name}")
         self.objects_to_train = []
