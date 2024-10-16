@@ -31,6 +31,7 @@ from ovos_utils.xdg_utils import xdg_data_home
 from ovos_plugin_manager.templates.pipeline import PipelinePlugin, IntentMatch
 from langcodes import closest_match
 
+
 class PadatiousMatcher:
     """Matcher class to avoid redundancy in padatious intent matching."""
 
