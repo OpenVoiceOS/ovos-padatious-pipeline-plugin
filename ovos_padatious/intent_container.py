@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import inspect
 import os
 from functools import wraps
 from typing import List, Dict, Any, Optional
 
 from ovos_utils.log import LOG
-
 from ovos_padatious import padaos
 from ovos_padatious.entity import Entity
 from ovos_padatious.entity_manager import EntityManager
@@ -33,9 +33,8 @@ def _save_args(func):
     Args:
         func (function): The function to be decorated.
     """
-
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args, **kwargs) -> None:
         func(*args, **kwargs)
         bound_args = inspect.signature(func).bind(*args, **kwargs)
         bound_args.apply_defaults()
@@ -48,7 +47,7 @@ def _save_args(func):
 
 class IntentContainer:
     """
-    Creates an IntentContainer object used to load and match intents
+    Creates an IntentContainer object used to load and match intents.
 
     Args:
         cache_dir (str): Directory for caching the neural network models and intent/entity files.
@@ -77,8 +76,8 @@ class IntentContainer:
 
     def instantiate_from_disk(self) -> None:
         """
-        Instantiates the necessary (internal) data structures when loading persisted model from disk.
-        This is done via injecting entities and intents back from cached file versions.
+        Instantiates the necessary internal data structures when loading persisted model from disk.
+        This is done by injecting entities and intents back from cached file versions.
         """
         entity_traindata: Dict[str, List[str]] = {}
         intent_traindata: Dict[str, List[str]] = {}
@@ -89,14 +88,12 @@ class IntentContainer:
             if f.endswith('.entity'):
                 entity_name = f[0:f.find('.entity')]
                 with open(os.path.join(self.cache_dir, f), 'r') as d:
-                    entity_traindata[entity_name] = [line.strip()
-                                                     for line in d]
+                    entity_traindata[entity_name] = [line.strip() for line in d]
 
             elif f.endswith('.intent'):
                 intent_name = f[0:f.find('.intent')]
                 with open(os.path.join(self.cache_dir, f), 'r') as d:
-                    intent_traindata[intent_name] = [line.strip()
-                                                     for line in d]
+                    intent_traindata[intent_name] = [line.strip() for line in d]
 
         # TODO: padaos.compile (regex compilation) is redone when loading: find
         # a way to persist regex, as well!
@@ -123,7 +120,7 @@ class IntentContainer:
     @_save_args
     def add_intent(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> None:
         """
-        Creates a new intent, optionally checking the cache first
+        Creates a new intent, optionally checking the cache first.
 
         Args:
             name (str): Name of the intent.
@@ -142,7 +139,7 @@ class IntentContainer:
 
         Example:
             self.add_intent('weather', ['will it rain on {weekday}?'])
-            self.add_entity('weekday', ['monday', 'tuesday', 'wednesday'])  # ...
+            self.add_entity('weekday', ['monday', 'tuesday', 'wednesday'])
 
         Args:
             name (str): Name of the entity.
@@ -155,19 +152,20 @@ class IntentContainer:
             Entity.wrap_name(name),
             lines,
             reload_cache,
-            must_train)
+            must_train
+        )
         self.padaos.add_entity(name, lines)
         self.must_train = must_train
 
     @_save_args
     def load_entity(self, name: str, file_name: str, reload_cache: bool = False, must_train: bool = True) -> None:
         """
-       Loads an entity, optionally checking the cache first
+        Loads an entity, optionally checking the cache first.
 
-       Args:
-           name (str): The associated name of the entity
-           file_name (str): The location of the entity file
-           reload_cache (bool): Whether to refresh all of cache
+        Args:
+            name (str): The associated name of the entity.
+            file_name (str): The location of the entity file.
+            reload_cache (bool): Whether to refresh all of cache.
             must_train (bool): Whether the model needs training after loading the entity.
         """
         Entity.verify_name(name)
@@ -177,19 +175,19 @@ class IntentContainer:
         self.must_train = must_train
 
     @_save_args
-    def load_file(self, *args, **kwargs):
-        """Legacy. Use load_intent instead"""
+    def load_file(self, *args, **kwargs) -> None:
+        """Legacy. Use load_intent instead."""
         self.load_intent(*args, **kwargs)
 
     @_save_args
     def load_intent(self, name: str, file_name: str, reload_cache: bool = False, must_train: bool = True) -> None:
         """
-        Loads an intent, optionally checking the cache first
+        Loads an intent, optionally checking the cache first.
 
         Args:
-            name (str): The associated name of the intent
-            file_name (str): The location of the intent file
-            reload_cache (bool): Whether to refresh all of cache
+            name (str): The associated name of the intent.
+            file_name (str): The location of the intent file.
+            reload_cache (bool): Whether to refresh all of cache.
             must_train (bool): Whether the model needs training after loading the intent.
         """
         self.intents.load(name, file_name, reload_cache)
@@ -223,17 +221,18 @@ class IntentContainer:
     def train(self, debug: bool = True, force: bool = False, single_thread: Optional[bool] = None,
               timeout: Optional[float] = None) -> bool:
         """
-        Trains all the loaded intents that need to be updated
+        Trains all the loaded intents that need to be updated.
         If a cache file exists with the same hash as the intent file,
-        the intent will not be trained and just loaded from file
+        the intent will not be trained and just loaded from file.
 
         Args:
-            debug (bool): Whether to print a message to stdout each time a new intent is trained
-            force (bool): Whether to force training if already finished
-            single_thread (bool): DEPRECATED
-            timeout (float): DEPRECATED
+            debug (bool): Whether to print a message to stdout each time a new intent is trained.
+            force (bool): Whether to force training if already finished.
+            single_thread (bool): DEPRECATED.
+            timeout (float): DEPRECATED.
+
         Returns:
-            bool: True if training succeeded
+            bool: True if training succeeded.
         """
         if single_thread is not None:
             LOG.warning("'single_thread' argument is deprecated and will be ignored")

@@ -13,46 +13,50 @@
 # limitations under the License.
 
 from xxhash import xxh32
-from ovos_padatious.bracket_expansion import SentenceTreeParser
+from ovos_utils.bracket_expansion import SentenceTreeParser
+from typing import List, Tuple, Dict, Any
 
 
-def lines_hash(lines):
+def lines_hash(lines: List[str]) -> bytes:
     """
-    Creates a unique binary id for the given lines
+    Creates a unique binary hash for a list of strings (lines).
+
     Args:
         lines (list<str>): List of strings that should be collectively hashed
     Returns:
-        bytearray: Binary hash
+        bytes: Binary hash of the given lines.
     """
     x = xxh32()
-    for i in lines:
-        x.update(i.encode())
+    for line in lines:
+        x.update(line.encode())
     return x.digest()
 
 
-def tokenize(sentence):
+def tokenize(sentence: str) -> List[str]:
     """
-    Converts a single sentence into a list of individual significant units
+    Tokenizes a sentence into individual significant units (words, numbers, etc.).
+
     Args:
-        sentence (str): Input string ie. 'This is a sentence.'
+        sentence (str): The input sentence to tokenize, e.g., 'This is a sentence.'
+
     Returns:
-        list<str>: List of tokens ie. ['this', 'is', 'a', 'sentence']
+        List[str]: List of tokens from the sentence, e.g., ['this', 'is', 'a', 'sentence'].
     """
-    tokens = []
+    tokens: List[str] = []
 
     class Vars:
         start_pos = -1
         last_type = 'o'
 
-    def update(c, i):
+    def update(c: str, i: int) -> None:
         if c.isalpha() or c in '-{}':
-            t = 'a'
+            t = 'a'  # alpha or special char (e.g. '-')
         elif c.isdigit() or c == '#':
-            t = 'n'
+            t = 'n'  # number
         elif c.isspace():
-            t = 's'
+            t = 's'  # space
         else:
-            t = 'o'
+            t = 'o'  # other
 
         if t != Vars.last_type or t == 'o':
             if Vars.start_pos >= 0:
@@ -64,69 +68,90 @@ def tokenize(sentence):
 
     for i, char in enumerate(sentence):
         update(char, i)
-    update(' ', len(sentence))
+    update(' ', len(sentence))  # finalize last token
     return tokens
 
 
-def expand_parentheses(sent):
+def expand_parentheses(sent: List[str]) -> List[List[str]]:
     """
-    ['1', '(', '2', '|', '3, ')'] -> [['1', '2'], ['1', '3']]
+    Expands sentences with parentheses into all possible alternatives.
+
     For example:
+        'Will it (rain|pour) (today|tomorrow|)?'
 
-    Will it (rain|pour) (today|tomorrow|)?
-
-    ---->
-
-    Will it rain today?
-    Will it rain tomorrow?
-    Will it rain?
-    Will it pour today?
-    Will it pour tomorrow?
-    Will it pour?
+    Produces:
+        'Will it rain today?'
+        'Will it rain tomorrow?'
+        'Will it rain?'
+        'Will it pour today?'
+        'Will it pour tomorrow?'
+        'Will it pour?'
 
     Args:
-        sent (list<str>): List of tokens in sentence
+        sent (List[str]): List of tokens containing parentheses for expansion.
+
     Returns:
-        list<list<str>>: Multiple possible sentences from original
+        List[List[str]]: List of all possible expanded sentences as token lists.
     """
     return SentenceTreeParser(sent).expand_parentheses()
 
 
-def remove_comments(lines):
-    return [i for i in lines if not i.startswith('//')]
-
-
-def resolve_conflicts(inputs, outputs):
+def remove_comments(lines: List[str]) -> List[str]:
     """
-    Checks for duplicate inputs and if there are any,
-    remove one and set the output to the max of the two outputs
+    Removes comment lines from a list of strings.
+
     Args:
-        inputs (list<list<float>>): Array of input vectors
-        outputs (list<list<float>>): Array of output vectors
+        lines (List[str]): List of lines that may contain comments (starting with '//').
+
     Returns:
-        tuple<inputs, outputs>: The modified inputs and outputs
+        List[str]: Lines without any comments.
     """
-    data = {}
+    return [line for line in lines if not line.startswith('//')]
+
+
+def resolve_conflicts(inputs: List[List[float]], outputs: List[List[float]]) -> Tuple[List[List[float]], List[List[float]]]:
+    """
+    Resolves conflicts in the input/output pairs by removing duplicates
+    and combining output vectors for duplicate inputs.
+
+    Args:
+        inputs (List[List[float]]): List of input vectors.
+        outputs (List[List[float]]): Corresponding list of output vectors.
+
+    Returns:
+        Tuple[List[List[float]], List[List[float]]]: The modified inputs and outputs
+        with conflicts resolved (duplicates combined).
+    """
+    data: Dict[Tuple[float, ...], List[List[float]]] = {}
+
     for inp, out in zip(inputs, outputs):
-        tup = tuple(inp)
-        if tup in data:
-            data[tup].append(out)
+        inp_tuple = tuple(inp)
+        if inp_tuple in data:
+            data[inp_tuple].append(out)
         else:
-            data[tup] = [out]
+            data[inp_tuple] = [out]
 
-    inputs, outputs = [], []
+    inputs_resolved: List[List[float]] = []
+    outputs_resolved: List[List[float]] = []
+
     for inp, outs in data.items():
-        inputs.append(list(inp))
-        combined = [0] * len(outs[0])
-        for i in range(len(combined)):
-            combined[i] = max(j[i] for j in outs)
-        outputs.append(combined)
-    return inputs, outputs
+        inputs_resolved.append(list(inp))
+        combined_out = [max(column[i] for column in outs) for i in range(len(outs[0]))]
+        outputs_resolved.append(combined_out)
+
+    return inputs_resolved, outputs_resolved
 
 
-class StrEnum(object):
-    """Enum with strings as keys. Implements items method"""
+class StrEnum:
+    """An enumeration class where the keys are strings."""
+
     @classmethod
-    def values(cls):
-        return [getattr(cls, i) for i in dir(cls)
-                if not i.startswith("__") and i != 'values']
+    def values(cls) -> List[Any]:
+        """
+        Retrieves all values of the enum that are not special methods or attributes.
+
+        Returns:
+            List[Any]: List of values of the enum.
+        """
+        return [getattr(cls, attr) for attr in dir(cls)
+                if not attr.startswith("__") and attr != 'values']

@@ -17,21 +17,47 @@ from ovos_padatious.training_manager import TrainingManager
 
 
 class EntityManager(TrainingManager):
-    def __init__(self, cache):
-        super(EntityManager, self).__init__(Entity, cache)
-        self.entity_dict = {}
+    """
+    Manages entities and their training processes.
 
-    def calc_ent_dict(self):
+    Args:
+        cache (str): Path to the cache directory.
+    """
+
+    def __init__(self, cache: str) -> None:
+        super(EntityManager, self).__init__(Entity, cache)
+        self.entity_dict: dict[str, Entity] = {}
+
+    def calc_ent_dict(self) -> None:
+        """
+        Calculates the entity dictionary from the current objects.
+        """
         for i in self.objects:
             self.entity_dict[i.name] = i
 
-    def find(self, intent_name, token):
+    def find(self, intent_name: str, token: str) -> Entity | None:
+        """
+        Finds an entity based on the intent name and token.
+
+        Args:
+            intent_name (str): The name of the intent.
+            token (str): The token to search for.
+
+        Returns:
+            Entity | None: The corresponding entity or None if not found.
+        """
         local_name, global_name = '', token
         if ':' in intent_name:
             local_name = intent_name.split(':')[0] + ':' + token
         return self.entity_dict.get(local_name, self.entity_dict.get(global_name))
 
-    def remove(self, name):
+    def remove(self, name: str) -> None:
+        """
+        Removes an entity from the manager.
+
+        Args:
+            name (str): The name of the entity to remove.
+        """
         name = '{' + name + '}'
         if name in self.entity_dict:
             del self.entity_dict[name]
