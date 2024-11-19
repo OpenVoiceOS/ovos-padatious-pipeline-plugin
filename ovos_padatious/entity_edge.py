@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import List, Any, Callable
+
 from fann2 import libfann as fann
 
 from ovos_padatious.id_manager import IdManager
@@ -22,26 +24,38 @@ class Ids(StrEnum):
     end = ':end'
 
 
-class EntityEdge(object):
+class EntityEdge:
     """
-    Represents the left or right side of an entity (a PosIntent)
+    Represents the left or right side of an entity (a PosIntent).
 
     Args:
-        direction (int): -1 for left and +1 for right
-        token (str): token to attach to (something like {word})
-        intent_name (str): name of parent intent
+        direction (int): -1 for left and +1 for right.
+        token (str): Token to attach to (something like {word}).
+        intent_name (str): Name of parent intent.
     """
-    def __init__(self,  direction, token, intent_name):
+
+    def __init__(self, direction: int, token: str, intent_name: str) -> None:
         self.ids = IdManager(Ids)
         self.intent_name = intent_name
         self.token = token
         self.dir = direction
         self.net = None
 
-    def get_end(self, sent):
+    def get_end(self, sent: List[str]) -> int:
+        """Returns the end position based on the direction."""
         return len(sent) if self.dir > 0 else -1
 
-    def vectorize(self, sent, pos):
+    def vectorize(self, sent: List[str], pos: int) -> List[float]:
+        """
+        Vectorizes the sentence based on the position of the token.
+
+        Args:
+            sent (List[str]): The sentence as a list of tokens.
+            pos (int): The current position of the token.
+
+        Returns:
+            List[float]: The vector representation of the tokens.
+        """
         unknown = 0
         vector = self.ids.vector()
         end_pos = self.get_end(sent)
@@ -53,10 +67,21 @@ class EntityEdge(object):
         self.ids.assign(vector, Ids.end, 1.0 / abs(end_pos - pos))
         return vector
 
-    def match(self, sent, pos):
+    def match(self, sent: List[str], pos: int) -> float:
+        """
+        Matches the token in the sentence at the given position.
+
+        Args:
+            sent (List[str]): The sentence as a list of tokens.
+            pos (int): The position of the token.
+
+        Returns:
+            float: The result of the network run.
+        """
         return self.net.run(self.vectorize(sent, pos))[0]
 
-    def configure_net(self):
+    def configure_net(self) -> None:
+        """Configures the neural network for training."""
         layers = [len(self.ids), 3, 1]
 
         self.net = fann.neural_net()
@@ -66,19 +91,37 @@ class EntityEdge(object):
         self.net.set_train_stop_function(fann.STOPFUNC_BIT)
         self.net.set_bit_fail_limit(0.1)
 
-    def save(self, prefix):
+    def save(self, prefix: str) -> None:
+        """
+        Saves the neural network and IDs to files.
+
+        Args:
+            prefix (str): The prefix for the file name.
+        """
         prefix += '.' + {-1: 'l', +1: 'r'}[self.dir]
         self.net.save(str(prefix + '.net'))  # Must have str()
         self.ids.save(prefix)
 
-    def load(self, prefix):
+    def load(self, prefix: str) -> None:
+        """
+        Loads the neural network and IDs from files.
+
+        Args:
+            prefix (str): The prefix for the file name.
+        """
         prefix += '.' + {-1: 'l', +1: 'r'}[self.dir]
         self.net = fann.neural_net()
         if not self.net.create_from_file(str(prefix + '.net')):  # Must have str()
             raise FileNotFoundError(str(prefix + '.net'))
         self.ids.load(prefix)
 
-    def train(self, train_data):
+    def train(self, train_data: Any) -> None:
+        """
+        Trains the neural network with the provided training data.
+
+        Args:
+            train_data (Any): The training data containing sentences.
+        """
         for sent in train_data.my_sents(self.intent_name):
             if self.token in sent:
                 for i in range(sent.index(self.token) + self.dir,
@@ -88,8 +131,8 @@ class EntityEdge(object):
 
         inputs, outputs = [], []
 
-        def pollute(sent, i, out_val):
-            """Simulates multiple token words in adjacent entities"""
+        def pollute(sent: List[str], i: int, out_val: float) -> None:
+            """Simulates multiple token words in adjacent entities."""
             for j, check_token in enumerate(sent):
                 d = j - i
                 if int(d > 0) - int(d < 0) == self.dir and check_token.startswith('{'):
@@ -99,7 +142,8 @@ class EntityEdge(object):
                         inputs.append(self.vectorize(s, p))
                         outputs.append([out_val])
 
-        def add_sents(sents, out_fn):
+        def add_sents(sents: List[List[str]], out_fn: Callable[[str], float]) -> None:
+            """Adds sentences to inputs and outputs based on the output function."""
             for sent in sents:
                 for i, token in enumerate(sent):
                     out_val = out_fn(token)

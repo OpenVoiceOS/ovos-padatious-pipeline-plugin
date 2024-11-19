@@ -18,8 +18,8 @@ from typing import List, Type, Union
 from ovos_utils.log import LOG
 
 import ovos_padatious
-from ovos_padatious.trainable import Trainable
 from ovos_padatious.train_data import TrainData
+from ovos_padatious.trainable import Trainable
 from ovos_padatious.util import lines_hash
 
 
