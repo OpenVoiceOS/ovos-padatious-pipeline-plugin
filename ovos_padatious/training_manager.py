@@ -34,9 +34,9 @@ def _train_and_save(obj: Trainable, cache: str, data: TrainData, print_updates: 
         print_updates (bool): Whether to print updates during training.
     """
     obj.train(data)
-    if print_updates:
-        LOG.debug('Regenerated ' + obj.name + '.')
     obj.save(cache)
+    if print_updates:
+        LOG.debug(f'Saving {obj.name} to cache ({cache})')
 
 
 class TrainingManager:
@@ -84,10 +84,15 @@ class TrainingManager:
                     old_hsh = g.read()
             min_ver = splitext(ovos_padatious.__version__)[0]
             new_hsh = lines_hash([min_ver] + lines)
-            if reload_cache or old_hsh != new_hsh:
+            retrain = reload_cache or old_hsh != new_hsh
+            if not retrain:
+                try:
+                    self.objects.append(self.cls.from_file(name=name, folder=self.cache))
+                except:
+                    LOG.error(f"Failed to load intent from cache: {name}")
+                    retrain = True
+            if retrain:
                 self.objects_to_train.append(self.cls(name=name, hsh=new_hsh))
-            else:
-                self.objects.append(self.cls.from_file(name=name, folder=self.cache))
             self.train_data.add_lines(name, lines)
 
     def load(self, name: str, file_name: str, reload_cache: bool = False) -> None:
@@ -142,5 +147,5 @@ class TrainingManager:
             try:
                 self.objects.append(self.cls.from_file(name=obj.name, folder=self.cache))
             except Exception as e:
-                LOG.exception(f"Failed to load trained object {obj.name}")
+                LOG.error(f"Failed to load trained object {obj.name}: {e}")
         self.objects_to_train = []

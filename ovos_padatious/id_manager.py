@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import os.path
 
 from ovos_padatious.util import StrEnum
 
@@ -49,8 +50,14 @@ class IdManager(object):
             json.dump(self.ids, f)
 
     def load(self, prefix):
-        with open(prefix + '.ids', 'r') as f:
-            self.ids = json.load(f)
+        if os.path.isfile(prefix + '.ids'):
+            try:
+                with open(prefix + '.ids', 'r') as f:
+                    self.ids = json.load(f)
+            except json.JSONDecodeError as err:
+                raise ValueError(f"Invalid JSON in {prefix}.ids: {err}") from err
+            except OSError as err:
+                raise ValueError(f"Failed to read {prefix}.ids: {err}") from err
 
     def assign(self, vector, key, val):
         vector[self.ids[self.adj_token(key)]] = val
