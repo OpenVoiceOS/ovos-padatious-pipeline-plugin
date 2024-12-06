@@ -11,11 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import os
 from abc import ABCMeta, abstractmethod
 
 
-class Trainable(object):
+class Trainable:
     __metaclass__ = ABCMeta
 
     def __init__(self, name, hsh=b''):
@@ -23,10 +23,12 @@ class Trainable(object):
         self.hash = hsh
 
     def load_hash(self, prefix):
-        with open(prefix + '.hash', 'rb') as f:
-            self.hash = f.read()
+        if os.path.isfile(prefix + '.hash'):
+            with open(prefix + '.hash', 'rb') as f:
+                self.hash = f.read()
 
     def save_hash(self, prefix):
+        os.makedirs(os.path.dirname(prefix), exist_ok=True)
         with open(prefix + '.hash', 'wb') as f:
             f.write(self.hash)
 

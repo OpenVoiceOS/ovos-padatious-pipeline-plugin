@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ovos_padatious.util import tokenize, expand_parentheses, remove_comments
+from ovos_padatious.util import tokenize, expand_lines
 
 
 class TrainData(object):
@@ -25,8 +25,8 @@ class TrainData(object):
         self.sent_lists = {}
 
     def add_lines(self, name, lines):
-        lines = remove_comments(lines)
-        self.sent_lists[name] = sum([expand_parentheses(tokenize(line)) for line in lines], [])
+        lines = expand_lines(lines)
+        self.sent_lists[name] = sum([tokenize(line) for line in lines], [])
         self.sent_lists[name] = [i for i in self.sent_lists[name] if i]
 
     def remove_lines(self, name):

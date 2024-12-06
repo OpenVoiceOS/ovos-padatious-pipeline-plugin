@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from ovos_utils import flatten_list
+from ovos_utils.bracket_expansion import expand_template
+
 from xxhash import xxh32
 from ovos_padatious.bracket_expansion import SentenceTreeParser
 
@@ -90,6 +93,11 @@ def expand_parentheses(sent):
         list<list<str>>: Multiple possible sentences from original
     """
     return SentenceTreeParser(sent).expand_parentheses()
+
+
+def expand_lines(lines):
+    lines = [expand_template(i) for i in remove_comments(lines)]
+    return flatten_list(lines)
 
 
 def remove_comments(lines):
