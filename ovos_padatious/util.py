@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from ovos_utils import flatten_list
+from ovos_utils.bracket_expansion import expand_template
+
 from xxhash import xxh32
 from ovos_padatious.bracket_expansion import SentenceTreeParser
 
@@ -92,7 +95,13 @@ def expand_parentheses(sent):
     return SentenceTreeParser(sent).expand_parentheses()
 
 
+def expand_lines(lines):
+    lines = [expand_template(i) for i in remove_comments(lines) if i.strip()]
+    return flatten_list(lines)
+
+
 def remove_comments(lines):
+    # NOTE: padatious considers comments as // but all of mycroft/OVOS uses #
     return [i for i in lines if not i.startswith('//')]
 
 

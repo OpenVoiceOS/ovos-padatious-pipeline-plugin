@@ -51,6 +51,8 @@ class PadatiousMatcher:
             limit (float): required confidence level.
         """
         m: IntentHandlerMatch = self.service._match_level(utterances, limit, lang, message)
+        if not m:
+            return None
         return IntentMatch("Padatious", m.match_type, m.match_data, m.skill_id, m.utterance)
 
     def match_high(self, utterances, lang=None, message=None) -> Optional[IntentMatch]:

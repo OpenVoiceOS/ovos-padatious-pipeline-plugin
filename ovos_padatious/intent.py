@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import os
 import json
 import math
 from os.path import join
@@ -47,6 +47,7 @@ class Intent(Trainable):
 
     def save(self, folder):
         prefix = join(folder, self.name)
+        os.makedirs(folder, exist_ok=True)
         with open(prefix + '.hash', 'wb') as f:
             f.write(self.hash)
         self.simple_intent.save(prefix)
