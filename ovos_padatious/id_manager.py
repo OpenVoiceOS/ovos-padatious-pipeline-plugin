@@ -51,8 +51,11 @@ class IdManager(object):
 
     def load(self, prefix):
         if os.path.isfile(prefix + '.ids'):
-            with open(prefix + '.ids', 'r') as f:
-                self.ids = json.load(f)
+            try:
+                with open(prefix + '.ids', 'r') as f:
+                    self.ids = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in {prefix}.ids: {e}")
 
     def assign(self, vector, key, val):
         vector[self.ids[self.adj_token(key)]] = val

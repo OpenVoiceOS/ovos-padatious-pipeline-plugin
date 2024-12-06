@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ovos_padatious.util import tokenize, expand_lines, expand_parentheses, remove_comments
+from ovos_padatious.util import tokenize, expand_lines
 
 
 class TrainData:
