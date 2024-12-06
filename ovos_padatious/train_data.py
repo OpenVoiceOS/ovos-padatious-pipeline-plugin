@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ovos_padatious.util import tokenize, expand_lines
+from ovos_padatious.util import tokenize, expand_lines, expand_parentheses, remove_comments
 
 
-class TrainData(object):
+class TrainData:
     """
     Training data used to access collections
     of tokenized sentences in intent files
@@ -26,8 +26,7 @@ class TrainData(object):
 
     def add_lines(self, name, lines):
         lines = expand_lines(lines)
-        self.sent_lists[name] = sum([tokenize(line) for line in lines], [])
-        self.sent_lists[name] = [i for i in self.sent_lists[name] if i]
+        self.sent_lists[name] = [tokenize(line) for line in lines if line.strip()]
 
     def remove_lines(self, name):
         if name in self.sent_lists:

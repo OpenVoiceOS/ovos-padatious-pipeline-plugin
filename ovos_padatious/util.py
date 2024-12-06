@@ -96,11 +96,12 @@ def expand_parentheses(sent):
 
 
 def expand_lines(lines):
-    lines = [expand_template(i) for i in remove_comments(lines)]
+    lines = [expand_template(i) for i in remove_comments(lines) if i.strip()]
     return flatten_list(lines)
 
 
 def remove_comments(lines):
+    # NOTE: padatious considers comments as // but all of mycroft/OVOS uses #
     return [i for i in lines if not i.startswith('//')]
 
 
