@@ -90,8 +90,8 @@ class TrainingManager:
                 try:
                     LOG.debug(f"Loading {name} from intent cache")
                     self.objects.append(self.cls.from_file(name=name, folder=self.cache))
-                except:
-                    LOG.error(f"Failed to load intent from cache: {name}")
+                except Exception as e:
+                    LOG.error(f"Failed to load intent from cache: {name} - {str(e)}")
                     retrain = True
             if retrain:
                 LOG.debug(f"Queuing {name} for training")
