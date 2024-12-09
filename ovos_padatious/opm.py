@@ -15,7 +15,7 @@
 """Intent service wrapping padatious."""
 from functools import lru_cache
 from os.path import expanduser, isfile
-from threading import Event
+from threading import Event, RLock
 from typing import Optional, Dict, List, Union
 
 from langcodes import closest_match
@@ -90,7 +90,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                  config: Optional[Dict] = None):
 
         super().__init__(bus, config)
-
+        self.lock = RLock()
         core_config = Configuration()
         self.lang = standardize_lang_tag(core_config.get("lang", "en-US"))
         langs = core_config.get('secondary_langs') or []
@@ -121,6 +121,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on('intent.service.padatious.get', self.handle_get_padatious)
         self.bus.on('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
         self.bus.on('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
+        self.bus.on('mycroft.skills.train', self.train)
 
         LOG.debug('Loaded Padatious intent pipeline')
 
@@ -189,21 +190,26 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             message (Message): optional triggering message
         """
-        name = message.data["name"] if message else ""
-        if not any(engine.must_train
-                   for engine in self.containers.values()):
-            LOG.debug(f"Nothing new to train for '{name}'")
+        LOG.debug("Padatious training start")
+        if not any(engine.must_train for engine in self.containers.values()):
+            LOG.debug(f"Nothing new to train for padatious")
+            # inform the rest of the system to not wait for training finish
+            self.bus.emit(Message('mycroft.skills.trained'))
             return
 
-        for lang in self.containers:
-            if self.containers[lang].must_train:
-                LOG.debug(f"Training '{name}' for lang '{lang}'")
-                self.containers[lang].train()
+        with self.lock:
+            for lang in self.containers:
+                if self.containers[lang].must_train:
+                    LOG.debug(f"Training padatious for lang '{lang}'")
+                    self.containers[lang].train()
 
-        LOG.debug(f"Training complete for '{name}'!")
-        if not self.finished_initial_train:
-            self.bus.emit(Message('mycroft.skills.trained'))
-            self.finished_initial_train = True
+            LOG.debug(f"Training complete for padatious!")
+            if not self.finished_initial_train:
+                self.finished_initial_train = True
+
+        # inform the rest of the system to stop waiting for training finish
+        self.bus.emit(Message('mycroft.skills.trained'))
+        LOG.debug("Padatious training end")
 
     @deprecated("'wait_and_train' has been deprecated, use 'train' directly", "2.0.0")
     def wait_and_train(self):
@@ -264,7 +270,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
         register_func(name, samples)
 
-        self.train(message)
+        self.finished_initial_train = False
+        if self.config.get("instant_train", True):
+            self.train(message)
 
     def register_intent(self, message):
         """Messagebus handler for registering intents.

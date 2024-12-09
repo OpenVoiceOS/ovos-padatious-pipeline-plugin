@@ -73,6 +73,7 @@ class TrainingManager:
             must_train (bool): Whether training is required for the new intent/entity.
         """
         if not must_train:
+            LOG.debug(f"Loading {name} from intent cache")
             self.objects.append(self.cls.from_file(name=name, folder=self.cache))
         # general case: load resource (entity or intent) to training queue
         # or if no change occurred to memory data structures
@@ -87,11 +88,13 @@ class TrainingManager:
             retrain = reload_cache or old_hsh != new_hsh
             if not retrain:
                 try:
+                    LOG.debug(f"Loading {name} from intent cache")
                     self.objects.append(self.cls.from_file(name=name, folder=self.cache))
-                except:
-                    LOG.error(f"Failed to load intent from cache: {name}")
+                except Exception as e:
+                    LOG.error(f"Failed to load intent from cache: {name} - {str(e)}")
                     retrain = True
             if retrain:
+                LOG.debug(f"Queuing {name} for training")
                 self.objects_to_train.append(self.cls(name=name, hsh=new_hsh))
             self.train_data.add_lines(name, lines)
 
