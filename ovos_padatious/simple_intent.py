@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from fann2 import libfann as fann
-
+from ovos_utils.log import LOG
 from ovos_padatious.id_manager import IdManager
 from ovos_padatious.util import resolve_conflicts, StrEnum
 
@@ -26,7 +26,7 @@ class Ids(StrEnum):
     w_4 = ':4'
 
 
-class SimpleIntent(object):
+class SimpleIntent:
     """General intent used to match sentences or phrases"""
     LENIENCE = 0.6
 
@@ -68,6 +68,9 @@ class SimpleIntent(object):
 
         inputs = []
         outputs = []
+
+        n_pos = len(list(train_data.my_sents(self.name)))
+        n_neg = len(list(train_data.other_sents(self.name)))
 
         def add(vec, out):
             inputs.append(self.vectorize(vec))
@@ -115,13 +118,14 @@ class SimpleIntent(object):
 
         train_data = fann.training_data()
         train_data.set_train_data(inputs, outputs)
-
+        LOG.debug(f"Training {self.name} with samples: {n_pos} positive + {n_neg} negative")
         for _ in range(10):
             self.configure_net()
             self.net.train_on_data(train_data, 1000, 0, 0)
             self.net.test_data(train_data)
             if self.net.get_bit_fail() == 0:
                 break
+        LOG.debug(f"Training {self.name} finished!")
 
     def save(self, prefix):
         prefix += '.intent'
