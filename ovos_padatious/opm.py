@@ -20,7 +20,7 @@ from functools import lru_cache
 from os.path import expanduser, isfile
 from threading import Event, RLock
 from typing import Optional, Dict, List, Union
-
+from collections import defaultdict
 import snowballstemmer
 from langcodes import closest_match
 from ovos_config.config import Configuration
@@ -37,6 +37,10 @@ from ovos_utils.fakebus import FakeBus
 from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.xdg_utils import xdg_data_home
+
+from ovos_padatious import IntentContainer as PadatiousIntentContainer
+from ovos_padatious.domain_engine import DomainIntentEngine
+from ovos_padatious.match_data import MatchData as PadatiousIntent
 
 
 # TODO - move to ovos-utils
@@ -263,9 +267,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
         intent_cache = expanduser(self.config.get('intent_cache') or
                                   f"{xdg_data_home()}/{get_xdg_base()}/intent_cache")
-        self.containers = {lang: PadatiousIntentContainer(f"{intent_cache}/{lang}",
-                                                          disable_padaos=self.config.get("disable_padaos", False))
-                           for lang in langs }
+        self.containers = {lang: DomainIntentEngine(f"{intent_cache}/{lang}")
+                           for lang in langs}
         self.stemmers = {lang: Stemmer(lang)
                          for lang in langs if Stemmer.supports_lang(lang)}
         self.finished_training_event = Event()  # DEPRECATED
@@ -273,6 +276,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
         self.registered_intents = []
         self.registered_entities = []
+        self._skill2intent = defaultdict(list)
         self.max_words = 50  # if an utterance contains more words than this, don't attempt to match
 
         self.bus.on('padatious:register_intent', self.register_intent)
@@ -393,7 +397,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if intent_name in self.registered_intents:
             self.registered_intents.remove(intent_name)
             for lang in self.containers:
-                self.containers[lang].remove_intent(intent_name)
+                for skill_id, intents in self._skill2intent.items():
+                    if intent_name in intents:
+                        self.containers[lang].remove_domain_intent(skill_id, intent_name)
 
     def handle_detach_intent(self, message):
         """Messagebus handler for detaching padatious intent.
@@ -410,8 +416,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             message (Message): message triggering action
         """
         skill_id = message.data['skill_id']
-        remove_list = [i for i in self.registered_intents if skill_id in i]
-        for i in remove_list:
+        for i in self._skill2intent[skill_id]:
             self.__detach_intent(i)
 
     def _register_object(self, message, object_name, register_func):
@@ -422,6 +427,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             object_name (str): type of entry to register
             register_func (callable): function to call for registration
         """
+        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
         file_name = message.data.get('file_name')
         samples = message.data.get("samples")
         name = message.data['name']
@@ -446,7 +452,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                        stemmer=stemmer,
                                        keep_order=False,
                                        cast_to_ascii=self.config.get("cast_to_ascii", True))
-        register_func(name, samples)
+        register_func(skill_id, name, samples)
 
         self.finished_initial_train = False
         if self.config.get("instant_train", True):
@@ -458,11 +464,14 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             message (Message): message triggering action
         """
+        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        self._skill2intent[skill_id].append(message.data['name'])
+
         lang = message.data.get('lang', self.lang)
         lang = standardize_lang_tag(lang)
         if lang in self.containers:
             self.registered_intents.append(message.data['name'])
-            self._register_object(message, 'intent', self.containers[lang].add_intent)
+            self._register_object(message, 'intent', self.containers[lang].register_domain_intent)
 
     def register_entity(self, message):
         """Messagebus handler for registering entities.
@@ -475,7 +484,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if lang in self.containers:
             self.registered_entities.append(message.data)
             self._register_object(message, 'entity',
-                                  self.containers[lang].add_entity)
+                                  self.containers[lang].register_domain_entity)
 
     def calc_intent(self, utterances: Union[str, List[str]], lang: Optional[str] = None,
                     message: Optional[Message] = None) -> Optional[PadatiousIntent]:
