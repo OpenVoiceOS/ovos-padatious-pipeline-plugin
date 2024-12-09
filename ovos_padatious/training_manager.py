@@ -87,11 +87,13 @@ class TrainingManager:
             retrain = reload_cache or old_hsh != new_hsh
             if not retrain:
                 try:
+                    LOG.debug(f"Loading {name} from intent cache")
                     self.objects.append(self.cls.from_file(name=name, folder=self.cache))
                 except:
                     LOG.error(f"Failed to load intent from cache: {name}")
                     retrain = True
             if retrain:
+                LOG.debug(f"Training {name}")
                 self.objects_to_train.append(self.cls(name=name, hsh=new_hsh))
             self.train_data.add_lines(name, lines)
 
