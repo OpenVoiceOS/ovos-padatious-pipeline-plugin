@@ -121,7 +121,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on('intent.service.padatious.get', self.handle_get_padatious)
         self.bus.on('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
         self.bus.on('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
-        self.bus.on('padatious:train', self.train)
+        self.bus.on('mycroft.skills.train', self.train)
 
         LOG.debug('Loaded Padatious intent pipeline')
 
