@@ -22,6 +22,10 @@ class IntentManager(TrainingManager):
     def __init__(self, cache):
         super(IntentManager, self).__init__(Intent, cache)
 
+    @property
+    def intent_names(self):
+        return [i.name for i in self.objects + self.objects_to_train]
+
     def calc_intents(self, query, entity_manager):
         sent = tokenize(query)
         matches = []
