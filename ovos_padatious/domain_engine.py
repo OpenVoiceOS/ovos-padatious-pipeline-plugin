@@ -1,6 +1,6 @@
 from collections import defaultdict
 from typing import Dict, List, Optional
-
+from ovos_utils.log import LOG
 from ovos_padatious.intent_container import IntentContainer
 from ovos_padatious.match_data import MatchData
 
@@ -11,7 +11,7 @@ class DomainIntentEngine:
     into specific domains, providing flexible and hierarchical intent matching.
     """
 
-    def __init__(self):
+    def __init__(self, cache_dir: Optional[str] = None):
         """
         Initialize the DomainIntentEngine.
 
@@ -20,10 +20,11 @@ class DomainIntentEngine:
             domains (Dict[str, IntentContainer]): A mapping of domain names to their respective intent containers.
             training_data (Dict[str, List[str]]): A mapping of domain names to their associated training samples.
         """
-        self.domain_engine = IntentContainer()
-        self.domains: Dict[str, IntentContainer] = defaultdict(IntentContainer)
+        self.cache_dir = cache_dir
+        self.domain_engine = IntentContainer(cache_dir=cache_dir)
+        self.domains: Dict[str, IntentContainer] = {}
         self.training_data: Dict[str, List[str]] = defaultdict(list)
-        self._must_train = True
+        self.must_train = True
 
     def remove_domain(self, domain_name: str):
         """
@@ -48,9 +49,11 @@ class DomainIntentEngine:
             intent_name (str): The name of the intent to register.
             intent_samples (List[str]): A list of sample sentences for the intent.
         """
+        if domain_name not in self.domains:
+            self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir)
         self.domains[domain_name].add_intent(intent_name, intent_samples)
         self.training_data[domain_name] += intent_samples
-        self._must_train = True
+        self.must_train = True
 
     def remove_domain_intent(self, domain_name: str, intent_name: str):
         """
@@ -60,7 +63,8 @@ class DomainIntentEngine:
             domain_name (str): The name of the domain.
             intent_name (str): The name of the intent to remove.
         """
-        self.domains[domain_name].remove_intent(intent_name)
+        if domain_name in self.domains:
+            self.domains[domain_name].remove_intent(intent_name)
 
     def register_domain_entity(self, domain_name: str, entity_name: str, entity_samples: List[str]):
         """
@@ -71,6 +75,8 @@ class DomainIntentEngine:
             entity_name (str): The name of the entity to register.
             entity_samples (List[str]): A list of sample phrases for the entity.
         """
+        if domain_name not in self.domains:
+            self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir)
         self.domains[domain_name].add_entity(entity_name, entity_samples)
 
     def remove_domain_entity(self, domain_name: str, entity_name: str):
@@ -81,7 +87,8 @@ class DomainIntentEngine:
             domain_name (str): The name of the domain.
             entity_name (str): The name of the entity to remove.
         """
-        self.domains[domain_name].remove_entity(entity_name)
+        if domain_name in self.domains:
+            self.domains[domain_name].remove_entity(entity_name)
 
     def calc_domains(self, query: str) -> List[MatchData]:
         """
@@ -93,7 +100,7 @@ class DomainIntentEngine:
         Returns:
             List[MatchData]: A list of MatchData objects representing matching domains.
         """
-        if self._must_train:
+        if self.must_train:
             self.train()
 
         return self.domain_engine.calc_intents(query)
@@ -108,7 +115,7 @@ class DomainIntentEngine:
         Returns:
             MatchData: The best matching domain.
         """
-        if self._must_train:
+        if self.must_train:
             self.train()
         return self.domain_engine.calc_intent(query)
 
@@ -123,7 +130,7 @@ class DomainIntentEngine:
         Returns:
             MatchData: The best matching intent.
         """
-        if self._must_train:
+        if self.must_train:
             self.train()
         domain: str = domain or self.domain_engine.calc_intent(query).name
         if domain in self.domains:
@@ -142,7 +149,7 @@ class DomainIntentEngine:
         Returns:
             List[MatchData]: A list of MatchData objects representing matching intents, sorted by confidence.
         """
-        if self._must_train:
+        if self.must_train:
             self.train()
         if domain:
             return self.domains[domain].calc_intents(query)
@@ -155,8 +162,10 @@ class DomainIntentEngine:
 
     def train(self):
         for domain, samples in self.training_data.items():
+            LOG.debug(f"Training domain: {domain}")
             self.domain_engine.add_intent(domain, samples)
         self.domain_engine.train()
         for domain in self.domains:
+            LOG.debug(f"Training domain sub-intents: {domain}")
             self.domains[domain].train()
-        self._must_train = False
+        self.must_train = False
