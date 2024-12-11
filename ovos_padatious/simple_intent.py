@@ -118,7 +118,7 @@ class SimpleIntent:
 
         train_data = fann.training_data()
         train_data.set_train_data(inputs, outputs)
-        LOG.debug(f"Training {self.name} with samples: {n_pos} positive + {n_neg} negative")
+        LOG.debug(f"Training {self.name} with {len(self.ids)} inputs and samples: {n_pos} positive + {n_neg} negative")
         for _ in range(10):
             self.configure_net()
             self.net.train_on_data(train_data, 1000, 0, 0)
