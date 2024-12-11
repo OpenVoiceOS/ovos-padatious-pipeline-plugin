@@ -28,8 +28,9 @@ class IntentManager(TrainingManager):
     Args:
         cache (str): Path to the cache directory for storing trained models.
     """
-    def __init__(self, cache: str):
+    def __init__(self, cache: str, debug: bool = False):
         super().__init__(Intent, cache)
+        self.debug = debug
 
     def calc_intents(self, query: str, entity_manager) -> List[MatchData]:
         """
@@ -50,7 +51,8 @@ class IntentManager(TrainingManager):
             try:
                 match = intent.match(sent, entity_manager)
                 match.detokenize()
-                LOG.debug(f"Inference for intent '{intent.name}' took {time.monotonic() - start_time} seconds")
+                if self.debug:
+                    LOG.debug(f"Inference for intent '{intent.name}' took {time.monotonic() - start_time} seconds")
                 return match
             except Exception as e:
                 LOG.error(f"Error processing intent '{intent.name}': {e}")
