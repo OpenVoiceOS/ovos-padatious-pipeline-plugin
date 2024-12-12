@@ -272,15 +272,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.conf_med = self.config.get("conf_med") or 0.8
         self.conf_low = self.config.get("conf_low") or 0.5
 
-        if engine_class is None:
-            if self.config.get("domain_engine"):
-                engine_class = DomainIntentContainer
-            else:
-                engine_class = IntentContainer
+        if engine_class is None and self.config.get("domain_engine"):
+            engine_class = DomainIntentContainer
 
+        self.engine_class = engine_class or IntentContainer
         intent_cache = expanduser(self.config.get('intent_cache') or
                                   f"{xdg_data_home()}/{get_xdg_base()}/intent_cache")
-        self.containers = {lang: engine_class(cache_dir=f"{intent_cache}/{lang}") for lang in langs}
+        self.containers = {lang: self.engine_class(cache_dir=f"{intent_cache}/{lang}") for lang in langs}
 
         self.stemmers = {lang: Stemmer(lang)
                          for lang in langs if Stemmer.supports_lang(lang)}
@@ -413,7 +411,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             for lang in self.containers:
                 for skill_id, intents in self._skill2intent.items():
                     if intent_name in intents:
-                        self.containers[lang].remove_domain_intent(skill_id, intent_name)
+                        if isinstance(self.containers[lang], DomainIntentContainer):
+                            self.containers[lang].remove_domain_intent(skill_id, intent_name)
+                        else:
+                            self.containers[lang].remove_intent(intent_name)
 
     def handle_detach_intent(self, message):
         """Messagebus handler for detaching padatious intent.
@@ -466,7 +467,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                        stemmer=stemmer,
                                        keep_order=False,
                                        cast_to_ascii=self.config.get("cast_to_ascii", True))
-        register_func(skill_id, name, samples)
+
+        if self.engine_class == DomainIntentContainer:
+            register_func(skill_id, name, samples)
+        else:
+            register_func(name, samples)
 
         self.finished_initial_train = False
         if self.config.get("instant_train", True):
@@ -485,7 +490,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         lang = standardize_lang_tag(lang)
         if lang in self.containers:
             self.registered_intents.append(message.data['name'])
-            self._register_object(message, 'intent', self.containers[lang].register_domain_intent)
+            if isinstance(self.containers[lang], DomainIntentContainer):
+                self._register_object(message, 'intent', self.containers[lang].add_domain_intent)
+            else:
+                self._register_object(message, 'intent', self.containers[lang].add_intent)
 
     def register_entity(self, message):
         """Messagebus handler for registering entities.
@@ -497,8 +505,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         lang = standardize_lang_tag(lang)
         if lang in self.containers:
             self.registered_entities.append(message.data)
-            self._register_object(message, 'entity',
-                                  self.containers[lang].register_domain_entity)
+            if isinstance(self.containers[lang], DomainIntentContainer):
+                self._register_object(message, 'entity',  self.containers[lang].add_domain_entity)
+            else:
+                self._register_object(message, 'entity',  self.containers[lang].add_entity)
 
     def calc_intent(self, utterances: Union[str, List[str]], lang: Optional[str] = None,
                     message: Optional[Message] = None) -> Optional[PadatiousIntent]:
