@@ -5,7 +5,7 @@ from ovos_padatious.intent_container import IntentContainer
 from ovos_padatious.match_data import MatchData
 
 
-class DomainIntentEngine:
+class DomainIntentContainer:
     """
     A domain-aware intent recognition engine that organizes intents and entities
     into specific domains, providing flexible and hierarchical intent matching.

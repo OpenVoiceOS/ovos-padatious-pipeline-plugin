@@ -19,7 +19,7 @@ import unicodedata
 from functools import lru_cache
 from os.path import expanduser, isfile
 from threading import Event, RLock
-from typing import Optional, Dict, List, Union
+from typing import Optional, Dict, List, Union, Type
 from collections import defaultdict
 import snowballstemmer
 from langcodes import closest_match
@@ -38,9 +38,15 @@ from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.xdg_utils import xdg_data_home
 
-from ovos_padatious import IntentContainer as PadatiousIntentContainer
-from ovos_padatious.domain_engine import DomainIntentEngine
+from ovos_padatious import IntentContainer
+from ovos_padatious.domain_engine import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
+
+PadatiousIntentContainer = IntentContainer  # backwards compat
+
+# for easy typing
+PadatiousEngine = Union[Type[IntentContainer],
+                        Type[DomainIntentContainer]]
 
 
 # TODO - move to ovos-utils
@@ -250,7 +256,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     """Service class for padatious intent matching."""
 
     def __init__(self, bus: Optional[Union[MessageBusClient, FakeBus]] = None,
-                 config: Optional[Dict] = None):
+                 config: Optional[Dict] = None,
+                 engine_class: Optional[PadatiousEngine] = IntentContainer):
 
         super().__init__(bus, config)
         self.lock = RLock()
@@ -265,12 +272,19 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.conf_med = self.config.get("conf_med") or 0.8
         self.conf_low = self.config.get("conf_low") or 0.5
 
+        if engine_class is None:
+            if self.config.get("domain_engine"):
+                engine_class = DomainIntentContainer
+            else:
+                engine_class = IntentContainer
+
         intent_cache = expanduser(self.config.get('intent_cache') or
                                   f"{xdg_data_home()}/{get_xdg_base()}/intent_cache")
-        self.containers = {lang: DomainIntentEngine(f"{intent_cache}/{lang}")
-                           for lang in langs}
+        self.containers = {lang: engine_class(cache_dir=f"{intent_cache}/{lang}") for lang in langs}
+
         self.stemmers = {lang: Stemmer(lang)
                          for lang in langs if Stemmer.supports_lang(lang)}
+
         self.finished_training_event = Event()  # DEPRECATED
         self.finished_initial_train = False
 
@@ -577,7 +591,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
 @lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
 def _calc_padatious_intent(utt: str,
-                           intent_container: PadatiousIntentContainer,
+                           intent_container: Union[IntentContainer, DomainIntentContainer],
                            sess: Session) -> Optional[PadatiousIntent]:
     """
     Try to match an utterance to an intent in an intent_container
