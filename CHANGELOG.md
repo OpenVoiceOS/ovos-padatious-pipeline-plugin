@@ -1,12 +1,12 @@
 # Changelog
 
-## [1.1.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.1.0a1) (2024-12-09)
+## [1.1.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.1.1a1) (2024-12-11)
 
-[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.0.5...1.1.0a1)
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.1.0...1.1.1a1)
 
 **Merged pull requests:**
 
-- feat:delayed\_padatious\_training [\#29](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/29) ([JarbasAl](https://github.com/JarbasAl))
+- performance: paralelize inference [\#32](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/32) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
