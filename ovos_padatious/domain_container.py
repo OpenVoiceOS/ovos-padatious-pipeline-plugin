@@ -40,7 +40,7 @@ class DomainIntentContainer:
         if domain_name in self.domain_engine.intent_names:
             self.domain_engine.remove_intent(domain_name)
 
-    def register_domain_intent(self, domain_name: str, intent_name: str, intent_samples: List[str]):
+    def add_domain_intent(self, domain_name: str, intent_name: str, intent_samples: List[str]):
         """
         Register an intent within a specific domain.
 
@@ -66,7 +66,7 @@ class DomainIntentContainer:
         if domain_name in self.domains:
             self.domains[domain_name].remove_intent(intent_name)
 
-    def register_domain_entity(self, domain_name: str, entity_name: str, entity_samples: List[str]):
+    def add_domain_entity(self, domain_name: str, entity_name: str, entity_samples: List[str]):
         """
         Register an entity within a specific domain.
 
