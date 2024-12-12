@@ -39,7 +39,7 @@ from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.xdg_utils import xdg_data_home
 
 from ovos_padatious import IntentContainer
-from ovos_padatious.domain_engine import DomainIntentContainer
+from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 
 PadatiousIntentContainer = IntentContainer  # backwards compat
