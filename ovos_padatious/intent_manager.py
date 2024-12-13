@@ -32,6 +32,10 @@ class IntentManager(TrainingManager):
         super().__init__(Intent, cache)
         self.debug = debug
 
+    @property
+    def intent_names(self):
+        return [i.name for i in self.objects + self.objects_to_train]
+
     def calc_intents(self, query: str, entity_manager) -> List[MatchData]:
         """
         Calculate matches for the given query against all registered intents.
