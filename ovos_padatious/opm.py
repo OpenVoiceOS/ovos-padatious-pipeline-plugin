@@ -13,17 +13,24 @@
 # limitations under the License.
 #
 """Intent service wrapping padatious."""
+import re
+import string
+import unicodedata
 from functools import lru_cache
 from os.path import expanduser, isfile
 from threading import Event, RLock
 from typing import Optional, Dict, List, Union
 
+import snowballstemmer
 from langcodes import closest_match
+from ovos_config.config import Configuration
+from ovos_config.meta import get_xdg_base
+
 from ovos_bus_client.client import MessageBusClient
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
-from ovos_config.config import Configuration
-from ovos_config.meta import get_xdg_base
+from ovos_padatious import IntentContainer as PadatiousIntentContainer
+from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch, IntentMatch
 from ovos_utils import flatten_list
 from ovos_utils.fakebus import FakeBus
@@ -31,8 +38,160 @@ from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.xdg_utils import xdg_data_home
 
-from ovos_padatious import IntentContainer as PadatiousIntentContainer
-from ovos_padatious.match_data import MatchData as PadatiousIntent
+
+# TODO - move to ovos-utils
+@lru_cache()
+def remove_accents_and_punct(input_str: str) -> str:
+    """
+    Normalize the input string by removing accents and punctuation (except for '{' and '}').
+
+    Args:
+        input_str (str): The input string to be processed.
+
+    Returns:
+        str: The processed string with accents and punctuation removed.
+    """
+    rm_chars = [c for c in string.punctuation if c not in ("{", "}")]
+    # Normalize to NFD (Normalization Form Decomposed), which separates characters and diacritical marks
+    nfkd_form = unicodedata.normalize('NFD', input_str)
+    # Remove characters that are not ASCII letters or punctuation we want to keep
+    return ''.join([char for char in nfkd_form
+                    if unicodedata.category(char) != 'Mn' and char not in rm_chars])
+
+
+# TODO - move to ovos-utils
+def deduplicate_list(seq: List[str], keep_order: bool = True) -> List[str]:
+    """
+    Deduplicate a list while optionally maintaining the original order.
+
+    Args:
+        seq (List[str]): The list to deduplicate.
+        keep_order (bool): Whether to preserve the order of elements. Default is True.
+
+    Returns:
+        List[str]: The deduplicated list.
+
+    Notes:
+        If `keep_order` is False, the function uses a set for faster deduplication.
+    """
+    if not keep_order:
+        return list(set(seq))
+    else:
+        return list(dict.fromkeys(seq))
+
+
+def normalize_utterances(utterances: List[str], lang: str, cast_to_ascii: bool = True,
+                         keep_order: bool = True, stemmer: Optional['Stemmer'] = None) -> List[str]:
+    """
+    Normalize a list of utterances by collapsing whitespaces, removing accents and punctuation,
+    and optionally stemming and deduplicating.
+
+    Args:
+        utterances (List[str]): The list of utterances to normalize.
+        lang (str): The language code for stemming support.
+        cast_to_ascii (bool): Whether to remove accented characters and punctuation. Default is True.
+        keep_order (bool): Whether to preserve the order of utterances. Default is True.
+        stemmer (Optional[Stemmer]): A stemmer object to stem the utterances (default is None).
+
+    Returns:
+        List[str]: The normalized list of utterances.
+    """
+    # Flatten the list if it's in old style tuple format
+    utterances = flatten_list(utterances)  # Assuming flatten_list is defined elsewhere
+    # Collapse multiple whitespaces into a single space
+    utterances = [re.sub(r'\s+', ' ', u) for u in utterances]
+    # Replace accented characters and punctuation if needed
+    if cast_to_ascii:
+        utterances = [remove_accents_and_punct(u) for u in utterances]
+    # Stem words if stemmer is provided
+    if stemmer is not None:
+        utterances = stemmer.stem_sentences(utterances)
+    # Deduplicate the list
+    utterances = deduplicate_list(utterances, keep_order=keep_order)
+    return utterances
+
+
+class Stemmer:
+    """
+    A simple wrapper around the Snowball stemmer for various languages.
+
+    Attributes:
+        LANGS (dict): A dictionary mapping language codes to Snowball stemmer language names.
+    """
+    LANGS = {'ar': 'arabic', 'eu': 'basque', 'ca': 'catalan', 'da': 'danish', 'nl': 'dutch', 'en': 'english',
+             'fi': 'finnish', 'fr': 'french', 'de': 'german', 'el': 'greek', 'hi': 'hindi', 'hu': 'hungarian',
+             'id': 'indonesian', 'ga': 'irish', 'it': 'italian', 'lt': 'lithuanian', 'ne': 'nepali',
+             'no': 'norwegian', 'pt': 'portuguese', 'ro': 'romanian', 'ru': 'russian', 'sr': 'serbian',
+             'es': 'spanish', 'sv': 'swedish', 'ta': 'tamil', 'tr': 'turkish'}
+
+    def __init__(self, lang: str):
+        """
+        Initialize the stemmer for a given language.
+
+        Args:
+            lang (str): The language code for stemming.
+
+        Raises:
+            ValueError: If the language is unsupported.
+        """
+        lang2 = closest_match(lang, list(self.LANGS))[0]
+        if lang2 == "und":
+            raise ValueError(f"unsupported language: {lang}")
+        self.snowball = snowballstemmer.stemmer(self.LANGS[lang2])
+
+    @classmethod
+    def supports_lang(cls, lang: str) -> bool:
+        """
+        Check if the given language is supported by the stemmer.
+
+        Args:
+            lang (str): The language code to check.
+
+        Returns:
+            bool: True if the language is supported, False otherwise.
+        """
+        lang2 = closest_match(lang, list(cls.LANGS))[0]
+        return lang2 != "und"
+
+    def stem_sentence(self, sentence: str) -> str:
+        """
+        Stem a single sentence.
+
+        Args:
+            sentence (str): The sentence to stem.
+
+        Returns:
+            str: The stemmed sentence.
+        """
+        return _cached_stem_sentence(self.snowball, sentence)
+
+    def stem_sentences(self, sentences: List[str]) -> List[str]:
+        """
+        Stem a list of sentences.
+
+        Args:
+            sentences (List[str]): The list of sentences to stem.
+
+        Returns:
+            List[str]: The list of stemmed sentences.
+        """
+        return [self.stem_sentence(s) for s in sentences]
+
+
+@lru_cache()
+def _cached_stem_sentence(stemmer, sentence: str) -> str:
+    """
+    Cache the stemming of a single sentence to optimize repeated calls.
+
+    Args:
+        stemmer: The stemmer instance to use.
+        sentence (str): The sentence to stem.
+
+    Returns:
+        str: The stemmed sentence.
+    """
+    stems = stemmer.stemWords(sentence.split())
+    return " ".join(stems)
 
 
 class PadatiousMatcher:
@@ -104,9 +263,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
         intent_cache = expanduser(self.config.get('intent_cache') or
                                   f"{xdg_data_home()}/{get_xdg_base()}/intent_cache")
-        self.containers = {lang: PadatiousIntentContainer(f"{intent_cache}/{lang}")
-                           for lang in langs}
-
+        self.containers = {lang: PadatiousIntentContainer(f"{intent_cache}/{lang}",
+                                                          disable_padaos=self.config.get("disable_padaos", False))
+                           for lang in langs }
+        self.stemmers = {lang: Stemmer(lang)
+                         for lang in langs if Stemmer.supports_lang(lang)}
         self.finished_training_event = Event()  # DEPRECATED
         self.finished_initial_train = False
 
@@ -145,9 +306,16 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             limit (float): required confidence level.
         """
         LOG.debug(f'Padatious Matching confidence > {limit}')
-        # call flatten in case someone is sending the old style list of tuples
-        utterances = flatten_list(utterances)
         lang = standardize_lang_tag(lang or self.lang)
+
+        if lang in self.stemmers:
+            stemmer = self.stemmers[lang]
+        else:
+            stemmer = None
+        utterances = normalize_utterances(utterances, lang,
+                                          stemmer=stemmer,
+                                          keep_order=False,
+                                          cast_to_ascii=self.config.get("cast_to_ascii", True))
         padatious_intent = self.calc_intent(utterances, lang, message)
         if padatious_intent is not None and padatious_intent.conf > limit:
             skill_id = padatious_intent.name.split(':')[0]
@@ -257,6 +425,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         file_name = message.data.get('file_name')
         samples = message.data.get("samples")
         name = message.data['name']
+        lang = message.data.get('lang', self.lang)
+        lang = standardize_lang_tag(lang)
 
         LOG.debug('Registering Padatious ' + object_name + ': ' + name)
 
@@ -268,6 +438,14 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             with open(file_name) as f:
                 samples = [line.strip() for line in f.readlines()]
 
+        if lang in self.stemmers:
+            stemmer = self.stemmers[lang]
+        else:
+            stemmer = None
+        samples = normalize_utterances(samples, lang,
+                                       stemmer=stemmer,
+                                       keep_order=False,
+                                       cast_to_ascii=self.config.get("cast_to_ascii", True))
         register_func(name, samples)
 
         self.finished_initial_train = False
