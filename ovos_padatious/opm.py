@@ -13,6 +13,8 @@
 # limitations under the License.
 #
 """Intent service wrapping padatious."""
+import re
+import unicodedata
 from functools import lru_cache
 from os.path import expanduser, isfile
 from threading import Event, RLock
@@ -36,14 +38,49 @@ from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.xdg_utils import xdg_data_home
 
 
+# TODO - move to ovos-utils
+def remove_accents(input_str):
+    # Normalize to NFD (Normalization Form Decomposed), which separates characters and diacritical marks
+    nfkd_form = unicodedata.normalize('NFD', input_str)
+    # Remove characters that are not ASCII letters
+    return ''.join([char for char in nfkd_form if unicodedata.category(char) != 'Mn'])
+
+
+# TODO - move to ovos-utils
+def deduplicate_list(seq, keep_order=True):
+    """
+    if order doesnt matter it is faster to use keep_order=False
+
+    benchmarks: https://www.peterbe.com/plog/fastest-way-to-uniquify-a-list-in-python-3.6
+    """
+    if not keep_order:
+        return list(set(seq))
+    else:
+        return list(dict.fromkeys(seq))
+
+
+def normalize_utterances(utterances, lang, cast_to_ascii=True, keep_order=True, stemmer=None) -> List[str]:
+    # call flatten in case someone is sending the old style list of tuples
+    utterances = flatten_list(utterances)
+    # collapse multiple whitespaces
+    utterances = [re.sub(r'\s+', ' ', u) for u in utterances]
+    # replace accented chars
+    if cast_to_ascii:
+        utterances = [remove_accents(u) for u in utterances]
+    # stem words
+    if stemmer is not None:
+        utterances = stemmer.stem_sentences(utterances)
+    # deduplicate list
+    utterances = deduplicate_list(utterances, keep_order=keep_order)
+    return utterances
+
+
 class Stemmer:
     LANGS = {'ar': 'arabic', 'eu': 'basque', 'ca': 'catalan', 'da': 'danish', 'nl': 'dutch', 'en': 'english',
              'fi': 'finnish', 'fr': 'french', 'de': 'german', 'el': 'greek', 'hi': 'hindi', 'hu': 'hungarian',
              'id': 'indonesian', 'ga': 'irish', 'it': 'italian', 'lt': 'lithuanian', 'ne': 'nepali',
-             'no': 'norwegian',
-             'pt': 'portuguese', 'ro': 'romanian', 'ru': 'russian', 'sr': 'serbian', 'es': 'spanish',
-             'sv': 'swedish',
-             'ta': 'tamil', 'tr': 'turkish'}
+             'no': 'norwegian', 'pt': 'portuguese', 'ro': 'romanian', 'ru': 'russian', 'sr': 'serbian',
+             'es': 'spanish', 'sv': 'swedish', 'ta': 'tamil', 'tr': 'turkish'}
 
     def __init__(self, lang):
         lang2 = closest_match(lang, list(self.LANGS))[0]
@@ -59,6 +96,9 @@ class Stemmer:
     def stem_sentence(self, sentence: str) -> str:
         stems = self.snowball.stemWords(sentence.split())
         return " ".join(stems)
+
+    def stem_sentences(self, sentences: List[str]) -> List[str]:
+        return [self.stem_sentence(s) for s in sentences]
 
 
 class PadatiousMatcher:
@@ -173,10 +213,15 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         """
         LOG.debug(f'Padatious Matching confidence > {limit}')
         lang = standardize_lang_tag(lang or self.lang)
-        # call flatten in case someone is sending the old style list of tuples
-        utterances = flatten_list(utterances)
+
         if self.config.get("enable_stemming", True) and Stemmer.supports_lang(lang):
-            utterances = [self.stemmers[lang].stem_sentence(u) for u in utterances]
+            stemmer = self.stemmers[lang]
+        else:
+            stemmer = None
+        utterances = normalize_utterances(utterances, lang,
+                                          stemmer=stemmer,
+                                          keep_order=False,
+                                          cast_to_ascii=self.config.get("cast_to_ascii", True))
         padatious_intent = self.calc_intent(utterances, lang, message)
         if padatious_intent is not None and padatious_intent.conf > limit:
             skill_id = padatious_intent.name.split(':')[0]
@@ -300,8 +345,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 samples = [line.strip() for line in f.readlines()]
 
         if self.config.get("enable_stemming", True) and Stemmer.supports_lang(lang):
-            samples = [self.stemmers[lang].stem_sentence(u) for u in samples]
-
+            stemmer = self.stemmers[lang]
+        else:
+            stemmer = None
+        samples = normalize_utterances(samples, lang,
+                                       stemmer=stemmer,
+                                       keep_order=False,
+                                       cast_to_ascii=self.config.get("cast_to_ascii", True))
         register_func(name, samples)
 
         self.finished_initial_train = False
