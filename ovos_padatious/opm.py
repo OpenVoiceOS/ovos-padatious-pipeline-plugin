@@ -14,6 +14,7 @@
 #
 """Intent service wrapping padatious."""
 import re
+import string
 import unicodedata
 from functools import lru_cache
 from os.path import expanduser, isfile
@@ -36,8 +37,6 @@ from ovos_utils.fakebus import FakeBus
 from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.xdg_utils import xdg_data_home
-from functools import lru_cache
-import string
 
 
 # TODO - move to ovos-utils
@@ -101,13 +100,14 @@ class Stemmer:
     def stem_sentence(self, sentence: str) -> str:
         return _cached_stem_sentence(self.snowball, sentence)
 
+    def stem_sentences(self, sentences: List[str]) -> List[str]:
+        return [self.stem_sentence(s) for s in sentences]
+
+
 @lru_cache()
 def _cached_stem_sentence(stemmer, sentence: str) -> str:
     stems = stemmer.stemWords(sentence.split())
     return " ".join(stems)
-
-    def stem_sentences(self, sentences: List[str]) -> List[str]:
-        return [self.stem_sentence(s) for s in sentences]
 
 
 class PadatiousMatcher:
