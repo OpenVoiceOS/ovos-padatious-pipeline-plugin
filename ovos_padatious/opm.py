@@ -98,10 +98,13 @@ class Stemmer:
         lang2 = closest_match(lang, list(cls.LANGS))[0]
         return lang2 != "und"
 
-    @lru_cache()
     def stem_sentence(self, sentence: str) -> str:
-        stems = self.snowball.stemWords(sentence.split())
-        return " ".join(stems)
+        return _cached_stem_sentence(self.snowball, sentence)
+
+@lru_cache()
+def _cached_stem_sentence(stemmer, sentence: str) -> str:
+    stems = stemmer.stemWords(sentence.split())
+    return " ".join(stems)
 
     def stem_sentences(self, sentences: List[str]) -> List[str]:
         return [self.stem_sentence(s) for s in sentences]
