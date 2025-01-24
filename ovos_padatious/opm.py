@@ -430,7 +430,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             message (Message): message triggering action
         """
-        skill_id = message.data['skill_id']
+        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        if not skill_id:
+            LOG.error("Skill ID is missing. Cannot detach intent without a valid skill ID.")
+            return
         for i in self._skill2intent[skill_id]:
             self.__detach_intent(i)
 
@@ -443,6 +446,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             register_func (callable): function to call for registration
         """
         skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        if not skill_id:
+            LOG.error("Skill ID is missing. Cannot register intent without a valid skill ID.")
+            return
         file_name = message.data.get('file_name')
         samples = message.data.get("samples")
         name = message.data['name']
@@ -484,6 +490,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             message (Message): message triggering action
         """
         skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        if not skill_id:
+            LOG.error("Skill ID is missing. Cannot register intent without a valid skill ID.")
+            return
         self._skill2intent[skill_id].append(message.data['name'])
 
         lang = message.data.get('lang', self.lang)
