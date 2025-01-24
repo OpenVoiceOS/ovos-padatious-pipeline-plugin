@@ -18,12 +18,16 @@ from os.path import expanduser, isfile
 from threading import Event, RLock
 from typing import Optional, Dict, List, Union
 
+import snowballstemmer
 from langcodes import closest_match
+from ovos_config.config import Configuration
+from ovos_config.meta import get_xdg_base
+
 from ovos_bus_client.client import MessageBusClient
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
-from ovos_config.config import Configuration
-from ovos_config.meta import get_xdg_base
+from ovos_padatious import IntentContainer as PadatiousIntentContainer
+from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch, IntentMatch
 from ovos_utils import flatten_list
 from ovos_utils.fakebus import FakeBus
@@ -31,8 +35,30 @@ from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.xdg_utils import xdg_data_home
 
-from ovos_padatious import IntentContainer as PadatiousIntentContainer
-from ovos_padatious.match_data import MatchData as PadatiousIntent
+
+class Stemmer:
+    LANGS = {'ar': 'arabic', 'eu': 'basque', 'ca': 'catalan', 'da': 'danish', 'nl': 'dutch', 'en': 'english',
+             'fi': 'finnish', 'fr': 'french', 'de': 'german', 'el': 'greek', 'hi': 'hindi', 'hu': 'hungarian',
+             'id': 'indonesian', 'ga': 'irish', 'it': 'italian', 'lt': 'lithuanian', 'ne': 'nepali',
+             'no': 'norwegian',
+             'pt': 'portuguese', 'ro': 'romanian', 'ru': 'russian', 'sr': 'serbian', 'es': 'spanish',
+             'sv': 'swedish',
+             'ta': 'tamil', 'tr': 'turkish'}
+
+    def __init__(self, lang):
+        lang2 = closest_match(lang, list(self.LANGS))[0]
+        if lang2 == "und":
+            raise ValueError(f"unsupported language: {lang}")
+        self.snowball = snowballstemmer.stemmer(self.LANGS[lang2])
+
+    @classmethod
+    def supports_lang(cls, lang) -> bool:
+        lang2 = closest_match(lang, list(cls.LANGS))[0]
+        return lang2 != "und"
+
+    def stem_sentence(self, sentence: str) -> str:
+        stems = self.snowball.stemWords(sentence.split())
+        return " ".join(stems)
 
 
 class PadatiousMatcher:
@@ -104,9 +130,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
         intent_cache = expanduser(self.config.get('intent_cache') or
                                   f"{xdg_data_home()}/{get_xdg_base()}/intent_cache")
-        self.containers = {lang: PadatiousIntentContainer(f"{intent_cache}/{lang}")
+        self.containers = {lang: PadatiousIntentContainer(f"{intent_cache}/{lang}",
+                                                          disable_padaos=self.config.get("disable_padaos", False))
                            for lang in langs}
-
+        self.stemmers = {lang: Stemmer(lang) for lang in langs}
         self.finished_training_event = Event()  # DEPRECATED
         self.finished_initial_train = False
 
@@ -145,9 +172,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             limit (float): required confidence level.
         """
         LOG.debug(f'Padatious Matching confidence > {limit}')
+        lang = standardize_lang_tag(lang or self.lang)
         # call flatten in case someone is sending the old style list of tuples
         utterances = flatten_list(utterances)
-        lang = standardize_lang_tag(lang or self.lang)
+        if self.config.get("enable_stemming", True) and Stemmer.supports_lang(lang):
+            utterances = [self.stemmers[lang].stem_sentence(u) for u in utterances]
         padatious_intent = self.calc_intent(utterances, lang, message)
         if padatious_intent is not None and padatious_intent.conf > limit:
             skill_id = padatious_intent.name.split(':')[0]
@@ -257,6 +286,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         file_name = message.data.get('file_name')
         samples = message.data.get("samples")
         name = message.data['name']
+        lang = message.data.get('lang', self.lang)
+        lang = standardize_lang_tag(lang)
 
         LOG.debug('Registering Padatious ' + object_name + ': ' + name)
 
@@ -267,6 +298,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if not samples and isfile(file_name):
             with open(file_name) as f:
                 samples = [line.strip() for line in f.readlines()]
+
+        if self.config.get("enable_stemming", True) and Stemmer.supports_lang(lang):
+            samples = [self.stemmers[lang].stem_sentence(u) for u in samples]
 
         register_func(name, samples)
 
