@@ -56,7 +56,7 @@ class IntentContainer:
         cache_dir (str): Directory for caching the neural network models and intent/entity files.
     """
 
-    def __init__(self, cache_dir: str = None, disable_padaos: bool = False) -> None:
+    def __init__(self, cache_dir: Optional[str] = None, disable_padaos: bool = False) -> None:
         cache_dir = cache_dir or f"{xdg_data_home()}/{get_xdg_base()}/intent_cache"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir: str = cache_dir

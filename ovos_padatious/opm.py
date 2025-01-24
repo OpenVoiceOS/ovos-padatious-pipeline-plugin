@@ -16,11 +16,12 @@
 import re
 import string
 import unicodedata
+from collections import defaultdict
 from functools import lru_cache
 from os.path import expanduser, isfile
 from threading import Event, RLock
 from typing import Optional, Dict, List, Union, Type
-from collections import defaultdict
+
 import snowballstemmer
 from langcodes import closest_match
 from ovos_config.config import Configuration
@@ -29,7 +30,8 @@ from ovos_config.meta import get_xdg_base
 from ovos_bus_client.client import MessageBusClient
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
-from ovos_padatious import IntentContainer as PadatiousIntentContainer
+from ovos_padatious import IntentContainer
+from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch, IntentMatch
 from ovos_utils import flatten_list
@@ -38,15 +40,11 @@ from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.xdg_utils import xdg_data_home
 
-from ovos_padatious import IntentContainer
-from ovos_padatious.domain_container import DomainIntentContainer
-from ovos_padatious.match_data import MatchData as PadatiousIntent
-
 PadatiousIntentContainer = IntentContainer  # backwards compat
 
 # for easy typing
 PadatiousEngine = Union[Type[IntentContainer],
-                        Type[DomainIntentContainer]]
+Type[DomainIntentContainer]]
 
 
 # TODO - move to ovos-utils
@@ -278,7 +276,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.engine_class = engine_class or IntentContainer
         intent_cache = expanduser(self.config.get('intent_cache') or
                                   f"{xdg_data_home()}/{get_xdg_base()}/intent_cache")
-        self.containers = {lang: self.engine_class(cache_dir=f"{intent_cache}/{lang}") for lang in langs}
+        self.containers = {lang: self.engine_class(cache_dir=f"{intent_cache}/{lang}",
+                                                   disable_padaos=self.config.get("disable_padaos", False))
+                           for lang in langs}
 
         self.stemmers = {lang: Stemmer(lang)
                          for lang in langs if Stemmer.supports_lang(lang)}
@@ -506,9 +506,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if lang in self.containers:
             self.registered_entities.append(message.data)
             if isinstance(self.containers[lang], DomainIntentContainer):
-                self._register_object(message, 'entity',  self.containers[lang].add_domain_entity)
+                self._register_object(message, 'entity', self.containers[lang].add_domain_entity)
             else:
-                self._register_object(message, 'entity',  self.containers[lang].add_entity)
+                self._register_object(message, 'entity', self.containers[lang].add_entity)
 
     def calc_intent(self, utterances: Union[str, List[str]], lang: Optional[str] = None,
                     message: Optional[Message] = None) -> Optional[PadatiousIntent]:

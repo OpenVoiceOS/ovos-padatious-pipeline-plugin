@@ -11,7 +11,7 @@ class DomainIntentContainer:
     into specific domains, providing flexible and hierarchical intent matching.
     """
 
-    def __init__(self, cache_dir: Optional[str] = None):
+    def __init__(self, cache_dir: Optional[str] = None, disable_padaos: bool = False):
         """
         Initialize the DomainIntentEngine.
 
@@ -21,7 +21,9 @@ class DomainIntentContainer:
             training_data (Dict[str, List[str]]): A mapping of domain names to their associated training samples.
         """
         self.cache_dir = cache_dir
-        self.domain_engine = IntentContainer(cache_dir=cache_dir)
+        self.disable_padaos = disable_padaos
+        self.domain_engine = IntentContainer(cache_dir=cache_dir,
+                                             disable_padaos=disable_padaos)
         self.domains: Dict[str, IntentContainer] = {}
         self.training_data: Dict[str, List[str]] = defaultdict(list)
         self.must_train = True
@@ -50,7 +52,8 @@ class DomainIntentContainer:
             intent_samples (List[str]): A list of sample sentences for the intent.
         """
         if domain_name not in self.domains:
-            self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir)
+            self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir,
+                                                        disable_padaos=self.disable_padaos)
         self.domains[domain_name].add_intent(intent_name, intent_samples)
         self.training_data[domain_name] += intent_samples
         self.must_train = True
@@ -76,7 +79,8 @@ class DomainIntentContainer:
             entity_samples (List[str]): A list of sample phrases for the entity.
         """
         if domain_name not in self.domains:
-            self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir)
+            self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir,
+                                                        disable_padaos=self.disable_padaos)
         self.domains[domain_name].add_entity(entity_name, entity_samples)
 
     def remove_domain_entity(self, domain_name: str, entity_name: str):
