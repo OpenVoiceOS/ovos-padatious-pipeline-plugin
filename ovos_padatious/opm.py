@@ -36,14 +36,18 @@ from ovos_utils.fakebus import FakeBus
 from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.xdg_utils import xdg_data_home
+from functools import lru_cache
+import string
 
 
 # TODO - move to ovos-utils
-def remove_accents(input_str):
+@lru_cache()
+def remove_accents_and_punct(input_str):
     # Normalize to NFD (Normalization Form Decomposed), which separates characters and diacritical marks
     nfkd_form = unicodedata.normalize('NFD', input_str)
     # Remove characters that are not ASCII letters
-    return ''.join([char for char in nfkd_form if unicodedata.category(char) != 'Mn'])
+    return ''.join([char for char in nfkd_form
+                    if unicodedata.category(char) != 'Mn' and char not in string.punctuation])
 
 
 # TODO - move to ovos-utils
@@ -66,7 +70,7 @@ def normalize_utterances(utterances, lang, cast_to_ascii=True, keep_order=True, 
     utterances = [re.sub(r'\s+', ' ', u) for u in utterances]
     # replace accented chars
     if cast_to_ascii:
-        utterances = [remove_accents(u) for u in utterances]
+        utterances = [remove_accents_and_punct(u) for u in utterances]
     # stem words
     if stemmer is not None:
         utterances = stemmer.stem_sentences(utterances)
@@ -93,6 +97,7 @@ class Stemmer:
         lang2 = closest_match(lang, list(cls.LANGS))[0]
         return lang2 != "und"
 
+    @lru_cache()
     def stem_sentence(self, sentence: str) -> str:
         stems = self.snowball.stemWords(sentence.split())
         return " ".join(stems)
@@ -172,7 +177,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                   f"{xdg_data_home()}/{get_xdg_base()}/intent_cache")
         self.containers = {lang: PadatiousIntentContainer(f"{intent_cache}/{lang}",
                                                           disable_padaos=self.config.get("disable_padaos", False))
-                           for lang in langs}
+                           for lang in langs if Stemmer.supports_lang(lang)}
         self.stemmers = {lang: Stemmer(lang) for lang in langs}
         self.finished_training_event = Event()  # DEPRECATED
         self.finished_initial_train = False
