@@ -41,21 +41,38 @@ from ovos_utils.xdg_utils import xdg_data_home
 
 # TODO - move to ovos-utils
 @lru_cache()
-def remove_accents_and_punct(input_str):
+def remove_accents_and_punct(input_str: str) -> str:
+    """
+    Normalize the input string by removing accents and punctuation (except for '{' and '}').
+
+    Args:
+        input_str (str): The input string to be processed.
+
+    Returns:
+        str: The processed string with accents and punctuation removed.
+    """
     rm_chars = [c for c in string.punctuation if c not in ("{", "}")]
     # Normalize to NFD (Normalization Form Decomposed), which separates characters and diacritical marks
     nfkd_form = unicodedata.normalize('NFD', input_str)
-    # Remove characters that are not ASCII letters
+    # Remove characters that are not ASCII letters or punctuation we want to keep
     return ''.join([char for char in nfkd_form
                     if unicodedata.category(char) != 'Mn' and char not in rm_chars])
 
 
 # TODO - move to ovos-utils
-def deduplicate_list(seq, keep_order=True):
+def deduplicate_list(seq: List[str], keep_order: bool = True) -> List[str]:
     """
-    if order doesnt matter it is faster to use keep_order=False
+    Deduplicate a list while optionally maintaining the original order.
 
-    benchmarks: https://www.peterbe.com/plog/fastest-way-to-uniquify-a-list-in-python-3.6
+    Args:
+        seq (List[str]): The list to deduplicate.
+        keep_order (bool): Whether to preserve the order of elements. Default is True.
+
+    Returns:
+        List[str]: The deduplicated list.
+
+    Notes:
+        If `keep_order` is False, the function uses a set for faster deduplication.
     """
     if not keep_order:
         return list(set(seq))
@@ -63,49 +80,116 @@ def deduplicate_list(seq, keep_order=True):
         return list(dict.fromkeys(seq))
 
 
-def normalize_utterances(utterances, lang, cast_to_ascii=True, keep_order=True, stemmer=None) -> List[str]:
-    # call flatten in case someone is sending the old style list of tuples
-    utterances = flatten_list(utterances)
-    # collapse multiple whitespaces
+def normalize_utterances(utterances: List[str], lang: str, cast_to_ascii: bool = True,
+                         keep_order: bool = True, stemmer: Optional['Stemmer'] = None) -> List[str]:
+    """
+    Normalize a list of utterances by collapsing whitespaces, removing accents and punctuation,
+    and optionally stemming and deduplicating.
+
+    Args:
+        utterances (List[str]): The list of utterances to normalize.
+        lang (str): The language code for stemming support.
+        cast_to_ascii (bool): Whether to remove accented characters and punctuation. Default is True.
+        keep_order (bool): Whether to preserve the order of utterances. Default is True.
+        stemmer (Optional[Stemmer]): A stemmer object to stem the utterances (default is None).
+
+    Returns:
+        List[str]: The normalized list of utterances.
+    """
+    # Flatten the list if it's in old style tuple format
+    utterances = flatten_list(utterances)  # Assuming flatten_list is defined elsewhere
+    # Collapse multiple whitespaces into a single space
     utterances = [re.sub(r'\s+', ' ', u) for u in utterances]
-    # replace accented chars
+    # Replace accented characters and punctuation if needed
     if cast_to_ascii:
         utterances = [remove_accents_and_punct(u) for u in utterances]
-    # stem words
+    # Stem words if stemmer is provided
     if stemmer is not None:
         utterances = stemmer.stem_sentences(utterances)
-    # deduplicate list
+    # Deduplicate the list
     utterances = deduplicate_list(utterances, keep_order=keep_order)
     return utterances
 
 
 class Stemmer:
+    """
+    A simple wrapper around the Snowball stemmer for various languages.
+
+    Attributes:
+        LANGS (dict): A dictionary mapping language codes to Snowball stemmer language names.
+    """
     LANGS = {'ar': 'arabic', 'eu': 'basque', 'ca': 'catalan', 'da': 'danish', 'nl': 'dutch', 'en': 'english',
              'fi': 'finnish', 'fr': 'french', 'de': 'german', 'el': 'greek', 'hi': 'hindi', 'hu': 'hungarian',
              'id': 'indonesian', 'ga': 'irish', 'it': 'italian', 'lt': 'lithuanian', 'ne': 'nepali',
              'no': 'norwegian', 'pt': 'portuguese', 'ro': 'romanian', 'ru': 'russian', 'sr': 'serbian',
              'es': 'spanish', 'sv': 'swedish', 'ta': 'tamil', 'tr': 'turkish'}
 
-    def __init__(self, lang):
+    def __init__(self, lang: str):
+        """
+        Initialize the stemmer for a given language.
+
+        Args:
+            lang (str): The language code for stemming.
+
+        Raises:
+            ValueError: If the language is unsupported.
+        """
         lang2 = closest_match(lang, list(self.LANGS))[0]
         if lang2 == "und":
             raise ValueError(f"unsupported language: {lang}")
         self.snowball = snowballstemmer.stemmer(self.LANGS[lang2])
 
     @classmethod
-    def supports_lang(cls, lang) -> bool:
+    def supports_lang(cls, lang: str) -> bool:
+        """
+        Check if the given language is supported by the stemmer.
+
+        Args:
+            lang (str): The language code to check.
+
+        Returns:
+            bool: True if the language is supported, False otherwise.
+        """
         lang2 = closest_match(lang, list(cls.LANGS))[0]
         return lang2 != "und"
 
     def stem_sentence(self, sentence: str) -> str:
+        """
+        Stem a single sentence.
+
+        Args:
+            sentence (str): The sentence to stem.
+
+        Returns:
+            str: The stemmed sentence.
+        """
         return _cached_stem_sentence(self.snowball, sentence)
 
     def stem_sentences(self, sentences: List[str]) -> List[str]:
+        """
+        Stem a list of sentences.
+
+        Args:
+            sentences (List[str]): The list of sentences to stem.
+
+        Returns:
+            List[str]: The list of stemmed sentences.
+        """
         return [self.stem_sentence(s) for s in sentences]
 
 
 @lru_cache()
 def _cached_stem_sentence(stemmer, sentence: str) -> str:
+    """
+    Cache the stemming of a single sentence to optimize repeated calls.
+
+    Args:
+        stemmer: The stemmer instance to use.
+        sentence (str): The sentence to stem.
+
+    Returns:
+        str: The stemmed sentence.
+    """
     stems = stemmer.stemWords(sentence.split())
     return " ".join(stems)
 
