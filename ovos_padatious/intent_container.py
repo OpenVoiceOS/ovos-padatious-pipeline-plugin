@@ -16,7 +16,9 @@ import os
 from functools import wraps
 from typing import List, Dict, Any, Optional
 
+from ovos_config.meta import get_xdg_base
 from ovos_utils.log import LOG
+from ovos_utils.xdg_utils import xdg_data_home
 
 from ovos_padatious import padaos
 from ovos_padatious.entity import Entity
@@ -54,7 +56,8 @@ class IntentContainer:
         cache_dir (str): Directory for caching the neural network models and intent/entity files.
     """
 
-    def __init__(self, cache_dir: str, disable_padaos: bool = False) -> None:
+    def __init__(self, cache_dir: Optional[str] = None, disable_padaos: bool = False) -> None:
+        cache_dir = cache_dir or f"{xdg_data_home()}/{get_xdg_base()}/intent_cache"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir: str = cache_dir
         self.must_train: bool = False
@@ -67,6 +70,10 @@ class IntentContainer:
             self.padaos: padaos.IntentContainer = padaos.IntentContainer()
         self.train_thread: Optional[Any] = None  # deprecated
         self.serialized_args: List[Dict[str, Any]] = []  # Serialized calls for training intents/entities
+
+    @property
+    def intent_names(self):
+        return self.intents.intent_names
 
     def clear(self) -> None:
         """

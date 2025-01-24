@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from .intent_container import IntentContainer
+from .domain_container import DomainIntentContainer
 from .match_data import MatchData
 
 __version__ = '0.4.8'  # Also change in setup.py
