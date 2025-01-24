@@ -411,10 +411,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             for lang in self.containers:
                 for skill_id, intents in self._skill2intent.items():
                     if intent_name in intents:
-                        if isinstance(self.containers[lang], DomainIntentContainer):
-                            self.containers[lang].remove_domain_intent(skill_id, intent_name)
-                        else:
-                            self.containers[lang].remove_intent(intent_name)
+                        try:
+                            if isinstance(self.containers[lang], DomainIntentContainer):
+                                self.containers[lang].remove_domain_intent(skill_id, intent_name)
+                            else:
+                                self.containers[lang].remove_intent(intent_name)
+                        except Exception as e:
+                            LOG.error(f"Failed to remove intent {intent_name} for skill {skill_id}: {str(e)}")
 
     def handle_detach_intent(self, message):
         """Messagebus handler for detaching padatious intent.
