@@ -43,11 +43,12 @@ import string
 # TODO - move to ovos-utils
 @lru_cache()
 def remove_accents_and_punct(input_str):
+    rm_chars = [c for c in string.punctuation if c not in ("{", "}")]
     # Normalize to NFD (Normalization Form Decomposed), which separates characters and diacritical marks
     nfkd_form = unicodedata.normalize('NFD', input_str)
     # Remove characters that are not ASCII letters
     return ''.join([char for char in nfkd_form
-                    if unicodedata.category(char) != 'Mn' and char not in string.punctuation])
+                    if unicodedata.category(char) != 'Mn' and char not in rm_chars])
 
 
 # TODO - move to ovos-utils
