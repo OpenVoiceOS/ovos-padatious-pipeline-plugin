@@ -265,8 +265,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                   f"{xdg_data_home()}/{get_xdg_base()}/intent_cache")
         self.containers = {lang: PadatiousIntentContainer(f"{intent_cache}/{lang}",
                                                           disable_padaos=self.config.get("disable_padaos", False))
-                           for lang in langs if Stemmer.supports_lang(lang)}
-        self.stemmers = {lang: Stemmer(lang) for lang in langs}
+                           for lang in langs }
+        self.stemmers = {lang: Stemmer(lang)
+                         for lang in langs if Stemmer.supports_lang(lang)}
         self.finished_training_event = Event()  # DEPRECATED
         self.finished_initial_train = False
 
@@ -307,7 +308,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         LOG.debug(f'Padatious Matching confidence > {limit}')
         lang = standardize_lang_tag(lang or self.lang)
 
-        if self.config.get("enable_stemming", True) and Stemmer.supports_lang(lang):
+        if lang in self.stemmers:
             stemmer = self.stemmers[lang]
         else:
             stemmer = None
@@ -437,7 +438,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             with open(file_name) as f:
                 samples = [line.strip() for line in f.readlines()]
 
-        if self.config.get("enable_stemming", True) and Stemmer.supports_lang(lang):
+        if lang in self.stemmers:
             stemmer = self.stemmers[lang]
         else:
             stemmer = None
