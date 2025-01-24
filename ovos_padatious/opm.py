@@ -330,7 +330,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             stemmer = None
         utterances = normalize_utterances(utterances, lang,
                                           stemmer=stemmer,
-                                          keep_order=False,
+                                          keep_order=True,
                                           cast_to_ascii=self.config.get("cast_to_ascii", True))
         padatious_intent = self.calc_intent(utterances, lang, message)
         if padatious_intent is not None and padatious_intent.conf > limit:

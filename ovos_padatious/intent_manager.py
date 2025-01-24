@@ -48,7 +48,6 @@ class IntentManager(TrainingManager):
             List[MatchData]: A list of matches sorted by confidence.
         """
         sent = tokenize(query)
-        matches = []
 
         def match_intent(intent):
             start_time = time.monotonic()
