@@ -54,13 +54,17 @@ class IntentContainer:
         cache_dir (str): Directory for caching the neural network models and intent/entity files.
     """
 
-    def __init__(self, cache_dir: str) -> None:
+    def __init__(self, cache_dir: str, disable_padaos: bool = False) -> None:
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir: str = cache_dir
         self.must_train: bool = False
         self.intents: IntentManager = IntentManager(cache_dir)
         self.entities: EntityManager = EntityManager(cache_dir)
-        self.padaos: padaos.IntentContainer = padaos.IntentContainer()
+        self.disable_padaos = disable_padaos
+        if self.disable_padaos:
+            self.padaos = None
+        else:
+            self.padaos: padaos.IntentContainer = padaos.IntentContainer()
         self.train_thread: Optional[Any] = None  # deprecated
         self.serialized_args: List[Dict[str, Any]] = []  # Serialized calls for training intents/entities
 
@@ -72,7 +76,10 @@ class IntentContainer:
         self.must_train = False
         self.intents = IntentManager(self.cache_dir)
         self.entities = EntityManager(self.cache_dir)
-        self.padaos = padaos.IntentContainer()
+        if self.disable_padaos:
+            self.padaos = None
+        else:
+            self.padaos: padaos.IntentContainer = padaos.IntentContainer()
         self.serialized_args = []
 
     def instantiate_from_disk(self) -> None:
@@ -132,7 +139,8 @@ class IntentContainer:
             must_train (bool): Whether the model needs training after adding the intent.
         """
         self.intents.add(name, lines, reload_cache, must_train)
-        self.padaos.add_intent(name, lines)
+        if self.padaos is not None:
+            self.padaos.add_intent(name, lines)
         self.must_train = must_train
 
     @_save_args
@@ -156,7 +164,8 @@ class IntentContainer:
             lines,
             reload_cache,
             must_train)
-        self.padaos.add_entity(name, lines)
+        if self.padaos is not None:
+            self.padaos.add_entity(name, lines)
         self.must_train = must_train
 
     @_save_args
@@ -172,8 +181,9 @@ class IntentContainer:
         """
         Entity.verify_name(name)
         self.entities.load(Entity.wrap_name(name), file_name, reload_cache)
-        with open(file_name) as f:
-            self.padaos.add_entity(name, f.read().split('\n'))
+        if self.padaos is not None:
+            with open(file_name) as f:
+                self.padaos.add_entity(name, f.read().split('\n'))
         self.must_train = must_train
 
     @_save_args
@@ -193,8 +203,9 @@ class IntentContainer:
             must_train (bool): Whether the model needs training after loading the intent.
         """
         self.intents.load(name, file_name, reload_cache)
-        with open(file_name) as f:
-            self.padaos.add_intent(name, f.read().split('\n'))
+        if self.padaos is not None:
+            with open(file_name) as f:
+                self.padaos.add_intent(name, f.read().split('\n'))
         self.must_train = must_train
 
     @_save_args
@@ -206,7 +217,8 @@ class IntentContainer:
             name (str): Name of the intent to remove.
         """
         self.intents.remove(name)
-        self.padaos.remove_intent(name)
+        if self.padaos is not None:
+            self.padaos.remove_intent(name)
         self.must_train = True
 
     @_save_args
@@ -218,7 +230,8 @@ class IntentContainer:
             name (str): Name of the entity to remove.
         """
         self.entities.remove(name)
-        self.padaos.remove_entity(name)
+        if self.padaos is not None:
+            self.padaos.remove_entity(name)
 
     def train(self, debug: bool = True, force: bool = False, single_thread: Optional[bool] = None,
               timeout: Optional[float] = None) -> bool:
@@ -241,7 +254,9 @@ class IntentContainer:
             LOG.warning("'timeout' argument is deprecated and will be ignored")
         if not self.must_train and not force:
             return True
-        self.padaos.compile()
+
+        if self.padaos is not None:
+            self.padaos.compile()
 
         # Train intents and entities
         self.intents.train(debug=debug)
@@ -267,9 +282,11 @@ class IntentContainer:
             self.train()
         intents = {i.name: i for i in self.intents.calc_intents(query, self.entities)}
         sent = tokenize(query)
-        for perfect_match in self.padaos.calc_intents(query):
-            name = perfect_match['name']
-            intents[name] = MatchData(name, sent, matches=perfect_match['entities'], conf=1.0)
+
+        if self.padaos is not None:
+            for perfect_match in self.padaos.calc_intents(query):
+                name = perfect_match['name']
+                intents[name] = MatchData(name, sent, matches=perfect_match['entities'], conf=1.0)
         return list(intents.values())
 
     def calc_intent(self, query: str) -> MatchData:
