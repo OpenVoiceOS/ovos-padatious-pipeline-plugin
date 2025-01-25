@@ -1,12 +1,12 @@
 # Changelog
 
-## [1.3.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.0a1) (2025-01-24)
+## [1.3.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.1a1) (2025-01-25)
 
-[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.2.0...1.3.0a1)
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.0...1.3.1a1)
 
 **Merged pull requests:**
 
-- feat/domain\_engine [\#31](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/31) ([JarbasAl](https://github.com/JarbasAl))
+- fix: normalization + disable new feats by default [\#38](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/38) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
