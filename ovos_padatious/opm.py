@@ -289,7 +289,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                            for lang in langs}
         # pre-load any cached intents
         for container in self.containers.values():
-            container.instantiate_from_disk()
+            try:
+                container.instantiate_from_disk()
+            except Exception as e:
+                LOG.error(f"Failed to pre-load cached intents: {str(e)}")
 
         if use_stemmer:
             self.stemmers = {lang: Stemmer(lang)
