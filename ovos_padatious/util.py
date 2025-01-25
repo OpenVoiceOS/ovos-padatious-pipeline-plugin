@@ -28,7 +28,7 @@ def lines_hash(lines):
         bytearray: Binary hash
     """
     x = xxh32()
-    for i in lines:
+    for i in sorted(lines):
         x.update(i.encode())
     return x.digest()
 

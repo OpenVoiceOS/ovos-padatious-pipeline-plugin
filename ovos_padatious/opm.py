@@ -274,14 +274,24 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if engine_class is None and self.config.get("domain_engine"):
             engine_class = DomainIntentContainer
 
+        use_stemmer = self.config.get("stem", False)
         self.engine_class = engine_class or IntentContainer
         intent_cache = expanduser(self.config.get('intent_cache') or
                                   f"{xdg_data_home()}/{get_xdg_base()}/intent_cache")
+        if self.engine_class == DomainIntentContainer:
+            # allow user to switch back and forth without retraining
+            # cache is cheap, training isn't
+            intent_cache += "_domain"
+        if use_stemmer:
+            intent_cache += "_stemmer"
         self.containers = {lang: self.engine_class(cache_dir=f"{intent_cache}/{lang}",
                                                    disable_padaos=self.config.get("disable_padaos", False))
                            for lang in langs}
+        # pre-load any cached intents
+        for container in self.containers.values():
+            container.instantiate_from_disk()
 
-        if self.config.get("stem", False):
+        if use_stemmer:
             self.stemmers = {lang: Stemmer(lang)
                              for lang in langs if Stemmer.supports_lang(lang)}
         else:
