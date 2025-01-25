@@ -85,6 +85,10 @@ class TrainingManager:
                     old_hsh = g.read()
             min_ver = splitext(ovos_padatious.__version__)[0]
             new_hsh = lines_hash([min_ver] + lines)
+            if not old_hsh:
+                LOG.debug("First time training")
+            elif old_hsh and old_hsh != new_hsh:
+                LOG.debug(f"{name} Hash changed! retraining - {old_hsh}   {new_hsh}")
             retrain = reload_cache or old_hsh != new_hsh
             if not retrain:
                 try:
@@ -138,17 +142,22 @@ class TrainingManager:
 
         train = partial(_train_and_save, cache=self.cache, data=self.train_data, print_updates=debug)
 
+        objs = list(self.objects_to_train) # make a copy so its thread safe
+        fails = []
         # Train objects sequentially
-        for obj in self.objects_to_train:
+        for obj in objs:
             try:
                 train(obj)
             except Exception as e:
                 LOG.error(f"Error training {obj.name}: {e}")
+                fails.append(obj)
 
         # Load saved objects from disk
-        for obj in self.objects_to_train:
+        for obj in objs:
             try:
                 self.objects.append(self.cls.from_file(name=obj.name, folder=self.cache))
             except Exception as e:
                 LOG.error(f"Failed to load trained object {obj.name}: {e}")
-        self.objects_to_train = []
+                fails.append(obj)
+        self.objects_to_train = [o for o in self.objects_to_train
+                                 if o not in objs or o in fails]

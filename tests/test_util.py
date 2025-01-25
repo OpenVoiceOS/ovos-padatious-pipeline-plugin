@@ -16,7 +16,7 @@ from ovos_padatious.util import lines_hash, tokenize, resolve_conflicts, StrEnum
 
 
 def test_lines_hash():
-    assert lines_hash(['word1', 'word2']) != lines_hash(['word2', 'word1'])
+    assert lines_hash(['word1', 'word2']) == lines_hash(['word2', 'word1'])
     assert lines_hash(['word1', 'word2']) != lines_hash(['word1', 'word1'])
 
 
