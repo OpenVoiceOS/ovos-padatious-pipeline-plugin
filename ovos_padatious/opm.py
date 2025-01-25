@@ -280,8 +280,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                                    disable_padaos=self.config.get("disable_padaos", False))
                            for lang in langs}
 
-        self.stemmers = {lang: Stemmer(lang)
-                         for lang in langs if Stemmer.supports_lang(lang)}
+        if self.config.get("stem", False):
+            self.stemmers = {lang: Stemmer(lang)
+                             for lang in langs if Stemmer.supports_lang(lang)}
+        else:
+            self.stemmers = {}
 
         self.finished_training_event = Event()  # DEPRECATED
         self.finished_initial_train = False
@@ -331,7 +334,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         utterances = normalize_utterances(utterances, lang,
                                           stemmer=stemmer,
                                           keep_order=True,
-                                          cast_to_ascii=self.config.get("cast_to_ascii", True))
+                                          cast_to_ascii=self.config.get("cast_to_ascii", False))
         padatious_intent = self.calc_intent(utterances, lang, message)
         if padatious_intent is not None and padatious_intent.conf > limit:
             skill_id = padatious_intent.name.split(':')[0]
@@ -468,6 +471,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             with open(file_name) as f:
                 samples = [line.strip() for line in f.readlines()]
 
+        from ovos_utils.bracket_expansion import expand_template
+        from ovos_utils import flatten_list
+        samples = deduplicate_list(flatten_list([expand_template(s) for s in samples]))
         if lang in self.stemmers:
             stemmer = self.stemmers[lang]
         else:
@@ -475,8 +481,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         samples = normalize_utterances(samples, lang,
                                        stemmer=stemmer,
                                        keep_order=False,
-                                       cast_to_ascii=self.config.get("cast_to_ascii", True))
-
+                                       cast_to_ascii=self.config.get("cast_to_ascii", False))
+        print(6666, skill_id, name, samples)
         if self.engine_class == DomainIntentContainer:
             register_func(skill_id, name, samples)
         else:
