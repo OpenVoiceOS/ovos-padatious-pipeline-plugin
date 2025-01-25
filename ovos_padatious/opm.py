@@ -35,6 +35,7 @@ from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch, IntentMatch
 from ovos_utils import flatten_list
+from ovos_utils.bracket_expansion import expand_template
 from ovos_utils.fakebus import FakeBus
 from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.log import LOG, deprecated, log_deprecation
@@ -471,8 +472,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             with open(file_name) as f:
                 samples = [line.strip() for line in f.readlines()]
 
-        from ovos_utils.bracket_expansion import expand_template
-        from ovos_utils import flatten_list
         samples = deduplicate_list(flatten_list([expand_template(s) for s in samples]))
         if lang in self.stemmers:
             stemmer = self.stemmers[lang]
@@ -482,7 +481,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                        stemmer=stemmer,
                                        keep_order=False,
                                        cast_to_ascii=self.config.get("cast_to_ascii", False))
-        print(6666, skill_id, name, samples)
+
         if self.engine_class == DomainIntentContainer:
             register_func(skill_id, name, samples)
         else:
