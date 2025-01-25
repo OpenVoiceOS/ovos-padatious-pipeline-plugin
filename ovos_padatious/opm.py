@@ -287,6 +287,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.containers = {lang: self.engine_class(cache_dir=f"{intent_cache}/{lang}",
                                                    disable_padaos=self.config.get("disable_padaos", False))
                            for lang in langs}
+
         # pre-load any cached intents
         for container in self.containers.values():
             try:
