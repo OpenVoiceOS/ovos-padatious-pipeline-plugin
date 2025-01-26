@@ -80,15 +80,17 @@ class TrainingManager:
         else:
             hash_fn = join(self.cache, name + '.hash')
             old_hsh = None
+            min_ver = splitext(ovos_padatious.__version__)[0]
+            new_hsh = lines_hash([min_ver] + lines)
+
             if isfile(hash_fn):
                 with open(hash_fn, 'rb') as g:
                     old_hsh = g.read()
-            min_ver = splitext(ovos_padatious.__version__)[0]
-            new_hsh = lines_hash([min_ver] + lines)
-            if not old_hsh:
-                LOG.debug("First time training")
-            elif old_hsh and old_hsh != new_hsh:
-                LOG.debug(f"{name} Hash changed! retraining - {old_hsh}   {new_hsh}")
+                if old_hsh != new_hsh:
+                    LOG.debug(f"{name} training data changed! retraining")
+            else:
+                LOG.debug(f"First time training '{name}")
+
             retrain = reload_cache or old_hsh != new_hsh
             if not retrain:
                 try:

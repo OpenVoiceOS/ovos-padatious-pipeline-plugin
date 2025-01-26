@@ -112,6 +112,8 @@ def normalize_utterances(utterances: List[str], lang: str, cast_to_ascii: bool =
     # Replace accented characters and punctuation if needed
     if cast_to_ascii:
         utterances = [remove_accents_and_punct(u) for u in utterances]
+    # strip punctuation marks, that just causes duplicate training data
+    utterances = [u.rstrip(string.punctuation) for u in utterances]
     # Stem words if stemmer is provided
     if stemmer is not None:
         utterances = stemmer.stem_sentences(utterances)
@@ -274,6 +276,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if engine_class is None and self.config.get("domain_engine"):
             engine_class = DomainIntentContainer
 
+        self.remove_punct = self.config.get("cast_to_ascii", False)
         use_stemmer = self.config.get("stem", False)
         self.engine_class = engine_class or IntentContainer
         intent_cache = expanduser(self.config.get('intent_cache') or
@@ -284,6 +287,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             intent_cache += "_domain"
         if use_stemmer:
             intent_cache += "_stemmer"
+        if self.remove_punct:
+            intent_cache += "_normalized"
         self.containers = {lang: self.engine_class(cache_dir=f"{intent_cache}/{lang}",
                                                    disable_padaos=self.config.get("disable_padaos", False))
                            for lang in langs}
@@ -301,8 +306,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         else:
             self.stemmers = {}
 
-        self.finished_training_event = Event()  # DEPRECATED
-        self.finished_initial_train = False
+        self.first_train = Event()
+        self.finished_training_event = Event()
+        self.finished_training_event.set()  # is cleared when training starts
 
         self.registered_intents = []
         self.registered_entities = []
@@ -349,7 +355,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         utterances = normalize_utterances(utterances, lang,
                                           stemmer=stemmer,
                                           keep_order=True,
-                                          cast_to_ascii=self.config.get("cast_to_ascii", False))
+                                          cast_to_ascii=self.remove_punct)
         padatious_intent = self.calc_intent(utterances, lang, message)
         if padatious_intent is not None and padatious_intent.conf > limit:
             skill_id = padatious_intent.name.split(':')[0]
@@ -392,26 +398,30 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             message (Message): optional triggering message
         """
-        LOG.debug("Padatious training start")
-        if not any(engine.must_train for engine in self.containers.values()):
-            LOG.debug(f"Nothing new to train for padatious")
-            # inform the rest of the system to not wait for training finish
-            self.bus.emit(Message('mycroft.skills.trained'))
-            return
-
+        # wait for any already ongoing training
+        # padatious doesnt like threads
+        if not self.finished_training_event.is_set():
+            self.finished_training_event.wait()
         with self.lock:
+            if not any(engine.must_train for engine in self.containers.values()):
+                # LOG.debug(f"Nothing new to train for padatious")
+                # inform the rest of the system to not wait for training finish
+                self.bus.emit(Message('mycroft.skills.trained'))
+                self.finished_training_event.set()
+                return
+            self.finished_training_event.clear()
+            # TODO - run this in subprocess?, sometimes fann2 segfaults and kills ovos-core...
             for lang in self.containers:
                 if self.containers[lang].must_train:
-                    LOG.debug(f"Training padatious for lang '{lang}'")
+                    #LOG.debug(f"Training padatious for lang '{lang}'")
                     self.containers[lang].train()
 
-            LOG.debug(f"Training complete for padatious!")
-            if not self.finished_initial_train:
-                self.finished_initial_train = True
+            # inform the rest of the system to stop waiting for training finish
+            self.bus.emit(Message('mycroft.skills.trained'))
+            self.finished_training_event.set()
 
-        # inform the rest of the system to stop waiting for training finish
-        self.bus.emit(Message('mycroft.skills.trained'))
-        LOG.debug("Padatious training end")
+        if not self.first_train.is_set():
+            self.first_train.set()
 
     @deprecated("'wait_and_train' has been deprecated, use 'train' directly", "2.0.0")
     def wait_and_train(self):
@@ -494,15 +504,14 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         samples = normalize_utterances(samples, lang,
                                        stemmer=stemmer,
                                        keep_order=False,
-                                       cast_to_ascii=self.config.get("cast_to_ascii", False))
+                                       cast_to_ascii=self.remove_punct)
 
         if self.engine_class == DomainIntentContainer:
             register_func(skill_id, name, samples)
         else:
             register_func(name, samples)
 
-        self.finished_initial_train = False
-        if self.config.get("instant_train", True):
+        if self.config.get("instant_train", False) or self.first_train.is_set():
             self.train(message)
 
     def register_intent(self, message):

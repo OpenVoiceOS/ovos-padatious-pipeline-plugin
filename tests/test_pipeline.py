@@ -48,17 +48,12 @@ class UtteranceIntentMatchingTest(unittest.TestCase):
         # regex match
         intent = intent_service.calc_intent("tell me about Mycroft", "en-US")
         self.assertEqual(intent.name, "test2")
-        self.assertEqual(intent.matches, {'thing': 'Mycroft'})
+        self.assertEqual(intent.matches, {'thing': 'mycroft'})
 
         # fuzzy regex match - success
         utterance = "tell me everything about Mycroft"
         intent = intent_service.calc_intent(utterance, "en-US")
         self.assertEqual(intent.name, "test2")
-
-        # case depends on padaos vs padatious matching internally
-        # padaos (exact matches only) -> keep case
-        # padacioso -> keep case
-        # padatious -> lower case
         self.assertEqual(intent.matches, {'thing': 'mycroft'})
         self.assertEqual(intent.sent, utterance)
         self.assertTrue(intent.conf <= 0.9)
