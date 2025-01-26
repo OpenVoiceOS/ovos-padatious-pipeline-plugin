@@ -26,7 +26,17 @@ class DomainIntentContainer:
                                              disable_padaos=disable_padaos)
         self.domains: Dict[str, IntentContainer] = {}
         self.training_data: Dict[str, List[str]] = defaultdict(list)
+        self.instantiate_from_disk()
         self.must_train = True
+
+    def instantiate_from_disk(self) -> None:
+        """
+        Instantiates the necessary (internal) data structures when loading persisted model from disk.
+        This is done via injecting entities and intents back from cached file versions.
+        """
+        self.domain_engine.instantiate_from_disk()
+        for engine in self.domains.values():
+            engine.instantiate_from_disk()
 
     def remove_domain(self, domain_name: str):
         """
@@ -54,6 +64,8 @@ class DomainIntentContainer:
         if domain_name not in self.domains:
             self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir,
                                                         disable_padaos=self.disable_padaos)
+            self.domains[domain_name].instantiate_from_disk()
+
         self.domains[domain_name].add_intent(intent_name, intent_samples)
         self.training_data[domain_name] += intent_samples
         self.must_train = True
@@ -165,11 +177,11 @@ class DomainIntentContainer:
         return sorted(matches, reverse=True, key=lambda k: k.conf)
 
     def train(self):
-        for domain, samples in self.training_data.items():
+        for domain, samples in dict(self.training_data).items():  # copy for thread safety
             LOG.debug(f"Training domain: {domain}")
             self.domain_engine.add_intent(domain, samples)
         self.domain_engine.train()
-        for domain in self.domains:
+        for domain in dict(self.domains): # copy for thread safety
             LOG.debug(f"Training domain sub-intents: {domain}")
             self.domains[domain].train()
         self.must_train = False
