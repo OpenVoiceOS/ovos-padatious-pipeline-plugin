@@ -1,20 +1,12 @@
 # Changelog
 
-## [1.3.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.2a1) (2025-01-25)
+## [1.3.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.3a1) (2025-01-26)
 
-[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.1...1.3.2a1)
-
-**Merged pull requests:**
-
-- fix:improve cache [\#40](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/40) ([JarbasAl](https://github.com/JarbasAl))
-
-## [1.3.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.1a1) (2025-01-25)
-
-[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.0...1.3.1a1)
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.2...1.3.3a1)
 
 **Merged pull requests:**
 
-- fix: normalization + disable new feats by default [\#38](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/38) ([JarbasAl](https://github.com/JarbasAl))
+- Enhance Padatious intent management with state restoration and training improvements [\#42](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/42) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
