@@ -1,12 +1,12 @@
 # Changelog
 
-## [1.3.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.3a1) (2025-01-26)
+## [1.3.4a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.4a1) (2025-01-29)
 
-[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.2...1.3.3a1)
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.3...1.3.4a1)
 
 **Merged pull requests:**
 
-- Enhance Padatious intent management with state restoration and training improvements [\#42](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/42) ([JarbasAl](https://github.com/JarbasAl))
+- fix:domain engine from config [\#44](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/44) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
