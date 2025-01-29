@@ -258,7 +258,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
     def __init__(self, bus: Optional[Union[MessageBusClient, FakeBus]] = None,
                  config: Optional[Dict] = None,
-                 engine_class: Optional[PadatiousEngine] = IntentContainer):
+                 engine_class: Optional[PadatiousEngine] = None):
 
         super().__init__(bus, config)
         self.lock = RLock()
@@ -273,8 +273,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.conf_med = self.config.get("conf_med") or 0.8
         self.conf_low = self.config.get("conf_low") or 0.5
 
-        if engine_class is None and self.config.get("domain_engine"):
-            engine_class = DomainIntentContainer
+        engine_class = engine_class or DomainIntentContainer if self.config.get("domain_engine") else IntentContainer
+        LOG.info(f"Padatious class: {engine_class.__name__}")
 
         self.remove_punct = self.config.get("cast_to_ascii", False)
         use_stemmer = self.config.get("stem", False)
