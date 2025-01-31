@@ -146,7 +146,7 @@ class SimpleIntent:
         if not prefix.endswith(".intent"):
             prefix += '.intent'
         if not os.path.isfile(str(prefix + '.net')):
-            raise RuntimeError(f"intent not yet trained! '{prefix}.net'")
+            raise FileNotFoundError(f"intent not yet trained! '{prefix}.net'")
         self = cls(name)
         self.net = fann.neural_net()
         if not self.net.create_from_file(str(prefix + '.net')):  # Must have str()
