@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os.path
 
 from fann2 import libfann as fann
 from ovos_utils.log import LOG
@@ -62,7 +63,7 @@ class SimpleIntent:
         self.net.set_train_stop_function(fann.STOPFUNC_BIT)
         self.net.set_bit_fail_limit(0.1)
 
-    def train(self, train_data):
+    def train(self, train_data) -> bool:
         for sent in train_data.my_sents(self.name):
             self.ids.add_sent(sent)
 
@@ -71,6 +72,10 @@ class SimpleIntent:
 
         n_pos = len(list(train_data.my_sents(self.name)))
         n_neg = len(list(train_data.other_sents(self.name)))
+
+        if not n_neg or not n_pos:
+            LOG.error(f"not enough samples to learn intent: pos {n_pos} / neg {n_neg}")
+            return False
 
         def add(vec, out):
             inputs.append(self.vectorize(vec))
@@ -126,15 +131,22 @@ class SimpleIntent:
             if self.net.get_bit_fail() == 0:
                 break
         LOG.debug(f"Training {self.name} finished!")
+        return True
 
     def save(self, prefix):
-        prefix += '.intent'
+        if not self.net:
+            raise RuntimeError(f"intent not yet trained! '{prefix}.net'")
+        if not prefix.endswith(".intent"):
+            prefix += '.intent'
         self.net.save(str(prefix + '.net'))  # Must have str()
         self.ids.save(prefix)
 
     @classmethod
     def from_file(cls, name, prefix):
-        prefix += '.intent'
+        if not prefix.endswith(".intent"):
+            prefix += '.intent'
+        if not os.path.isfile(str(prefix + '.net')):
+            raise RuntimeError(f"intent not yet trained! '{prefix}.net'")
         self = cls(name)
         self.net = fann.neural_net()
         if not self.net.create_from_file(str(prefix + '.net')):  # Must have str()

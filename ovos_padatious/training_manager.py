@@ -33,10 +33,12 @@ def _train_and_save(obj: Trainable, cache: str, data: TrainData, print_updates: 
         data (TrainData): Training data.
         print_updates (bool): Whether to print updates during training.
     """
-    obj.train(data)
-    obj.save(cache)
-    if print_updates:
-        LOG.debug(f'Saving {obj.name} to cache ({cache})')
+    if obj.train(data):
+        obj.save(cache)
+        if print_updates:
+            LOG.debug(f'Saving {obj.name} to cache ({cache})')
+    else:
+        LOG.debug(f'Failed to train {obj.name}')
 
 
 class TrainingManager:
@@ -72,37 +74,43 @@ class TrainingManager:
             reload_cache (bool): Whether to force reload of cache if it exists.
             must_train (bool): Whether training is required for the new intent/entity.
         """
+        hash_fn = join(self.cache, name + '.hash')
+        min_ver = splitext(ovos_padatious.__version__)[0]
+        if not isfile(hash_fn):
+            must_train = True
+
         if not must_train:
-            LOG.debug(f"Loading {name} from intent cache")
-            self.objects.append(self.cls.from_file(name=name, folder=self.cache))
+            try: # .net file renamed/deleted for some reason
+                LOG.debug(f"Loading '{name}' from intent cache")
+                self.objects.append(self.cls.from_file(name=name, folder=self.cache))
+            except:
+                LOG.debug(f"Regenerating cache for intent: {name}")
+
         # general case: load resource (entity or intent) to training queue
         # or if no change occurred to memory data structures
+        old_hsh = None
+        new_hsh = lines_hash([min_ver] + lines)
+
+        if isfile(hash_fn):
+            with open(hash_fn, 'rb') as g:
+                old_hsh = g.read()
+            if old_hsh != new_hsh:
+                LOG.debug(f"{name} training data changed! retraining")
         else:
-            hash_fn = join(self.cache, name + '.hash')
-            old_hsh = None
-            min_ver = splitext(ovos_padatious.__version__)[0]
-            new_hsh = lines_hash([min_ver] + lines)
+            LOG.debug(f"First time training '{name}'")
 
-            if isfile(hash_fn):
-                with open(hash_fn, 'rb') as g:
-                    old_hsh = g.read()
-                if old_hsh != new_hsh:
-                    LOG.debug(f"{name} training data changed! retraining")
-            else:
-                LOG.debug(f"First time training '{name}")
-
-            retrain = reload_cache or old_hsh != new_hsh
-            if not retrain:
-                try:
-                    LOG.debug(f"Loading {name} from intent cache")
-                    self.objects.append(self.cls.from_file(name=name, folder=self.cache))
-                except Exception as e:
-                    LOG.error(f"Failed to load intent from cache: {name} - {str(e)}")
-                    retrain = True
-            if retrain:
-                LOG.debug(f"Queuing {name} for training")
-                self.objects_to_train.append(self.cls(name=name, hsh=new_hsh))
-            self.train_data.add_lines(name, lines)
+        retrain = reload_cache or old_hsh != new_hsh
+        if not retrain:
+            try:
+                LOG.debug(f"Loading {name} from intent cache")
+                self.objects.append(self.cls.from_file(name=name, folder=self.cache))
+            except Exception as e:
+                LOG.error(f"Failed to load intent from cache: {name} - {str(e)}")
+                retrain = True
+        if retrain:
+            LOG.debug(f"Queuing {name} for training")
+            self.objects_to_train.append(self.cls(name=name, hsh=new_hsh))
+        self.train_data.add_lines(name, lines)
 
     def load(self, name: str, file_name: str, reload_cache: bool = False) -> None:
         """

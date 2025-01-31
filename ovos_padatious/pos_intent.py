@@ -83,6 +83,7 @@ class PosIntent(object):
             i.load(prefix)
         return self
 
-    def train(self, train_data):
+    def train(self, train_data) -> bool:
         for i in self.edges:
             i.train(train_data)
+        return True
