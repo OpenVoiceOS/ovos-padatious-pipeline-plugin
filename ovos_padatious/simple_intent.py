@@ -64,7 +64,7 @@ class SimpleIntent:
         self.net.set_train_stop_function(fann.STOPFUNC_BIT)
         self.net.set_bit_fail_limit(0.1)
 
-    def train(self, train_data):
+    def train(self, train_data) -> bool:
         train_data = copy.copy(train_data)
         for sent in train_data.my_sents(self.name):
             self.ids.add_sent(sent)
@@ -74,6 +74,13 @@ class SimpleIntent:
 
         n_pos = len(list(train_data.my_sents(self.name)))
         n_neg = len(list(train_data.other_sents(self.name)))
+
+        # a single registered intent has no sibling (negative) samples; the
+        # synthetic negatives added below still make it trainable, so only an
+        # utter lack of positive samples is a genuine failure
+        if not n_pos:
+            LOG.error(f"not enough samples to learn intent: pos {n_pos} / neg {n_neg}")
+            return False
 
         def add(vec, out):
             inputs.append(self.vectorize(vec))
@@ -129,15 +136,20 @@ class SimpleIntent:
             if self.net.get_bit_fail() == 0:
                 break
         LOG.debug(f"Training {self.name} finished!")
+        return True
 
     def save(self, prefix):
-        prefix += '.intent'
+        if not self.net:
+            raise RuntimeError(f"intent not yet trained! '{prefix}.net'")
+        if not prefix.endswith(".intent"):
+            prefix += '.intent'
         self.net.save(str(prefix + '.net'))  # Must have str()
         self.ids.save(prefix)
 
     @classmethod
     def from_file(cls, name, prefix):
-        prefix += '.intent'
+        if not prefix.endswith(".intent"):
+            prefix += '.intent'
         self = cls(name)
         self.net = fann.neural_net()
         path = str(prefix + '.net')

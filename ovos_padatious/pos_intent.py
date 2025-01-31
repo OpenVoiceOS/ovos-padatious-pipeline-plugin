@@ -110,12 +110,16 @@ class PosIntent:
             edge.load(prefix)
         return instance
 
-    def train(self, train_data: Any) -> None:
+    def train(self, train_data: Any) -> bool:
         """
         Trains the positional intent on the provided training data.
 
         Args:
             train_data (Any): The data to train on.
+
+        Returns:
+            bool: ``True`` once every edge has been trained.
         """
         for edge in self.edges:
             edge.train(train_data)
+        return True

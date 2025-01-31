@@ -33,7 +33,7 @@ class Trainable:
             f.write(self.hash)
 
     @abstractmethod
-    def train(self, data):
+    def train(self, data) -> bool:
         pass
 
     @abstractmethod
