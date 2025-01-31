@@ -48,6 +48,14 @@ class IntentManager(TrainingManager):
             List[MatchData]: A list of matches sorted by confidence.
         """
         sent = tokenize(query)
+        if not self.objects:
+            return []
+        if len(self.objects) == 1:
+            try:
+                match = self.objects[0].match(sent, entity_manager).detokenize()
+                return [match]
+            except:
+                return []
 
         def match_intent(intent):
             start_time = time.monotonic()
