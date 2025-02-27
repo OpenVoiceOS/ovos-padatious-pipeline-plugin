@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import copy
+import os.path
 
 from fann2 import libfann as fann
 from ovos_utils.log import LOG
@@ -63,6 +65,7 @@ class SimpleIntent:
         self.net.set_bit_fail_limit(0.1)
 
     def train(self, train_data):
+        train_data = copy.copy(train_data)
         for sent in train_data.my_sents(self.name):
             self.ids.add_sent(sent)
 
@@ -137,7 +140,10 @@ class SimpleIntent:
         prefix += '.intent'
         self = cls(name)
         self.net = fann.neural_net()
-        if not self.net.create_from_file(str(prefix + '.net')):  # Must have str()
-            raise FileNotFoundError(str(prefix + '.net'))
+        path = str(prefix + '.net')
+        if not os.path.isfile(path):
+            raise FileNotFoundError(path)
+        if not self.net.create_from_file(path):
+            raise FileNotFoundError(path)
         self.ids.load(prefix)
         return self

@@ -15,7 +15,6 @@
 """Intent service wrapping padatious."""
 import re
 import string
-import unicodedata
 from collections import defaultdict
 from functools import lru_cache
 from os.path import expanduser, isfile
@@ -38,55 +37,17 @@ from ovos_utils import flatten_list
 from ovos_utils.bracket_expansion import expand_template
 from ovos_utils.fakebus import FakeBus
 from ovos_utils.lang import standardize_lang_tag
+from ovos_utils.list_utils import deduplicate_list
 from ovos_utils.log import LOG, deprecated, log_deprecation
+from ovos_utils.text_utils import remove_accents_and_punct
 from ovos_utils.xdg_utils import xdg_data_home
+import faulthandler
 
 PadatiousIntentContainer = IntentContainer  # backwards compat
 
 # for easy typing
-PadatiousEngine = Union[Type[IntentContainer],
-Type[DomainIntentContainer]]
+PadatiousEngine = Union[Type[IntentContainer], Type[DomainIntentContainer]]
 
-
-# TODO - move to ovos-utils
-@lru_cache()
-def remove_accents_and_punct(input_str: str) -> str:
-    """
-    Normalize the input string by removing accents and punctuation (except for '{' and '}').
-
-    Args:
-        input_str (str): The input string to be processed.
-
-    Returns:
-        str: The processed string with accents and punctuation removed.
-    """
-    rm_chars = [c for c in string.punctuation if c not in ("{", "}")]
-    # Normalize to NFD (Normalization Form Decomposed), which separates characters and diacritical marks
-    nfkd_form = unicodedata.normalize('NFD', input_str)
-    # Remove characters that are not ASCII letters or punctuation we want to keep
-    return ''.join([char for char in nfkd_form
-                    if unicodedata.category(char) != 'Mn' and char not in rm_chars])
-
-
-# TODO - move to ovos-utils
-def deduplicate_list(seq: List[str], keep_order: bool = True) -> List[str]:
-    """
-    Deduplicate a list while optionally maintaining the original order.
-
-    Args:
-        seq (List[str]): The list to deduplicate.
-        keep_order (bool): Whether to preserve the order of elements. Default is True.
-
-    Returns:
-        List[str]: The deduplicated list.
-
-    Notes:
-        If `keep_order` is False, the function uses a set for faster deduplication.
-    """
-    if not keep_order:
-        return list(set(seq))
-    else:
-        return list(dict.fromkeys(seq))
 
 
 def normalize_utterances(utterances: List[str], lang: str, cast_to_ascii: bool = True,
@@ -261,6 +222,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                  engine_class: Optional[PadatiousEngine] = None):
 
         super().__init__(bus, config)
+        faulthandler.enable()  # Enables crash logging
         self.lock = RLock()
         core_config = Configuration()
         self.lang = standardize_lang_tag(core_config.get("lang", "en-US"))
