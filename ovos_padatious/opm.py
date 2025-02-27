@@ -41,6 +41,7 @@ from ovos_utils.list_utils import deduplicate_list
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.text_utils import remove_accents_and_punct
 from ovos_utils.xdg_utils import xdg_data_home
+import faulthandler
 
 PadatiousIntentContainer = IntentContainer  # backwards compat
 
@@ -221,6 +222,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                  engine_class: Optional[PadatiousEngine] = None):
 
         super().__init__(bus, config)
+        faulthandler.enable()  # Enables crash logging
         self.lock = RLock()
         core_config = Configuration()
         self.lang = standardize_lang_tag(core_config.get("lang", "en-US"))
