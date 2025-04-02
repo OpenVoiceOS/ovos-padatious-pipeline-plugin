@@ -222,7 +222,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                  engine_class: Optional[PadatiousEngine] = None):
 
         super().__init__(bus, config)
-        faulthandler.enable()  # Enables crash logging
+        try:
+            faulthandler.enable()  # Enables crash logging
+        except Exception:
+            pass # happens in unittests and such
         self.lock = RLock()
         core_config = Configuration()
         self.lang = standardize_lang_tag(core_config.get("lang", "en-US"))
@@ -430,14 +433,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         for i in self._skill2intent[skill_id]:
             self.__detach_intent(i)
 
-    def _register_object(self, message, object_name, register_func):
-        """Generic method for registering a padatious object.
-
-        Args:
-            message (Message): trigger for action
-            object_name (str): type of entry to register
-            register_func (callable): function to call for registration
-        """
+    def _unpack_object(self, message):
+        """convert message to training data"""
         skill_id = message.data.get("skill_id") or message.context.get("skill_id")
         if not skill_id:
             LOG.warning("Skill ID is missing. Registering under 'anonymous_skill'")
@@ -448,9 +445,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         lang = message.data.get('lang', self.lang)
         lang = standardize_lang_tag(lang)
         blacklisted_words = message.data.get('blacklisted_words', [])
-
-        LOG.debug('Registering Padatious ' + object_name + ': ' + name)
-
         if (not file_name or not isfile(file_name)) and not samples:
             LOG.error('Could not find file ' + file_name)
             return
@@ -468,14 +462,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                        stemmer=stemmer,
                                        keep_order=False,
                                        cast_to_ascii=self.remove_punct)
-
-        if self.engine_class == DomainIntentContainer:
-            register_func(skill_id, name, samples, blacklisted_words=blacklisted_words)
-        else:
-            register_func(name, samples, blacklisted_words=blacklisted_words)
-
-        if self.config.get("instant_train", False) or self.first_train.is_set():
-            self.train(message)
+        return lang, skill_id, name, samples, blacklisted_words
 
     def register_intent(self, message):
         """Messagebus handler for registering intents.
@@ -494,10 +481,15 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         lang = standardize_lang_tag(lang)
         if lang in self.containers:
             self.registered_intents.append(message.data['name'])
-            if isinstance(self.containers[lang], DomainIntentContainer):
-                self._register_object(message, 'intent', self.containers[lang].add_domain_intent)
+            LOG.debug('Registering Padatious intent: ' + message.data['name'])
+            lang, skill_id, name, samples, blacklisted_words = self._unpack_object(message)
+            if self.engine_class == DomainIntentContainer:
+                self.containers[lang].add_domain_intent(skill_id, name, samples, blacklisted_words)
             else:
-                self._register_object(message, 'intent', self.containers[lang].add_intent)
+                self.containers[lang].add_intent(name, samples, blacklisted_words)
+
+        if self.config.get("instant_train", False) or self.first_train.is_set():
+            self.train(message)
 
     def register_entity(self, message):
         """Messagebus handler for registering entities.
@@ -509,10 +501,12 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         lang = standardize_lang_tag(lang)
         if lang in self.containers:
             self.registered_entities.append(message.data)
-            if isinstance(self.containers[lang], DomainIntentContainer):
-                self._register_object(message, 'entity', self.containers[lang].add_domain_entity)
+            lang, skill_id, name, samples, _ = self._unpack_object(message)
+            LOG.debug('Registering Padatious entity: ' + message.data['name'])
+            if self.engine_class == DomainIntentContainer:
+                self.containers[lang].add_domain_entity(skill_id, name, samples)
             else:
-                self._register_object(message, 'entity', self.containers[lang].add_entity)
+                self.containers[lang].add_entity(name, samples)
 
     def calc_intent(self, utterances: Union[str, List[str]], lang: Optional[str] = None,
                     message: Optional[Message] = None) -> Optional[PadatiousIntent]:
