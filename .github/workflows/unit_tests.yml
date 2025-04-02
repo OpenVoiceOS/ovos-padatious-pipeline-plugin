@@ -33,13 +33,13 @@ jobs:
   unit_tests:
     strategy:
       matrix:
-        python-version: [3.9, '3.10']
+        python-version: ['3.10', "3.11"]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Set up python ${{ matrix.python-version }}
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install System Dependencies
@@ -57,7 +57,7 @@ jobs:
         run: |
           pytest --cov=ovos_padatious --cov-report=xml ./tests
       - name: Upload coverage
-        if: "${{ matrix.python-version == '3.9' }}"
+        if: "${{ matrix.python-version == "3.11" }}"
         uses: codecov/codecov-action@v3
         with:
           token: ${{secrets.CODECOV_TOKEN}}
