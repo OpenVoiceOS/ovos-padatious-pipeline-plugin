@@ -447,6 +447,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         name = message.data['name']
         lang = message.data.get('lang', self.lang)
         lang = standardize_lang_tag(lang)
+        blacklisted_words = message.data.get('blacklisted_words', [])
 
         LOG.debug('Registering Padatious ' + object_name + ': ' + name)
 
@@ -469,9 +470,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                        cast_to_ascii=self.remove_punct)
 
         if self.engine_class == DomainIntentContainer:
-            register_func(skill_id, name, samples)
+            register_func(skill_id, name, samples, blacklisted_words=blacklisted_words)
         else:
-            register_func(name, samples)
+            register_func(name, samples, blacklisted_words=blacklisted_words)
 
         if self.config.get("instant_train", False) or self.first_train.is_set():
             self.train(message)
