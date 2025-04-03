@@ -57,7 +57,7 @@ jobs:
         run: |
           pytest --cov=ovos_padatious --cov-report=xml ./tests
       - name: Upload coverage
-        if: "${{ matrix.python-version == "3.11" }}"
+        if: "${{ matrix.python-version == '3.11' }}"
         uses: codecov/codecov-action@v3
         with:
           token: ${{secrets.CODECOV_TOKEN}}
