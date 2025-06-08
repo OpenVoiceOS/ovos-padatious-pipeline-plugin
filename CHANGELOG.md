@@ -1,20 +1,12 @@
 # Changelog
 
-## [1.4.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.1a1) (2025-06-08)
+## [1.4.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.2a1) (2025-06-08)
 
-[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.0a1...1.4.1a1)
-
-**Merged pull requests:**
-
-- fix: compatibility with ovos-workshop 7.X.X and ovos-plugin-manager 1.X.X [\#53](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/53) ([JarbasAl](https://github.com/JarbasAl))
-
-## [1.4.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.0a1) (2025-04-03)
-
-[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.6...1.4.0a1)
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.1...1.4.2a1)
 
 **Merged pull requests:**
 
-- feat:blacklisted words [\#51](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/51) ([JarbasAl](https://github.com/JarbasAl))
+- fix:  deprecated\_code\_import\_error [\#55](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/55) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
