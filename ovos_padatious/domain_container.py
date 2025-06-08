@@ -52,7 +52,8 @@ class DomainIntentContainer:
         if domain_name in self.domain_engine.intent_names:
             self.domain_engine.remove_intent(domain_name)
 
-    def add_domain_intent(self, domain_name: str, intent_name: str, intent_samples: List[str]):
+    def add_domain_intent(self, domain_name: str, intent_name: str, intent_samples: List[str],
+                          blacklisted_words: Optional[List[str]] = None):
         """
         Register an intent within a specific domain.
 
@@ -66,7 +67,8 @@ class DomainIntentContainer:
                                                         disable_padaos=self.disable_padaos)
             self.domains[domain_name].instantiate_from_disk()
 
-        self.domains[domain_name].add_intent(intent_name, intent_samples)
+        self.domains[domain_name].add_intent(intent_name, intent_samples,
+                                             blacklisted_words=blacklisted_words)
         self.training_data[domain_name] += intent_samples
         self.must_train = True
 

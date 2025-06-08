@@ -26,7 +26,7 @@ from ovos_padatious.entity_manager import EntityManager
 from ovos_padatious.intent_manager import IntentManager
 from ovos_padatious.match_data import MatchData
 from ovos_padatious.util import tokenize
-
+import collections
 
 def _save_args(func):
     """
@@ -70,6 +70,7 @@ class IntentContainer:
             self.padaos: padaos.IntentContainer = padaos.IntentContainer()
         self.train_thread: Optional[Any] = None  # deprecated
         self.serialized_args: List[Dict[str, Any]] = []  # Serialized calls for training intents/entities
+        self.blacklisted_words: Dict[str, List[str]] = collections.defaultdict(list)
 
     @property
     def intent_names(self):
@@ -135,7 +136,8 @@ class IntentContainer:
                     )
 
     @_save_args
-    def add_intent(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> None:
+    def add_intent(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True,
+                   blacklisted_words: Optional[List[str]] = None) -> None:
         """
         Creates a new intent, optionally checking the cache first
 
@@ -145,6 +147,7 @@ class IntentContainer:
             reload_cache (bool): Whether to ignore cached intent.
             must_train (bool): Whether the model needs training after adding the intent.
         """
+        self.blacklisted_words[name] += blacklisted_words or []
         self.intents.add(name, lines, reload_cache, must_train)
         if self.padaos is not None:
             self.padaos.add_intent(name, lines)
@@ -287,7 +290,10 @@ class IntentContainer:
         """
         if self.must_train:
             self.train()
-        intents = {i.name: i for i in self.intents.calc_intents(query, self.entities)}
+        # post-processing: discard any matches that contain blacklisted words
+        intents = {i.name: i
+                   for i in self.intents.calc_intents(query, self.entities)
+                   if not any(k in query for k in self.blacklisted_words[i.name])}
         sent = tokenize(query)
 
         if self.padaos is not None:

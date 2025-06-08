@@ -85,13 +85,14 @@ class TestIntentContainer(unittest.TestCase):
         'this is a {other} thing\n']
     test_entities = ['test\n', 'assessment\n']
     other_entities = ['else\n', 'different\n']
+    blist = ["bad", "404"]
 
     def setUp(self):
         self.cont = IntentContainer('/tmp/cache')
 
-    def _add_intent(self):
-        self.cont.add_intent('test', self.test_lines)
-        self.cont.add_intent('other', self.other_lines)
+    def _add_intent(self, blacklist=False):
+        self.cont.add_intent('test', self.test_lines, blacklisted_words=self.blist if blacklist else [])
+        self.cont.add_intent('other', self.other_lines, blacklisted_words=self.blist if blacklist else [])
 
     def test_load_intent(self):
         fn1 = join('/tmp', 'test.txt')
@@ -128,6 +129,18 @@ class TestIntentContainer(unittest.TestCase):
                        intents[0].conf > intents[1].conf) == (
                        intents[0].name == 'test')
         assert self.cont.calc_intent('this is another test').name == 'test'
+
+        # this one will fail in next test, should pass here
+        intents = self.cont.calc_intents('this is a bad test')
+        self.assertEqual(intents[0].name, 'test')
+
+    def test_blacklist(self):
+        self._add_intent(blacklist=True)
+        self.cont.train(False)
+        # matched in previous test
+        # no match here due to "bad" being in blacklist
+        intents = self.cont.calc_intents('this is a bad test')
+        self.assertEqual(intents, [])
 
     def test_empty(self):
         self.cont.train(False)
