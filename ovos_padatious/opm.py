@@ -32,7 +32,7 @@ from ovos_bus_client.session import SessionManager, Session
 from ovos_padatious import IntentContainer
 from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
-from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch, IntentMatch
+from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
 from ovos_utils import flatten_list
 from ovos_utils.bracket_expansion import expand_template
 from ovos_utils.fakebus import FakeBus
@@ -164,54 +164,6 @@ def _cached_stem_sentence(stemmer, sentence: str) -> str:
     """
     stems = stemmer.stemWords(sentence.split())
     return " ".join(stems)
-
-
-class PadatiousMatcher:
-    """Matcher class to avoid redundancy in padatious intent matching."""
-
-    @deprecated("PadatiousMatcher class is deprecated!", "2.0.0")
-    def __init__(self, service: 'PadatiousPipeline'):
-        self.service = service
-
-    def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[IntentMatch]:
-        """Match intent and make sure a certain level of confidence is reached.
-
-        Args:
-            utterances (list of tuples): Utterances to parse, originals paired
-                                         with optional normalized version.
-            limit (float): required confidence level.
-        """
-        m: IntentHandlerMatch = self.service._match_level(utterances, limit, lang, message)
-        if not m:
-            return None
-        return IntentMatch("Padatious", m.match_type, m.match_data, m.skill_id, m.utterance)
-
-    def match_high(self, utterances, lang=None, message=None) -> Optional[IntentMatch]:
-        """Intent matcher for high confidence.
-
-        Args:
-            utterances (list of tuples): Utterances to parse, originals paired
-                                         with optional normalized version.
-        """
-        return self._match_level(utterances, self.service.conf_high, lang, message)
-
-    def match_medium(self, utterances, lang=None, message=None) -> Optional[IntentMatch]:
-        """Intent matcher for medium confidence.
-
-        Args:
-            utterances (list of tuples): Utterances to parse, originals paired
-                                         with optional normalized version.
-        """
-        return self._match_level(utterances, self.service.conf_med, lang, message)
-
-    def match_low(self, utterances, lang=None, message=None) -> Optional[IntentMatch]:
-        """Intent matcher for low confidence.
-
-        Args:
-            utterances (list of tuples): Utterances to parse, originals paired
-                                         with optional normalized version.
-        """
-        return self._match_level(utterances, self.service.conf_low, lang, message)
 
 
 class PadatiousPipeline(ConfidenceMatcherPipeline):
