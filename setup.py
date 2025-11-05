@@ -50,7 +50,7 @@ def required(requirements_file):
 PLUGIN_ENTRY_POINT = 'ovos-padatious-pipeline-plugin=ovos_padatious.opm:PadatiousPipeline'
 
 setup(
-    name='ovos-padatious',
+    name='ovos_padatious',
     version=get_version(),
     description='A neural network intent parser',
     long_description=long_description,
