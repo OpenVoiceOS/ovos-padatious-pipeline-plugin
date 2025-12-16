@@ -1,16 +1,12 @@
 # Changelog
 
-## [1.4.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.3a1) (2025-11-05)
+## [1.4.4a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.4a1) (2025-12-16)
 
-[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.2...1.4.3a1)
-
-**Fixed bugs:**
-
-- Failed to create padatious handlers on Mac OS [\#8](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/issues/8)
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.3...1.4.4a1)
 
 **Merged pull requests:**
 
-- Update requirements.txt [\#57](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/57) ([JarbasAl](https://github.com/JarbasAl))
+- fix: thread safety [\#59](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/59) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
