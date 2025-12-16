@@ -24,6 +24,13 @@ class TrainData:
     def __init__(self):
         self.sent_lists = {}
 
+    def copy(self) -> 'TrainData':
+        # NOTE: new samples might be added to TrainData object during obj.train(data)
+        # which would result in ovos_padatious.training_manager:train:153 - ERROR - Error training XXX: dictionary changed size during iteration
+        data = TrainData()
+        data.sent_lists = dict(self.sent_lists)
+        return data
+
     def add_lines(self, name, lines):
         lines = expand_lines(lines)
         self.sent_lists[name] = [tokenize(line) for line in lines if line.strip()]

@@ -142,10 +142,7 @@ class TrainingManager:
         if timeout is not None:
             LOG.warning("'timeout' argument is deprecated and will be ignored")
 
-        # NOTE: new samples might be added to TrainData object during obj.train(data)
-        # which would result in ovos_padatious.training_manager:train:156 - ERROR - Error training XXX: dictionary changed size during iteration
-        train_data = TrainData()
-        train_data.sent_lists = dict(self.train_data.sent_lists)  # copy for thread safety
+        train_data = self.train_data.copy()  # copy for thread safety
         train = partial(_train_and_save, cache=self.cache, data=train_data, print_updates=debug)
 
         objs = list(self.objects_to_train) # make a copy so its thread safe
