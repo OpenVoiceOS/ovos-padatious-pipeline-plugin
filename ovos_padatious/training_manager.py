@@ -142,7 +142,8 @@ class TrainingManager:
         if timeout is not None:
             LOG.warning("'timeout' argument is deprecated and will be ignored")
 
-        train = partial(_train_and_save, cache=self.cache, data=self.train_data, print_updates=debug)
+        train_data = self.train_data.copy()  # copy for thread safety
+        train = partial(_train_and_save, cache=self.cache, data=train_data, print_updates=debug)
 
         objs = list(self.objects_to_train) # make a copy so its thread safe
         fails = []
