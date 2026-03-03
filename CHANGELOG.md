@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.5a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.5a1) (2026-03-03)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.4a2...1.4.5a1)
+
+**Merged pull requests:**
+
+- fix: default config values [\#61](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/61) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.4.4a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.4a2) (2026-03-03)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.4a1...1.4.4a2)
