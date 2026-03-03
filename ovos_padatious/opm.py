@@ -172,7 +172,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     def __init__(self, bus: Optional[Union[MessageBusClient, FakeBus]] = None,
                  config: Optional[Dict] = None,
                  engine_class: Optional[PadatiousEngine] = None):
-
+        intent_config = Configuration().get('intents', {})
+        config = config or intent_config.get("ovos-padatious-pipeline-plugin") or intent_config.get("padatious") or dict()
         super().__init__(bus, config)
         try:
             faulthandler.enable()  # Enables crash logging
