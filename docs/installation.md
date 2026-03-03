@@ -7,7 +7,7 @@ Padatious requires native libraries before the Python package can be installed.
 ### Ubuntu / Debian
 
 ```bash
-sudo apt-get install libfann-dev python3-dev python3-pip swig libfann-dev python3-fann2
+sudo apt-get install libfann-dev python3-dev python3-pip swig python3-fann2
 ```
 
 ### Arch Linux

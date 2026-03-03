@@ -90,8 +90,7 @@ Entity names must be wrapped in `{...}` internally. `Entity.verify_name` enforce
 
 `TrainData` aggregates all registered intents/entities and provides `my_sents(name)` (positive samples) and `other_sents(name)` (negative samples) to drive contrastive training.
 
-`TrainingManager` runs training in a `ThreadPoolExecutor` so multiple intents can be trained concurrently.
-
+`TrainingManager` currently runs training sequentially over the queued objects, using a snapshot of training data to avoid in-flight mutation issues.
 ### `BracketExpansion` / `SentenceTreeParser` (`bracket_expansion.py`, `simple_intent.py`)
 
 The `(a|b|c)` template syntax is expanded into concrete sentences before training. The parser builds a `Fragment` tree (`Word`, `Sentence`, `Options`) and calls `expand()` to enumerate all combinations.

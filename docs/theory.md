@@ -6,7 +6,7 @@ Padatious was designed around a specific constraint: a voice assistant skill dev
 
 Two guiding principles follow from this:
 
-**Intents are independent.** Each intent trains its own tiny neural network in isolation. There is no shared encoder, no joint training, and no competition at training time. This means adding a new intent never degrades existing ones — each network only needs to learn a binary signal (match / no match).
+**Intents are independent.** Each intent trains its own tiny neural network in isolation. There is no shared encoder or joint training. Adding a new intent does not modify existing intent weights, though overall inference ranking can still shift when new competing intents are introduced.
 
 **Small data is the norm.** A network with 5–20 training samples should work well. The system achieves this by aggressive data augmentation and by keeping each network's input space small: only the tokens that actually appear in that intent's samples are given dedicated features.
 
