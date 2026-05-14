@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.5.0a1) (2026-05-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.5a2...1.5.0a1)
+
+**Merged pull requests:**
+
+- fix + test: clear stale intent cache on train/detach; add ovoscope e2e suite [\#67](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/67) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.4.5a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.5a2) (2026-04-09)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.5a1...1.4.5a2)
