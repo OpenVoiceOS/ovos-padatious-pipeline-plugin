@@ -10,6 +10,7 @@ jobs:
     uses: OpenVoiceOS/gh-automations/.github/workflows/opm-check.yml@dev
     with:
       python_version: '3.11'
+      system_deps: 'swig libfann-dev'
       plugin_type: 'pipeline'
       opm_require_found: true
       opm_validate_interface: true
