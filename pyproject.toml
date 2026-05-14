@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ovos_padatious"
+dynamic = ["version"]
+description = "A neural network intent parser"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Matthew Scholefield" }]
+keywords = ["intent-parser", "parser", "text", "text-processing", "nlp", "ovos"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Text Processing :: Linguistic",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "fann2>=1.0.7,<1.1.0",
+    "xxhash",
+    "ovos-plugin-manager>=0.5.0,<3.0.0",
+    "ovos-workshop>=0.1.7,<9.0.0",
+    "ovos-utils>=0.7.0,<1.0.0",
+    "langcodes",
+    "snowballstemmer",
+    "PyStemmer",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov"]
+
+[project.urls]
+Homepage = "https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin"
+
+[project.entry-points."opm.pipeline"]
+"ovos-padatious-pipeline-plugin" = "ovos_padatious.opm:PadatiousPipeline"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ovos_padatious*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "ovos_padatious.version.__version__" }
