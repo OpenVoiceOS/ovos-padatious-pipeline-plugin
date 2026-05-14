@@ -14,13 +14,14 @@ import pytest
 
 ovoscope = pytest.importorskip("ovoscope", reason="ovoscope not installed; skipping E2E tests")
 
+from ovos_bus_client.message import Message  # noqa: E402
+
 from ovoscope import (  # noqa: E402
     E2EPipelineHarness,
     detach_intent,
     detach_skill,
     make_session,
     register_padatious_entity,
-    register_padatious_intent,
 )
 
 from ovos_padatious.opm import PadatiousPipeline  # noqa: E402
@@ -43,8 +44,18 @@ class _PadatiousHarness(E2EPipelineHarness):
 
     pipeline: PadatiousPipeline  # type: ignore[assignment]
 
-    def _register_intent(self, name, samples):
-        register_padatious_intent(self.bus, name, samples)
+    def _register_intent(self, name, samples, lang="en-US"):
+        # Padatious tracks intent -> skill_id in an internal _skill2intent
+        # map populated at register time; without it, detach_skill cannot
+        # remove the intent. Inject skill_id (the prefix before ":" in the
+        # intent name) so the ovoscope harness's per-test cleanup works.
+        skill_id = name.split(":", 1)[0]
+        self.bus.emit(Message("padatious:register_intent", {
+            "name": name, "samples": samples, "lang": lang,
+            "skill_id": skill_id,
+        }))
+        import time
+        time.sleep(0.1)
 
     def _register_entity(self, name, samples):
         register_padatious_entity(self.bus, name, samples)
