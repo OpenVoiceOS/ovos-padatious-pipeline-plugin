@@ -338,6 +338,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.bus.emit(Message('mycroft.skills.trained'))
             self.finished_training_event.set()
 
+        # Training changes the model; stale LRU cache entries must be evicted
+        # so that the next call to calc_intent reflects the updated state.
+        _calc_padatious_intent.cache_clear()
+
         if not self.first_train.is_set():
             self.first_train.set()
 
@@ -372,6 +376,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             message (Message): message triggering action
         """
         self.__detach_intent(message.data.get('intent_name'))
+        # Intent roster changed; evict stale cache so next match reflects removal.
+        _calc_padatious_intent.cache_clear()
 
     def handle_detach_skill(self, message):
         """Messagebus handler for detaching all intents for skill.
@@ -385,6 +391,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             skill_id = "anonymous_skill"
         for i in self._skill2intent[skill_id]:
             self.__detach_intent(i)
+        # Intent roster changed; evict stale cache so next match reflects removal.
+        _calc_padatious_intent.cache_clear()
 
     def _unpack_object(self, message):
         """convert message to training data"""
