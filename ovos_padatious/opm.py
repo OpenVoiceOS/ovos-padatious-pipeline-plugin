@@ -378,6 +378,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.__detach_intent(message.data.get('intent_name'))
         # Intent roster changed; evict stale cache so next match reflects removal.
         _calc_padatious_intent.cache_clear()
+        # In instant_train mode, retrain immediately so the model also
+        # forgets the intent — otherwise the cleared cache repopulates from
+        # the still-trained model on the next match.
+        if self.config.get("instant_train", False):
+            self.train(message)
 
     def handle_detach_skill(self, message):
         """Messagebus handler for detaching all intents for skill.
@@ -393,6 +398,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.__detach_intent(i)
         # Intent roster changed; evict stale cache so next match reflects removal.
         _calc_padatious_intent.cache_clear()
+        # See handle_detach_intent — retrain in instant_train mode so the
+        # underlying model state matches the registered_intents list.
+        if self.config.get("instant_train", False):
+            self.train(message)
 
     def _unpack_object(self, message):
         """convert message to training data"""
