@@ -10,3 +10,7 @@ jobs:
     uses: OpenVoiceOS/gh-automations/.github/workflows/license-check.yml@dev
     with:
       system_deps: 'swig libfann-dev'
+      # fann2 ships as LGPLv2+ (a swig binding to libfann); we use it as a
+      # library dependency only, no modifications, so the WeakCopyleft flag
+      # is a false positive. Exclude it from the check.
+      exclude_packages: '^(fann2).*'

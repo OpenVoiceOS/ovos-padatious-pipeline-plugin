@@ -39,7 +39,10 @@ class _PadatiousHarness(E2EPipelineHarness):
     CONFIG_KEY = CONFIG_KEY
     # instant_train avoids the async train flow — every register_intent
     # call retrains synchronously so the test does not race the trainer.
-    PLUGIN_CONFIG = {"instant_train": True}
+    # conf_low default is permissive enough that unrelated utterances
+    # match against trained intents; raise it to a stricter threshold so
+    # 'set a timer for five minutes' does not match a 'hello' intent.
+    PLUGIN_CONFIG = {"instant_train": True, "conf_low": 0.6}
     SKILL_ID = "test_skill_padatious"
 
     pipeline: PadatiousPipeline  # type: ignore[assignment]
