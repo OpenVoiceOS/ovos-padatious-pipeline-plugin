@@ -202,7 +202,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.conf_med = self.config.get("conf_med") or 0.8
         self.conf_low = self.config.get("conf_low") or 0.5
 
-        engine_class = engine_class or DomainIntentContainer if self.config.get("domain_engine") else IntentContainer
+        if engine_class is None:
+            engine_class = (DomainIntentContainer
+                            if self.config.get("domain_engine")
+                            else IntentContainer)
         LOG.info(f"Padatious class: {engine_class.__name__}")
 
         self.remove_punct = self.config.get("cast_to_ascii", False)
