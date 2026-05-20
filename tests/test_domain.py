@@ -1,93 +1,73 @@
 import unittest
 from unittest.mock import MagicMock
 
-from ovos_padatious.domain_container import DomainIntentContainer  # Replace 'your_module' with the actual module name
-
+from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData
 
 
-class TestDomainIntentEngine(unittest.TestCase):
+class TestDomainIntentContainer(unittest.TestCase):
     def setUp(self):
         self.engine = DomainIntentContainer()
 
-    def test_register_domain_intent(self):
+    def test_add_domain_intent_creates_container(self):
         self.engine.add_domain_intent("domain1", "intent1", ["sample1", "sample2"])
-        self.assertIn("domain1", self.engine.training_data)
+        self.assertIn("domain1", self.engine.domains)
         self.assertIn("intent1", self.engine.domains["domain1"].intent_names)
 
     def test_remove_domain(self):
-        self.engine.add_domain_intent("domain1", "intent1", ["sample1", "sample2"])
+        self.engine.add_domain_intent("domain1", "intent1", ["sample1"])
         self.engine.remove_domain("domain1")
-        self.assertNotIn("domain1", self.engine.training_data)
         self.assertNotIn("domain1", self.engine.domains)
 
     def test_remove_domain_intent(self):
-        self.engine.add_domain_intent("domain1", "intent1", ["sample1", "sample2"])
+        self.engine.add_domain_intent("domain1", "intent1", ["sample1"])
         self.engine.remove_domain_intent("domain1", "intent1")
         self.assertNotIn("intent1", self.engine.domains["domain1"].intent_names)
 
-    def test_calc_domains(self):
+    def test_calc_intent_picks_global_argmax(self):
         self.engine.train = MagicMock()
-        self.engine.domain_engine.calc_intents = MagicMock(
-            return_value=[MatchData(name="domain1", sent="query", matches=None, conf=0.9)])
-        result = self.engine.calc_domains("query")
-        self.engine.train.assert_called_once()
-        self.assertEqual(result[0].name, "domain1")
+        dom_a, dom_b = MagicMock(), MagicMock()
+        dom_a.calc_intent.return_value = MatchData(name="a", sent="q", matches=None, conf=0.6)
+        dom_b.calc_intent.return_value = MatchData(name="b", sent="q", matches=None, conf=0.9)
+        self.engine.domains["A"] = dom_a
+        self.engine.domains["B"] = dom_b
+        result = self.engine.calc_intent("q")
+        self.assertEqual(result.name, "b")
+        self.assertEqual(result.conf, 0.9)
 
-    def test_calc_domain(self):
+    def test_calc_intent_restricted_to_domain(self):
         self.engine.train = MagicMock()
-        self.engine.domain_engine.calc_intent = MagicMock(
-            return_value=MatchData(name="domain1", sent="query", matches=None, conf=0.9))
-        result = self.engine.calc_domain("query")
-        self.engine.train.assert_called_once()
-        self.assertEqual(result.name, "domain1")
+        dom_a, dom_b = MagicMock(), MagicMock()
+        dom_a.calc_intent.return_value = MatchData(name="a", sent="q", matches=None, conf=0.6)
+        dom_b.calc_intent.return_value = MatchData(name="b", sent="q", matches=None, conf=0.9)
+        self.engine.domains["A"] = dom_a
+        self.engine.domains["B"] = dom_b
+        result = self.engine.calc_intent("q", domain="A")
+        self.assertEqual(result.name, "a")
 
-    def test_calc_intent(self):
-        # New parallel-argmax behaviour: every domain is scored and the
-        # global best wins, no top-level routing required.
+    def test_calc_intents_returns_per_domain_best(self):
         self.engine.train = MagicMock()
-        mock_domain_container = MagicMock()
-        mock_domain_container.calc_intents.return_value = [
-            MatchData(name="intent1", sent="query", matches=None, conf=0.9),
-        ]
-        self.engine.domains["domain1"] = mock_domain_container
-        result = self.engine.calc_intent("query")
-        self.assertEqual(result.name, "intent1")
+        dom_a, dom_b = MagicMock(), MagicMock()
+        dom_a.calc_intent.return_value = MatchData(name="a", sent="q", matches=None, conf=0.6)
+        dom_b.calc_intent.return_value = MatchData(name="b", sent="q", matches=None, conf=0.9)
+        self.engine.domains["A"] = dom_a
+        self.engine.domains["B"] = dom_b
+        result = self.engine.calc_intents("q")
+        self.assertEqual([m.name for m in result], ["b", "a"])
 
-    def test_calc_intents(self):
-        self.engine.train = MagicMock()
-        mock_domain_container = MagicMock()
-        mock_domain_container.calc_intents.return_value = [
-            MatchData(name="intent1", sent="query", matches=None, conf=0.9),
-            MatchData(name="intent2", sent="query", matches=None, conf=0.8),
-        ]
-        self.engine.domains["domain1"] = mock_domain_container
-
-        self.engine.domain_engine.calc_intents = MagicMock(
-            return_value=[MatchData(name="domain1", sent="query", matches=None, conf=0.9)])
-        result = self.engine.calc_intents("query")
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0].name, "intent1")
-
-    def test_train(self):
-        self.engine.training_data["domain1"] = ["sample1", "sample2"]
-        self.engine.domain_engine.add_intent = MagicMock()
-        self.engine.domain_engine.train = MagicMock()
-
-        mock_domain_container = MagicMock()
-        self.engine.domains["domain1"] = mock_domain_container
-
+    def test_train_calls_each_container(self):
+        dom_a, dom_b = MagicMock(), MagicMock()
+        self.engine.domains["A"] = dom_a
+        self.engine.domains["B"] = dom_b
         self.engine.train()
-        self.engine.domain_engine.add_intent.assert_called_with("domain1", ["sample1", "sample2"])
-        self.engine.domain_engine.train.assert_called_once()
-        mock_domain_container.train.assert_called_once()
+        dom_a.train.assert_called_once()
+        dom_b.train.assert_called_once()
         self.assertFalse(self.engine.must_train)
 
 
-class TestDomainIntentEngineWithLiveData(unittest.TestCase):
+class TestDomainIntentContainerWithLiveData(unittest.TestCase):
     def setUp(self):
         self.engine = DomainIntentContainer()
-        # Sample training data
         self.training_data = {
             "IOT": {
                 "turn_on_device": ["Turn on the lights", "Switch on the fan", "Activate the air conditioner"],
@@ -110,74 +90,32 @@ class TestDomainIntentEngineWithLiveData(unittest.TestCase):
                 "stop_music": ["Stop the music", "Pause playback", "Halt the song"],
             },
         }
-        # Register domains and intents
         for domain, intents in self.training_data.items():
             for intent, samples in intents.items():
                 self.engine.add_domain_intent(domain, intent, samples)
         self.engine.train()
 
-    def test_live_data_intent_matching(self):
-        # Test IOT domain
-        query = "Switch on the fan"
-        result = self.engine.calc_intent(query, domain="IOT")
-        self.assertEqual(result.name, "turn_on_device")
-        self.assertGreater(result.conf, 0.8)
+    def test_restricted_domain_match(self):
+        for query, domain, expected in [
+            ("Switch on the fan", "IOT", "turn_on_device"),
+            ("Hi there", "greetings", "say_hello"),
+            ("What is the capital of France?", "General Knowledge", "ask_fact"),
+            ("Why is the sky blue?", "Question", "ask_question"),
+            ("Play a song", "Media Playback", "play_music"),
+        ]:
+            result = self.engine.calc_intent(query, domain=domain)
+            self.assertEqual(result.name, expected)
+            self.assertGreater(result.conf, 0.8)
 
-        # Test greetings domain
-        query = "Hi there"
-        result = self.engine.calc_intent(query, domain="greetings")
-        self.assertEqual(result.name, "say_hello")
-        self.assertGreater(result.conf, 0.8)
-
-        # Test General Knowledge domain
-        query = "What is the capital of France?"
-        result = self.engine.calc_intent(query, domain="General Knowledge")
-        self.assertEqual(result.name, "ask_fact")
-        self.assertGreater(result.conf, 0.8)
-
-        # Test Question domain
-        query = "Why is the sky blue?"
-        result = self.engine.calc_intent(query, domain="Question")
-        self.assertEqual(result.name, "ask_question")
-        self.assertGreater(result.conf, 0.8)
-
-        # Test Media Playback domain
-        query = "Play a song"
-        result = self.engine.calc_intent(query, domain="Media Playback")
-        self.assertEqual(result.name, "play_music")
-        self.assertGreater(result.conf, 0.8)
-
-    def test_live_data_cross_domain_matching(self):
-        # Test cross-domain intent matching
-        query = "Tell me a fact about space"
-        result = self.engine.calc_domain(query)
-        self.assertEqual(result.name, "General Knowledge")
-        self.assertGreater(result.conf, 0.8)
-
-        # Validate intent from the matched domain
-        result = self.engine.calc_intent(query, domain=result.name)
-        self.assertEqual(result.name, "ask_fact")
-        self.assertGreater(result.conf, 0.8)
-
-    def test_calc_intent_without_domain(self):
-        # Test intent calculation without specifying a domain
-        query = "Turn on the lights"
-        result = self.engine.calc_intent(query)
-        self.assertIsNotNone(result.name, "Intent name should not be None")
-        self.assertEqual(result.name, "turn_on_device")
-        self.assertGreater(result.conf, 0.8)
-
-        query = "Goodbye"
-        result = self.engine.calc_intent(query)
-        self.assertIsNotNone(result.name, "Intent name should not be None")
-        self.assertEqual(result.name, "say_goodbye")
-        self.assertGreater(result.conf, 0.8)
-
-        query = "What is quantum mechanics?"
-        result = self.engine.calc_intent(query)
-        self.assertIsNotNone(result.name, "Intent name should not be None")
-        self.assertEqual(result.name, "ask_question")
-        self.assertGreater(result.conf, 0.8)
+    def test_unrestricted_global_argmax(self):
+        for query, expected in [
+            ("Turn on the lights", "turn_on_device"),
+            ("Goodbye", "say_goodbye"),
+            ("What is quantum mechanics?", "ask_question"),
+        ]:
+            result = self.engine.calc_intent(query)
+            self.assertEqual(result.name, expected)
+            self.assertGreater(result.conf, 0.8)
 
 
 if __name__ == "__main__":

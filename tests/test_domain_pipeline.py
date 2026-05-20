@@ -1,8 +1,7 @@
-"""Tests for the new DomainPadatiousPipeline OPM entry point.
+"""Tests for the DomainPadatiousPipeline OPM entry point.
 
 Exercises:
-  - the pipeline auto-selects DomainIntentContainer (no `domain_engine`
-    flag needed).
+  - the pipeline constructs a DomainIntentContainer.
   - skill_id is used as the domain when registering intents.
   - detach via remove_domain_intent / remove_domain (skill detach).
   - end-to-end intent matching via add_domain_intent routing.
