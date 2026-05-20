@@ -202,7 +202,17 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.conf_med = self.config.get("conf_med") or 0.8
         self.conf_low = self.config.get("conf_low") or 0.5
 
-        engine_class = engine_class or DomainIntentContainer if self.config.get("domain_engine") else IntentContainer
+        if engine_class is None:
+            if self.config.get("domain_engine"):
+                log_deprecation(
+                    "'domain_engine: true' is deprecated; select the "
+                    "'ovos-padatious-domain-pipeline-plugin' OPM entry "
+                    "point instead",
+                    "2.0.0",
+                )
+                engine_class = DomainIntentContainer
+            else:
+                engine_class = IntentContainer
         LOG.info(f"Padatious class: {engine_class.__name__}")
 
         self.remove_punct = self.config.get("cast_to_ascii", False)
@@ -980,6 +990,41 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
                 f"be removed. Update mycroft.conf / session config to use the "
                 f"canonical id '{c}' instead.")
     return frozenset(canonical)
+
+
+class DomainPadatiousPipeline(PadatiousPipeline):
+    """Padatious pipeline backed by :class:`DomainIntentContainer`.
+
+    This variant is exposed as its own OPM entry point
+    (``ovos-padatious-domain-pipeline-plugin``) so the domain-aware
+    engine can be selected at the pipeline level rather than through
+    the legacy ``domain_engine: true`` config flag on the flat
+    pipeline.
+
+    Configuration is read from ``intents.ovos-padatious-domain-pipeline-plugin``
+    (falling back to ``intents.padatious_domain``). The ``engine_class``
+    is forced to :class:`DomainIntentContainer` regardless of any
+    ``domain_engine`` flag.
+
+    Intent registration is routed via ``add_domain_intent(skill_id,
+    name, ...)`` — the skill_id is treated as the domain. The intent
+    label's ``skill_id:intent_name`` prefix is used; if no ``:`` is
+    present the full intent name is used as both domain and intent
+    name (matching the parent pipeline's prefix-splitting convention).
+    """
+
+    def __init__(self, bus: Optional[Union[MessageBusClient, FakeBus]] = None,
+                 config: Optional[Dict] = None,
+                 engine_class: Optional[PadatiousEngine] = None):
+        if config is None:
+            intent_config = Configuration().get('intents', {})
+            config = (intent_config.get("ovos-padatious-domain-pipeline-plugin")
+                      or intent_config.get("padatious_domain")
+                      or dict())
+        # Force the domain engine regardless of the deprecated flag.
+        config = dict(config)
+        config["domain_engine"] = True
+        super().__init__(bus=bus, config=config, engine_class=DomainIntentContainer)
 
 
 @lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code

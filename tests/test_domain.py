@@ -43,13 +43,14 @@ class TestDomainIntentEngine(unittest.TestCase):
         self.assertEqual(result.name, "domain1")
 
     def test_calc_intent(self):
+        # New parallel-argmax behaviour: every domain is scored and the
+        # global best wins, no top-level routing required.
         self.engine.train = MagicMock()
         mock_domain_container = MagicMock()
-        mock_domain_container.calc_intent.return_value = MatchData(name="intent1", sent="query", matches=None, conf=0.9)
+        mock_domain_container.calc_intents.return_value = [
+            MatchData(name="intent1", sent="query", matches=None, conf=0.9),
+        ]
         self.engine.domains["domain1"] = mock_domain_container
-
-        self.engine.domain_engine.calc_intent = MagicMock(
-            return_value=MatchData(name="domain1", sent="query", matches=None, conf=0.9))
         result = self.engine.calc_intent("query")
         self.assertEqual(result.name, "intent1")
 
