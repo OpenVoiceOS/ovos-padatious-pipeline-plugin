@@ -202,17 +202,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.conf_med = self.config.get("conf_med") or 0.8
         self.conf_low = self.config.get("conf_low") or 0.5
 
-        if engine_class is None:
-            if self.config.get("domain_engine"):
-                log_deprecation(
-                    "'domain_engine: true' is deprecated; select the "
-                    "'ovos-padatious-domain-pipeline-plugin' OPM entry "
-                    "point instead",
-                    "2.0.0",
-                )
-                engine_class = DomainIntentContainer
-            else:
-                engine_class = IntentContainer
+        engine_class = engine_class or DomainIntentContainer if self.config.get("domain_engine") else IntentContainer
         LOG.info(f"Padatious class: {engine_class.__name__}")
 
         self.remove_punct = self.config.get("cast_to_ascii", False)
@@ -399,10 +389,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.bus.emit(Message('mycroft.skills.trained'))
             self.finished_training_event.set()
 
-        # Training changes the model; stale LRU cache entries must be evicted
-        # so that the next call to calc_intent reflects the updated state.
-        _calc_padatious_intent.cache_clear()
-
         if not self.first_train.is_set():
             self.first_train.set()
 
@@ -441,13 +427,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             message (Message): message triggering action
         """
         self.__detach_intent(message.data.get('intent_name'))
-        # Intent roster changed; evict stale cache so next match reflects removal.
-        _calc_padatious_intent.cache_clear()
-        # In instant_train mode, retrain immediately so the model also
-        # forgets the intent — otherwise the cleared cache repopulates from
-        # the still-trained model on the next match.
-        if self.config.get("instant_train", False):
-            self.train(message)
 
     def handle_detach_skill(self, message):
         """Messagebus handler for detaching all intents for skill.
@@ -461,12 +440,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             skill_id = "anonymous_skill"
         for i in self._skill2intent[skill_id]:
             self.__detach_intent(i)
-        # Intent roster changed; evict stale cache so next match reflects removal.
-        _calc_padatious_intent.cache_clear()
-        # See handle_detach_intent — retrain in instant_train mode so the
-        # underlying model state matches the registered_intents list.
-        if self.config.get("instant_train", False):
-            self.train(message)
 
     def _unpack_object(self, message):
         """convert message to training data"""
@@ -995,35 +968,17 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
 class DomainPadatiousPipeline(PadatiousPipeline):
     """Padatious pipeline backed by :class:`DomainIntentContainer`.
 
-    This variant is exposed as its own OPM entry point
-    (``ovos-padatious-domain-pipeline-plugin``) so the domain-aware
-    engine can be selected at the pipeline level rather than through
-    the legacy ``domain_engine: true`` config flag on the flat
-    pipeline.
-
-    Configuration is read from ``intents.ovos-padatious-domain-pipeline-plugin``
-    (falling back to ``intents.padatious_domain``). The ``engine_class``
-    is forced to :class:`DomainIntentContainer` regardless of any
-    ``domain_engine`` flag.
-
-    Intent registration is routed via ``add_domain_intent(skill_id,
-    name, ...)`` — the skill_id is treated as the domain. The intent
-    label's ``skill_id:intent_name`` prefix is used; if no ``:`` is
-    present the full intent name is used as both domain and intent
-    name (matching the parent pipeline's prefix-splitting convention).
+    Each registered skill becomes its own domain; matching scans every
+    domain in parallel and the highest-confidence intent wins.
+    Configuration is read from
+    ``intents.ovos-padatious-domain-pipeline-plugin``.
     """
 
     def __init__(self, bus: Optional[Union[MessageBusClient, FakeBus]] = None,
-                 config: Optional[Dict] = None,
-                 engine_class: Optional[PadatiousEngine] = None):
+                 config: Optional[Dict] = None):
         if config is None:
-            intent_config = Configuration().get('intents', {})
-            config = (intent_config.get("ovos-padatious-domain-pipeline-plugin")
-                      or intent_config.get("padatious_domain")
-                      or dict())
-        # Force the domain engine regardless of the deprecated flag.
-        config = dict(config)
-        config["domain_engine"] = True
+            config = Configuration().get('intents', {}).get(
+                "ovos-padatious-domain-pipeline-plugin") or {}
         super().__init__(bus=bus, config=config, engine_class=DomainIntentContainer)
 
 
