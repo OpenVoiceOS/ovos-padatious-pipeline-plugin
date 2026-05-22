@@ -48,7 +48,7 @@ class UtteranceIntentMatchingTest(unittest.TestCase):
         # regex match
         intent = intent_service.calc_intent("tell me about Mycroft", "en-US")
         self.assertEqual(intent.name, "test2")
-        self.assertEqual(intent.matches, {'thing': 'mycroft'})
+        self.assertEqual(intent.matches, {'thing': 'Mycroft'})
 
         # fuzzy regex match - success
         utterance = "tell me everything about Mycroft"
