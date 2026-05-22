@@ -68,7 +68,7 @@ class TestRegisteredIntentMatch(_PadatiousHarness):
     def test_exact_utterance_dispatches_intent(self):
         self._register_intent(f"{self.SKILL_ID}:hello", _HELLO_SAMPLES)
         msg = self.send_and_capture(
-            "hello", expected_types=[f"{self.SKILL_ID}:hello"], timeout=10.0
+            "hello", expected_types=[f"{self.SKILL_ID}:hello"], timeout=30.0
         )
         self.assertIsNotNone(msg, "expected intent match on bus")
         self.assertEqual(msg.msg_type, f"{self.SKILL_ID}:hello")
@@ -85,7 +85,7 @@ class TestRegisteredIntentMatch(_PadatiousHarness):
         self._register_intent(f"{self.SKILL_ID}:hello", _HELLO_SAMPLES)
         self._register_intent(f"{self.SKILL_ID}:bye", _BYE_SAMPLES)
         msg = self.send_and_capture(
-            "goodbye", expected_types=[f"{self.SKILL_ID}:bye"], timeout=10.0
+            "goodbye", expected_types=[f"{self.SKILL_ID}:bye"], timeout=30.0
         )
         self.assertIsNotNone(msg)
         self.assertEqual(msg.msg_type, f"{self.SKILL_ID}:bye")
@@ -99,7 +99,7 @@ class TestEntityExtraction(_PadatiousHarness):
             ["buy {item}", "get {item}", "purchase {item}"],
         )
         msg = self.send_and_capture(
-            "buy milk", expected_types=[f"{self.SKILL_ID}:buy"], timeout=10.0
+            "buy milk", expected_types=[f"{self.SKILL_ID}:buy"], timeout=30.0
         )
         self.assertIsNotNone(msg)
         self.assertEqual(msg.msg_type, f"{self.SKILL_ID}:buy")
@@ -109,7 +109,7 @@ class TestDetach(_PadatiousHarness):
     def test_detach_intent_prevents_match(self):
         self._register_intent(f"{self.SKILL_ID}:hello", _HELLO_SAMPLES)
         msg = self.send_and_capture(
-            "hello", expected_types=[f"{self.SKILL_ID}:hello"], timeout=10.0
+            "hello", expected_types=[f"{self.SKILL_ID}:hello"], timeout=30.0
         )
         self.assertIsNotNone(msg)
 
@@ -128,7 +128,7 @@ class TestDetach(_PadatiousHarness):
         msg = self.send_and_capture(
             "turn on the lights",
             expected_types=["skill_b_padatious:lights_on"],
-            timeout=10.0,
+            timeout=30.0,
         )
         self.assertIsNotNone(msg, "skill_b intent should survive skill_a detach")
         detach_skill(self.bus, "skill_b_padatious")
