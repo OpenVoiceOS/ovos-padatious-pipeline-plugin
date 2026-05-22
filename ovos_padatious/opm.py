@@ -53,6 +53,11 @@ PadatiousEngine = Union[Type[IntentContainer], Type[DomainIntentContainer],
 # containers that group intents per domain (skill_id) under a shared API
 _DOMAIN_ENGINES = (DomainIntentContainer, HierarchicalIntentContainer)
 
+# trailing punctuation safe to strip from samples — excludes the characters
+# padatious template syntax relies on ({entity}, [optional], (a|b))
+_TEMPLATE_SYNTAX = set("{}[]()|<>")
+_STRIPPABLE_PUNCT = "".join(c for c in string.punctuation if c not in _TEMPLATE_SYNTAX)
+
 
 # OVOS-INTENT-1: a template slot is written ``{entity_name}`` in a sample; the
 # padaos parser recognises the same lowercase/underscore/colon name form.
@@ -87,11 +92,9 @@ def normalize_utterances(utterances: List[str], lang: str, cast_to_ascii: bool =
     # Replace accented characters and punctuation if needed
     if cast_to_ascii:
         utterances = [remove_accents_and_punct(u) for u in utterances]
-    # strip trailing punctuation, that just causes duplicate training data —
-    # but preserve the slot/vocabulary metacharacters {} <> so a template
-    # ending in a slot ({name}) keeps its closing brace (OVOS-INTENT-1 §3)
-    _trailing_punct = ''.join(c for c in string.punctuation if c not in '{}<>')
-    utterances = [u.rstrip(_trailing_punct) for u in utterances]
+    # strip punctuation marks, that just causes duplicate training data;
+    # template-syntax characters ({entity}, [optional], (a|b)) are preserved
+    utterances = [u.rstrip(_STRIPPABLE_PUNCT) for u in utterances]
     # Stem words if stemmer is provided
     if stemmer is not None:
         utterances = stemmer.stem_sentences(utterances)
