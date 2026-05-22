@@ -10,8 +10,9 @@ This repository bundles a fork of the original [padatious](https://github.com/My
 |---|---|
 | [Installation](installation.md) | How to install dependencies and the package |
 | [Intent Format](intent_format.md) | Syntax for writing `.intent` and `.entity` files |
-| [API Reference](api_reference.md) | Python API for `IntentContainer` and `DomainIntentContainer` |
+| [API Reference](api_reference.md) | Python API for `IntentContainer`, `DomainIntentContainer`, and `HierarchicalIntentContainer` |
 | [OVOS Pipeline](ovos_pipeline.md) | Using the plugin inside OVOS / configuration options |
+| [Hierarchical Pipeline](hierarchical_pipeline.md) | Two-stage domain-routing pipeline variant |
 | [Architecture](architecture.md) | Internal architecture and data flow |
 | [Theory](theory.md) | Algorithm design, decisions, and limitations |
 

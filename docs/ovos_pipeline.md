@@ -4,15 +4,17 @@
 
 ## Entry Points
 
-The plugin ships two OPM pipeline entry points, both discovered automatically by OVOS:
+The plugin ships three OPM pipeline entry points, all discovered automatically by OVOS:
 
 ```
-ovos-padatious-pipeline-plugin         = ovos_padatious.opm:PadatiousPipeline
-ovos-padatious-domain-pipeline-plugin  = ovos_padatious.opm:DomainPadatiousPipeline
+ovos-padatious-pipeline-plugin               = ovos_padatious.opm:PadatiousPipeline
+ovos-padatious-domain-pipeline-plugin        = ovos_padatious.opm:DomainPadatiousPipeline
+ovos-padatious-hierarchical-pipeline-plugin  = ovos_padatious.opm:HierarchicalPadatiousPipeline
 ```
 
 - `ovos-padatious-pipeline-plugin` — the flat pipeline backed by `IntentContainer`.
 - `ovos-padatious-domain-pipeline-plugin` — backed by `DomainIntentContainer`. The `skill_id` of each registered intent becomes its domain; all sub-domains score the query in parallel and the global best wins. Configuration lives under `intents.ovos-padatious-domain-pipeline-plugin` (or `padatious_domain`).
+- `ovos-padatious-hierarchical-pipeline-plugin` — backed by `HierarchicalIntentContainer`. A top-level classifier picks one domain, then only that domain's intents are scored. See [Hierarchical Pipeline](hierarchical_pipeline.md).
 
 > The legacy `domain_engine: true` config flag on the flat pipeline still works for backward compatibility, but is **deprecated**. Select `ovos-padatious-domain-pipeline-plugin` at the pipeline level instead.
 

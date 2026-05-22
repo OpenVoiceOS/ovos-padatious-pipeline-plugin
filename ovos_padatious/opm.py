@@ -30,6 +30,7 @@ from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
 from ovos_padatious import IntentContainer
 from ovos_padatious.domain_container import DomainIntentContainer
+from ovos_padatious.hierarchical_container import HierarchicalIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
 from ovos_spec_tools import closest_lang, expand as expand_template, standardize_lang
@@ -46,7 +47,11 @@ import faulthandler
 PadatiousIntentContainer = IntentContainer  # backwards compat
 
 # for easy typing
-PadatiousEngine = Union[Type[IntentContainer], Type[DomainIntentContainer]]
+PadatiousEngine = Union[Type[IntentContainer], Type[DomainIntentContainer],
+                        Type[HierarchicalIntentContainer]]
+
+# containers that group intents per domain (skill_id) under a shared API
+_DOMAIN_ENGINES = (DomainIntentContainer, HierarchicalIntentContainer)
 
 
 # OVOS-INTENT-1: a template slot is written ``{entity_name}`` in a sample; the
@@ -217,6 +222,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             # allow user to switch back and forth without retraining
             # cache is cheap, training isn't
             intent_cache += "_domain"
+        elif self.engine_class == HierarchicalIntentContainer:
+            intent_cache += "_hierarchical"
         if use_stemmer:
             intent_cache += "_stemmer"
         if self.remove_punct:
@@ -416,7 +423,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 for skill_id, intents in self._skill2intent.items():
                     if intent_name in intents:
                         try:
-                            if isinstance(self.containers[lang], DomainIntentContainer):
+                            if isinstance(self.containers[lang], _DOMAIN_ENGINES):
                                 self.containers[lang].remove_domain_intent(skill_id, intent_name)
                             else:
                                 self.containers[lang].remove_intent(intent_name)
@@ -536,7 +543,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 self.registered_intents.append(message.data['name'])
             LOG.debug('Registering Padatious intent: ' + message.data['name'])
             lang, skill_id, name, samples, blacklisted_words = self._unpack_object(message)
-            if self.engine_class == DomainIntentContainer:
+            if isinstance(self.containers[lang], _DOMAIN_ENGINES):
                 self.containers[lang].add_domain_intent(skill_id, name, samples,
                                                         blacklisted_words=blacklisted_words)
             else:
@@ -558,7 +565,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.registered_entities.append(message.data)
             lang, skill_id, name, samples, _ = self._unpack_object(message)
             LOG.debug('Registering Padatious entity: ' + message.data['name'])
-            if self.engine_class == DomainIntentContainer:
+            if isinstance(self.containers[lang], _DOMAIN_ENGINES):
                 self.containers[lang].add_domain_entity(skill_id, name, samples)
             else:
                 self.containers[lang].add_entity(name, samples)
@@ -983,6 +990,34 @@ class DomainPadatiousPipeline(PadatiousPipeline):
             config = Configuration().get('intents', {}).get(
                 "ovos-padatious-domain-pipeline-plugin") or {}
         super().__init__(bus=bus, config=config, engine_class=DomainIntentContainer)
+
+
+class HierarchicalPadatiousPipeline(PadatiousPipeline):
+    """Padatious pipeline backed by :class:`HierarchicalIntentContainer`.
+
+    Each registered skill becomes its own domain. Matching is two-stage: a
+    top-level classifier first selects a single domain, then only that
+    domain's intents are scored. Utterances whose best domain scores below
+    ``domain_threshold`` are rejected before any sub-container runs.
+
+    Configuration is read from
+    ``intents.ovos-padatious-hierarchical-pipeline-plugin`` (or
+    ``padatious_hierarchical``). It accepts every key the flat pipeline does,
+    plus ``domain_threshold`` — the minimum top-level classifier confidence
+    required to route a query (``0.0`` disables the gate).
+    """
+
+    def __init__(self, bus: Optional[Union[MessageBusClient, FakeBus]] = None,
+                 config: Optional[Dict] = None):
+        if config is None:
+            intent_config = Configuration().get('intents', {})
+            config = (intent_config.get("ovos-padatious-hierarchical-pipeline-plugin")
+                      or intent_config.get("padatious_hierarchical") or {})
+        self.domain_threshold = (config or {}).get("domain_threshold", 0.0)
+        super().__init__(bus=bus, config=config,
+                         engine_class=HierarchicalIntentContainer)
+        for container in self.containers.values():
+            container.domain_threshold = self.domain_threshold
 
 
 @lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
