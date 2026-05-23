@@ -22,7 +22,6 @@ from threading import Event, RLock
 from typing import Optional, Dict, List, Union, Type
 
 import snowballstemmer
-from langcodes import closest_match
 from ovos_config.config import Configuration
 from ovos_config.meta import get_xdg_base
 
@@ -33,10 +32,9 @@ from ovos_padatious import IntentContainer
 from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
+from ovos_spec_tools import closest_lang, expand as expand_template, standardize_lang
 from ovos_utils import flatten_list
-from ovos_utils.bracket_expansion import expand_template
 from ovos_utils.fakebus import FakeBus
-from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.list_utils import deduplicate_list
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.text_utils import remove_accents_and_punct
@@ -106,8 +104,8 @@ class Stemmer:
         Raises:
             ValueError: If the language is unsupported.
         """
-        lang2 = closest_match(lang, list(self.LANGS))[0]
-        if lang2 == "und":
+        lang2 = closest_lang(lang, list(self.LANGS))
+        if lang2 is None:
             raise ValueError(f"unsupported language: {lang}")
         self.snowball = snowballstemmer.stemmer(self.LANGS[lang2])
 
@@ -122,8 +120,7 @@ class Stemmer:
         Returns:
             bool: True if the language is supported, False otherwise.
         """
-        lang2 = closest_match(lang, list(cls.LANGS))[0]
-        return lang2 != "und"
+        return closest_lang(lang, list(cls.LANGS)) is not None
 
     def stem_sentence(self, sentence: str) -> str:
         """
@@ -181,9 +178,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             pass # happens in unittests and such
         self.lock = RLock()
         core_config = Configuration()
-        self.lang = standardize_lang_tag(core_config.get("lang", "en-US"))
+        self.lang = standardize_lang(core_config.get("lang", "en-US"))
         langs = core_config.get('secondary_langs') or []
-        langs = [standardize_lang_tag(l) for l in langs]
+        langs = [standardize_lang(l) for l in langs]
         if self.lang not in langs:
             langs.append(self.lang)
 
@@ -264,7 +261,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             limit (float): required confidence level.
         """
         LOG.debug(f'Padatious Matching confidence > {limit}')
-        lang = standardize_lang_tag(lang or self.lang)
+        lang = standardize_lang(lang or self.lang)
 
         if lang in self.stemmers:
             stemmer = self.stemmers[lang]
@@ -413,7 +410,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         samples = message.data.get("samples")
         name = message.data['name']
         lang = message.data.get('lang', self.lang)
-        lang = standardize_lang_tag(lang)
+        lang = standardize_lang(lang)
         blacklisted_words = message.data.get('blacklisted_words', [])
         if (not file_name or not isfile(file_name)) and not samples:
             LOG.error('Could not find file ' + file_name)
@@ -448,7 +445,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._skill2intent[skill_id].append(message.data['name'])
 
         lang = message.data.get('lang', self.lang)
-        lang = standardize_lang_tag(lang)
+        lang = standardize_lang(lang)
         if lang in self.containers:
             self.registered_intents.append(message.data['name'])
             LOG.debug('Registering Padatious intent: ' + message.data['name'])
@@ -468,7 +465,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             message (Message): message triggering action
         """
         lang = message.data.get('lang', self.lang)
-        lang = standardize_lang_tag(lang)
+        lang = standardize_lang(lang)
         if lang in self.containers:
             self.registered_entities.append(message.data)
             lang, skill_id, name, samples, _ = self._unpack_object(message)
@@ -513,14 +510,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
     def _get_closest_lang(self, lang: str) -> Optional[str]:
         if self.containers:
-            lang = standardize_lang_tag(lang)
-            closest, score = closest_match(lang, list(self.containers.keys()))
-            # https://langcodes-hickford.readthedocs.io/en/sphinx/index.html#distance-values
-            # 0 -> These codes represent the same language, possibly after filling in values and normalizing.
-            # 1- 3 -> These codes indicate a minor regional difference.
-            # 4 - 10 -> These codes indicate a significant but unproblematic regional difference.
-            if score < 10:
-                return closest
+            return closest_lang(standardize_lang(lang), list(self.containers.keys()))
         return None
 
     def shutdown(self):
