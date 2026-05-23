@@ -180,10 +180,14 @@ def run_nebulento(bundle, cases, threshold=0.5):
     from nebulento.fuzz import MatchStrategy
     strategy = MatchStrategy.DAMERAU_LEVENSHTEIN_SIMILARITY
     c = IntentContainer(fuzzy_strategy=strategy)
-    for entity_name, samples in bundle.entities.items():
-        c.add_entity(entity_name, samples)
-    for name, data in bundle.intents.items():
-        c.add_intent(name, data["train"])
+    try:
+        for entity_name, samples in bundle.entities.items():
+            c.add_entity(entity_name, samples)
+        for name, data in bundle.intents.items():
+            c.add_intent(name, data["train"])
+    except Exception as e:
+        print(f"[SKIP] nebulento — registration failed: {e}")
+        return None
 
     results, latencies = [], []
     for utt, _ in cases:
@@ -203,10 +207,14 @@ def run_padatious_flat(bundle, cases, threshold=0.5):
     from ovos_padatious import IntentContainer as PC
     with tempfile.TemporaryDirectory() as d:
         c = PC(cache_dir=d)
-        for entity_name, samples in bundle.entities.items():
-            c.add_entity(entity_name, samples)
-        for name, data in bundle.intents.items():
-            c.add_intent(name, data["train"])
+        try:
+            for entity_name, samples in bundle.entities.items():
+                c.add_entity(entity_name, samples)
+            for name, data in bundle.intents.items():
+                c.add_intent(name, data["train"])
+        except Exception as e:
+            print(f"[SKIP] padatious flat — registration failed: {e}")
+            return None
         t0 = time.perf_counter()
         c.train(single_thread=True, debug=False)
         train_ms = (time.perf_counter() - t0) * 1000
@@ -233,16 +241,20 @@ def run_padatious_domain(bundle, cases, threshold=0.5):
                      for intent in intents}
     with tempfile.TemporaryDirectory() as d:
         c = DomainIntentContainer(cache_dir=d)
-        for name, data in bundle.intents.items():
-            c.add_domain_intent(intent_domain[name], name, data["train"])
-        # register each entity in every domain whose intents reference it
-        domain_entities = defaultdict(set)
-        for name, data in bundle.intents.items():
-            for entity_name in data["entities"]:
-                domain_entities[intent_domain[name]].add(entity_name)
-        for dom, entity_names in domain_entities.items():
-            for entity_name in entity_names:
-                c.add_domain_entity(dom, entity_name, bundle.entities[entity_name])
+        try:
+            for name, data in bundle.intents.items():
+                c.add_domain_intent(intent_domain[name], name, data["train"])
+            # register each entity in every domain whose intents reference it
+            domain_entities = defaultdict(set)
+            for name, data in bundle.intents.items():
+                for entity_name in data["entities"]:
+                    domain_entities[intent_domain[name]].add(entity_name)
+            for dom, entity_names in domain_entities.items():
+                for entity_name in entity_names:
+                    c.add_domain_entity(dom, entity_name, bundle.entities[entity_name])
+        except Exception as e:
+            print(f"[SKIP] padatious domain — registration failed: {e}")
+            return None
         t0 = time.perf_counter()
         c.train()
         train_ms = (time.perf_counter() - t0) * 1000
@@ -270,16 +282,20 @@ def run_padatious_hierarchical(bundle, cases, threshold=0.5, domain_threshold=0.
     with tempfile.TemporaryDirectory() as d:
         c = HierarchicalIntentContainer(cache_dir=d,
                                         domain_threshold=domain_threshold)
-        for name, data in bundle.intents.items():
-            c.add_domain_intent(intent_domain[name], name, data["train"])
-        # register each entity in every domain whose intents reference it
-        domain_entities = defaultdict(set)
-        for name, data in bundle.intents.items():
-            for entity_name in data["entities"]:
-                domain_entities[intent_domain[name]].add(entity_name)
-        for dom, entity_names in domain_entities.items():
-            for entity_name in entity_names:
-                c.add_domain_entity(dom, entity_name, bundle.entities[entity_name])
+        try:
+            for name, data in bundle.intents.items():
+                c.add_domain_intent(intent_domain[name], name, data["train"])
+            # register each entity in every domain whose intents reference it
+            domain_entities = defaultdict(set)
+            for name, data in bundle.intents.items():
+                for entity_name in data["entities"]:
+                    domain_entities[intent_domain[name]].add(entity_name)
+            for dom, entity_names in domain_entities.items():
+                for entity_name in entity_names:
+                    c.add_domain_entity(dom, entity_name, bundle.entities[entity_name])
+        except Exception as e:
+            print(f"[SKIP] padatious hierarchical — registration failed: {e}")
+            return None
         t0 = time.perf_counter()
         c.train()
         train_ms = (time.perf_counter() - t0) * 1000
@@ -337,23 +353,21 @@ def run_dataset(name):
     print("Splits  : " + ", ".join(f"{k}={len(v)}" for k, v in bundle.splits.items()))
 
     rows = []
-    # baselines
-    m, lat, mean_lat, tr = run_padaos(bundle, cases)
-    rows.append(("padaos", m, lat, mean_lat, tr))
 
-    m, lat, mean_lat, tr = run_nebulento(bundle, cases, threshold=0.5)
-    rows.append(("nebulento", m, lat, mean_lat, tr))
+    def _add(label, res):
+        if res is not None:
+            m, lat, mean_lat, tr = res
+            rows.append((label, m, lat, mean_lat, tr))
+
+    # baselines
+    _add("padaos", run_padaos(bundle, cases))
+    _add("nebulento", run_nebulento(bundle, cases, threshold=0.5))
 
     # subject — this repo's three engines
-    m, lat, mean_lat, tr = run_padatious_flat(bundle, cases, threshold=0.5)
-    rows.append(("padatious flat", m, lat, mean_lat, tr))
-
-    m, lat, mean_lat, tr = run_padatious_domain(bundle, cases, threshold=0.5)
-    rows.append(("padatious domain", m, lat, mean_lat, tr))
-
-    m, lat, mean_lat, tr = run_padatious_hierarchical(bundle, cases, threshold=0.5,
-                                                      domain_threshold=0.0)
-    rows.append(("padatious hierarchical", m, lat, mean_lat, tr))
+    _add("padatious flat", run_padatious_flat(bundle, cases, threshold=0.5))
+    _add("padatious domain", run_padatious_domain(bundle, cases, threshold=0.5))
+    _add("padatious hierarchical",
+         run_padatious_hierarchical(bundle, cases, threshold=0.5, domain_threshold=0.0))
 
     summary(f"{name}  —  {bundle.repo}", rows)
 
