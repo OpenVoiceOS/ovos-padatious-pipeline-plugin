@@ -71,8 +71,11 @@ def normalize_utterances(utterances: List[str], lang: str, cast_to_ascii: bool =
     # Replace accented characters and punctuation if needed
     if cast_to_ascii:
         utterances = [remove_accents_and_punct(u) for u in utterances]
-    # strip punctuation marks, that just causes duplicate training data
-    utterances = [u.rstrip(string.punctuation) for u in utterances]
+    # strip trailing punctuation, that just causes duplicate training data —
+    # but preserve the slot/vocabulary metacharacters {} <> so a template
+    # ending in a slot ({name}) keeps its closing brace (OVOS-INTENT-1 §3)
+    _trailing_punct = ''.join(c for c in string.punctuation if c not in '{}<>')
+    utterances = [u.rstrip(_trailing_punct) for u in utterances]
     # Stem words if stemmer is provided
     if stemmer is not None:
         utterances = stemmer.stem_sentences(utterances)
