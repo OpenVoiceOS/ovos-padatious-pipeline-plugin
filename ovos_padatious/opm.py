@@ -66,6 +66,10 @@ def normalize_utterances(utterances: List[str], lang: str, cast_to_ascii: bool =
     """
     # Flatten the list if it's in old style tuple format
     utterances = flatten_list(utterances)  # Assuming flatten_list is defined elsewhere
+    # Normalize case: OVOS-INTENT-1 §2 normalizes input to lowercase for matching,
+    # so training samples and extracted slot values stay case-insensitive
+    # (ovos_spec_tools.expand preserves case; the prior expander lowercased).
+    utterances = [u.lower() for u in utterances]
     # Collapse multiple whitespaces into a single space
     utterances = [re.sub(r'\s+', ' ', u) for u in utterances]
     # Replace accented characters and punctuation if needed
@@ -571,7 +575,9 @@ def _calc_padatious_intent(utt: str,
     @return: matched PadatiousIntent
     """
     try:
-        matches = [m for m in intent_container.calc_intents(utt)
+        # OVOS-INTENT-1 §2: match against the lowercase-normalized input so slot
+        # values are case-insensitive, but report the original utterance as `sent`.
+        matches = [m for m in intent_container.calc_intents(utt.lower())
                    if m.name not in sess.blacklisted_intents
                    and m.name.split(":")[0] not in sess.blacklisted_skills]
         if len(matches) == 0:
