@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from ovos_utils import flatten_list
-from ovos_utils.bracket_expansion import expand_template
+from ovos_spec_tools import expand as expand_template
 
 from xxhash import xxh32
 from ovos_padatious.bracket_expansion import SentenceTreeParser
