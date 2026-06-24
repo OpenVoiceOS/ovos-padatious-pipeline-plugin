@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.6.0a1) (2026-06-24)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.5.0a1...1.6.0a1)
+
+**Merged pull requests:**
+
+- refactor: migrate to ovos-spec-tools [\#70](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/70) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.5.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.5.0a1) (2026-05-14)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.5a2...1.5.0a1)
