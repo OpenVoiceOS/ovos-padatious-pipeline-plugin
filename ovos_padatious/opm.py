@@ -33,6 +33,7 @@ from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
 from ovos_spec_tools import closest_lang, expand as expand_template, standardize_lang
+from ovos_spec_tools import SpecMessage
 from ovos_utils import flatten_list
 from ovos_utils.fakebus import FakeBus
 from ovos_utils.list_utils import deduplicate_list
@@ -237,6 +238,15 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._skill2intent = defaultdict(list)
         self.max_words = 50  # if an utterance contains more words than this, don't attempt to match
 
+        # OVOS-INTENT-4 §8.5 enable/disable: padatious has no native
+        # suppression flag, so disable detaches the intent and enable
+        # re-registers it. _intent_definitions retains the register Message
+        # of every registered intent (full name -> Message); _disabled_intents
+        # holds the subset currently suppressed.
+        self._intent_definitions = {}
+        self._disabled_intents = {}
+
+        # legacy registration contract (kept for back-compat)
         self.bus.on('padatious:register_intent', self.register_intent)
         self.bus.on('padatious:register_entity', self.register_entity)
         self.bus.on('detach_intent', self.handle_detach_intent)
@@ -245,6 +255,17 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
         self.bus.on('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
         self.bus.on('mycroft.skills.train', self.train)
+
+        # OVOS-INTENT-4 spec registration contract (in addition to legacy).
+        # Padatious is a TEMPLATE engine, so register.template is its primary
+        # consumed topic; keyword registrations are ignored by design (§11).
+        self.bus.on(SpecMessage.INTENT_REGISTER_TEMPLATE, self.handle_register_template)
+        self.bus.on(SpecMessage.ENTITY_REGISTER, self.handle_register_entity_spec)
+        self.bus.on(SpecMessage.INTENT_DEREGISTER, self.handle_deregister_intent_spec)
+        self.bus.on(SpecMessage.ENTITY_DEREGISTER, self.handle_deregister_entity_spec)
+        self.bus.on(SpecMessage.SKILL_DEREGISTER, self.handle_deregister_skill_spec)
+        self.bus.on(SpecMessage.INTENT_ENABLE, self.handle_enable_intent_spec)
+        self.bus.on(SpecMessage.INTENT_DISABLE, self.handle_disable_intent_spec)
 
         LOG.debug('Loaded Padatious intent pipeline')
 
@@ -450,6 +471,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             skill_id = message.data["skill_id"] = "anonymous_skill"
 
         self._skill2intent[skill_id].append(message.data['name'])
+        # retain the registration so an INTENT-4 enable (§8.5) can re-train
+        # the intent after a disable detached it
+        self._intent_definitions[message.data['name']] = message
 
         lang = message.data.get('lang', self.lang)
         lang = standardize_lang(lang)
@@ -481,6 +505,179 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 self.containers[lang].add_domain_entity(skill_id, name, samples)
             else:
                 self.containers[lang].add_entity(name, samples)
+
+    # ------------------------------------------------------------------ #
+    # OVOS-INTENT-4 spec registration handlers                           #
+    #                                                                    #
+    # These translate the spec payloads (§§6-8) into the same internal   #
+    # padatious registration calls the legacy handlers use, so both wire #
+    # contracts feed one container. The internal padatious intent/entity #
+    # name is the colon-joined ``<skill_id>:<name>`` the legacy contract #
+    # already used as ``data['name']``.                                  #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _spec_identity(message, name_field):
+        """Pull (skill_id, name) from a §3.2 spec payload.
+
+        Returns (skill_id, name, full_name) where ``full_name`` is the
+        ``<skill_id>:<name>`` key padatious uses internally, or
+        (None, None, None) when identity is missing.
+        """
+        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        name = message.data.get(name_field)
+        if not skill_id or not name:
+            return None, None, None
+        # already-namespaced names are passed through unchanged
+        full = name if name.startswith(f"{skill_id}:") else f"{skill_id}:{name}"
+        return skill_id, name, full
+
+    def handle_register_template(self, message):
+        """Consume ``ovos.intent.register.template`` (OVOS-INTENT-4 §6).
+
+        Maps the spec payload (skill_id, intent_name, lang, samples,
+        blacklist) onto the legacy padatious registration via
+        :meth:`register_intent`.
+        """
+        skill_id, intent_name, full = self._spec_identity(message, "intent_name")
+        if full is None:
+            LOG.warning(f"[{SpecMessage.INTENT_REGISTER_TEMPLATE}] rejected: "
+                        f"missing skill_id/intent_name")
+            return
+        samples = message.data.get("samples")
+        if not samples:  # §6.3 malformed: samples missing/empty
+            LOG.warning(f"[{SpecMessage.INTENT_REGISTER_TEMPLATE}] rejected "
+                        f"skill_id={skill_id} intent_name={intent_name} "
+                        f"lang={message.data.get('lang')}: empty samples")
+            return
+        lang = standardize_lang(message.data.get("lang", self.lang))
+        # §6 'blacklist' is the template-method suppression vocabulary;
+        # padatious calls this 'blacklisted_words'.
+        legacy = Message(
+            "padatious:register_intent",
+            data={"name": full, "samples": list(samples), "lang": lang,
+                  "skill_id": skill_id,
+                  "blacklisted_words": message.data.get("blacklist", [])},
+            context=dict(message.context, skill_id=skill_id))
+        self.register_intent(legacy)
+
+    def handle_register_entity_spec(self, message):
+        """Consume ``ovos.entity.register`` (OVOS-INTENT-4 §7)."""
+        skill_id, entity_name, full = self._spec_identity(message, "entity_name")
+        if full is None:
+            LOG.warning(f"[{SpecMessage.ENTITY_REGISTER}] rejected: "
+                        f"missing skill_id/entity_name")
+            return
+        samples = message.data.get("samples")
+        if not samples:  # §7.2 malformed: samples missing/empty
+            LOG.warning(f"[{SpecMessage.ENTITY_REGISTER}] rejected "
+                        f"skill_id={skill_id} entity_name={entity_name} "
+                        f"lang={message.data.get('lang')}: empty samples")
+            return
+        lang = standardize_lang(message.data.get("lang", self.lang))
+        legacy = Message(
+            "padatious:register_entity",
+            data={"name": full, "samples": list(samples), "lang": lang,
+                  "skill_id": skill_id},
+            context=dict(message.context, skill_id=skill_id))
+        self.register_entity(legacy)
+
+    def _spec_intent_names(self, message):
+        """Resolve the full padatious intent name(s) targeted by a §8 payload.
+
+        Returns the list of ``<skill_id>:<intent_name>`` keys to act on
+        (``lang`` is ignored: padatious keys intents by name, training data
+        is shared across the per-lang containers).
+        """
+        skill_id, intent_name, full = self._spec_identity(message, "intent_name")
+        if full is None:
+            return []
+        return [full]
+
+    def handle_deregister_intent_spec(self, message):
+        """Consume ``ovos.intent.deregister`` (OVOS-INTENT-4 §8.2)."""
+        for full in self._spec_intent_names(message):
+            self.__detach_intent(full)
+            self._disabled_intents.pop(full, None)
+        _calc_padatious_intent.cache_clear()
+        if self.config.get("instant_train", False):
+            self.train(message)
+
+    def handle_deregister_entity_spec(self, message):
+        """Consume ``ovos.entity.deregister`` (OVOS-INTENT-4 §8.3)."""
+        skill_id, entity_name, full = self._spec_identity(message, "entity_name")
+        if full is None:
+            return
+        for lang in self.containers:
+            try:
+                self.containers[lang].remove_entity(full)
+            except Exception as e:
+                LOG.debug(f"entity {full} not present in {lang}: {e}")
+        self.registered_entities = [e for e in self.registered_entities
+                                    if e.get("name") != full]
+        _calc_padatious_intent.cache_clear()
+        if self.config.get("instant_train", False):
+            self.train(message)
+
+    def handle_deregister_skill_spec(self, message):
+        """Consume ``ovos.skill.deregister`` (OVOS-INTENT-4 §8.4).
+
+        Removes every intent and entity owned by the skill.
+        """
+        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        if not skill_id:
+            LOG.warning(f"[{SpecMessage.SKILL_DEREGISTER}] rejected: missing skill_id")
+            return
+        for full in list(self._skill2intent.get(skill_id, [])):
+            self.__detach_intent(full)
+            self._disabled_intents.pop(full, None)
+        # drop the skill's entities too
+        prefix = f"{skill_id}:"
+        for lang in self.containers:
+            for ent in [e.get("name") for e in self.registered_entities
+                        if str(e.get("name", "")).startswith(prefix)]:
+                try:
+                    self.containers[lang].remove_entity(ent)
+                except Exception as e:
+                    LOG.debug(f"entity {ent} not present in {lang}: {e}")
+        self.registered_entities = [e for e in self.registered_entities
+                                    if not str(e.get("name", "")).startswith(prefix)]
+        _calc_padatious_intent.cache_clear()
+        if self.config.get("instant_train", False):
+            self.train(message)
+
+    def handle_disable_intent_spec(self, message):
+        """Consume ``ovos.intent.disable`` (OVOS-INTENT-4 §8.5).
+
+        Padatious has no native suppression flag; disabling detaches the
+        intent from the container while retaining its definition so a later
+        enable can re-train it.
+        """
+        for full in self._spec_intent_names(message):
+            if full in self._disabled_intents:
+                continue  # already disabled, no-op
+            definition = self._intent_definitions.get(full)
+            if definition is None:
+                LOG.warning(f"[{SpecMessage.INTENT_DISABLE}] no registered "
+                            f"definition for {full}; nothing to disable")
+                continue
+            self._disabled_intents[full] = definition
+            self.__detach_intent(full)
+        _calc_padatious_intent.cache_clear()
+        if self.config.get("instant_train", False):
+            self.train(message)
+
+    def handle_enable_intent_spec(self, message):
+        """Consume ``ovos.intent.enable`` (OVOS-INTENT-4 §8.5).
+
+        Re-registers a previously disabled intent from its retained
+        definition.
+        """
+        for full in self._spec_intent_names(message):
+            definition = self._disabled_intents.pop(full, None)
+            if definition is None:
+                continue  # already enabled / never disabled -> no-op
+            self.register_intent(definition)
 
     def calc_intent(self, utterances: Union[str, List[str]], lang: Optional[str] = None,
                     message: Optional[Message] = None) -> Optional[PadatiousIntent]:
@@ -533,6 +730,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.remove('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
         self.bus.remove('detach_intent', self.handle_detach_intent)
         self.bus.remove('detach_skill', self.handle_detach_skill)
+        self.bus.remove(SpecMessage.INTENT_REGISTER_TEMPLATE, self.handle_register_template)
+        self.bus.remove(SpecMessage.ENTITY_REGISTER, self.handle_register_entity_spec)
+        self.bus.remove(SpecMessage.INTENT_DEREGISTER, self.handle_deregister_intent_spec)
+        self.bus.remove(SpecMessage.ENTITY_DEREGISTER, self.handle_deregister_entity_spec)
+        self.bus.remove(SpecMessage.SKILL_DEREGISTER, self.handle_deregister_skill_spec)
+        self.bus.remove(SpecMessage.INTENT_ENABLE, self.handle_enable_intent_spec)
+        self.bus.remove(SpecMessage.INTENT_DISABLE, self.handle_disable_intent_spec)
 
     def handle_get_padatious(self, message):
         """messagebus handler for perfoming padatious parsing.
