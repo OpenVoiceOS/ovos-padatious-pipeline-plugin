@@ -25,7 +25,10 @@ requires-python = ">=3.10"
 dependencies = [
     "fann2>=1.0.7,<1.1.0",
     "xxhash",
-    "ovos-plugin-manager>=0.5.0,<3.0.0",
+    # opm.pipeline entrypoint + the bus-client 2.x test stack need opm 2.x;
+    # the stable opm releases all cap ovos-bus-client<2.0.0, so pin the
+    # prerelease floor to let pip resolve .[test] without --pre.
+    "ovos-plugin-manager>=2.3.0a1,<3.0.0",
     "ovos-utils>=0.7.0,<1.0.0",
     "ovos-spec-tools>=0.16.1a2,<1.0.0",
     "langcodes",
