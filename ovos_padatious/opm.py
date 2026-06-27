@@ -782,6 +782,8 @@ def _calc_padatious_intent(utt: str,
     Try to match an utterance to an intent in an intent_container
     @param utt: str - text to match intent against
 
+    The session blacklists are passed as hashable frozensets so this stays
+    ``lru_cache``-able (Session is unhashable under ovos-bus-client>=2.4.0a1).
     @return: matched PadatiousIntent
     """
     try:
