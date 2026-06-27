@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.6.2a1) (2026-06-27)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.6.1a1...1.6.2a1)
+
+**Merged pull requests:**
+
+- fix: drop unhashable Session from lru\_cache key \(ovos-bus-client 2.x compat\) [\#75](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/75) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.6.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.6.1a1) (2026-06-27)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.6.0a1...1.6.1a1)
