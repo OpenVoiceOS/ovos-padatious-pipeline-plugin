@@ -506,9 +506,14 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             return None
 
         sess = SessionManager.get(message)
+        # Session is unhashable (ovos-bus-client 2.x), so it cannot be an
+        # lru_cache key; pass the blacklists it carries as frozensets instead.
+        blacklisted_intents = frozenset(sess.blacklisted_intents or [])
+        blacklisted_skills = frozenset(sess.blacklisted_skills or [])
 
         intent_container = self.containers.get(lang)
-        intents = [_calc_padatious_intent(utt, intent_container, sess)
+        intents = [_calc_padatious_intent(utt, intent_container,
+                                          blacklisted_intents, blacklisted_skills)
                    for utt in utterances]
         intents = [i for i in intents if i is not None]
         # select best
@@ -567,7 +572,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 @lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
 def _calc_padatious_intent(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
-                           sess: Session) -> Optional[PadatiousIntent]:
+                           blacklisted_intents: frozenset = frozenset(),
+                           blacklisted_skills: frozenset = frozenset()) -> Optional[PadatiousIntent]:
     """
     Try to match an utterance to an intent in an intent_container
     @param utt: str - text to match intent against
@@ -578,8 +584,8 @@ def _calc_padatious_intent(utt: str,
         # OVOS-INTENT-1 §2: match against the lowercase-normalized input so slot
         # values are case-insensitive, but report the original utterance as `sent`.
         matches = [m for m in intent_container.calc_intents(utt.lower())
-                   if m.name not in sess.blacklisted_intents
-                   and m.name.split(":")[0] not in sess.blacklisted_skills]
+                   if m.name not in blacklisted_intents
+                   and m.name.split(":")[0] not in blacklisted_skills]
         if len(matches) == 0:
             return None
         best_match = max(matches, key=lambda x: x.conf)
