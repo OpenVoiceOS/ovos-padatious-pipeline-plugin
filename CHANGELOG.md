@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.7.0a1) (2026-06-28)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.6.2a1...1.7.0a1)
+
+**Merged pull requests:**
+
+- feat: consume OVOS-INTENT-4 template registration \(alongside legacy\) [\#72](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/72) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.6.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.6.2a1) (2026-06-27)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.6.1a1...1.6.2a1)
