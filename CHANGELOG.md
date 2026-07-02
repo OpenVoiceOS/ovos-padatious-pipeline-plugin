@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.8.0a1) (2026-07-02)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.7.1a1...1.8.0a1)
+
+**Merged pull requests:**
+
+- feat: enforce OVOS-CONTEXT-1 requires/excludes\_context gating at match time [\#80](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/80) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.7.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.7.1a1) (2026-06-28)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.7.0a1...1.7.1a1)
