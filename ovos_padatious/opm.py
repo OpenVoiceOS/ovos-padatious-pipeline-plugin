@@ -34,6 +34,7 @@ from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
 from ovos_spec_tools import closest_lang, expand as expand_template, standardize_lang
 from ovos_spec_tools import SpecMessage
+from ovos_spec_tools import gate_satisfied
 from ovos_utils import flatten_list
 from ovos_utils.fakebus import FakeBus
 from ovos_utils.list_utils import deduplicate_list
@@ -245,6 +246,14 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # holds the subset currently suppressed.
         self._intent_definitions = {}
         self._disabled_intents = {}
+
+        # OVOS-CONTEXT-1 §6/§6.1 requires_context / excludes_context gating.
+        # Registration MAY carry these declarations; they are stored per
+        # registered intent (keyed by the internal ``<skill_id>:<name>``) and
+        # evaluated at match time via the shared ``gate_satisfied`` helper.
+        # Retained across the disable/enable lifecycle (mirrors
+        # _intent_definitions); dropped only on deregister.
+        self._intent_context_gates = {}
 
         # legacy registration contract (kept for back-compat)
         self.bus.on('padatious:register_intent', self.register_intent)
@@ -475,6 +484,14 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # the intent after a disable detached it
         self._intent_definitions[message.data['name']] = message
 
+        # OVOS-CONTEXT-1 §6: retain any requires/excludes gating declarations
+        # keyed by the internal intent name. Only stored when present so
+        # intents without a gate keep unchanged (ungated) behavior.
+        requires = message.data.get("requires_context")
+        excludes = message.data.get("excludes_context")
+        if requires or excludes:
+            self._intent_context_gates[message.data['name']] = (requires, excludes)
+
         lang = message.data.get('lang', self.lang)
         lang = standardize_lang(lang)
         if lang in self.containers:
@@ -557,7 +574,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             "padatious:register_intent",
             data={"name": full, "samples": list(samples), "lang": lang,
                   "skill_id": skill_id,
-                  "blacklisted_words": message.data.get("blacklist", [])},
+                  "blacklisted_words": message.data.get("blacklist", []),
+                  # OVOS-CONTEXT-1 §6: forward the optional gating declarations
+                  # onto the internal registration so they are stored per intent.
+                  "requires_context": message.data.get("requires_context"),
+                  "excludes_context": message.data.get("excludes_context")},
             context=dict(message.context, skill_id=skill_id))
         self.register_intent(legacy)
 
@@ -599,6 +620,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         for full in self._spec_intent_names(message):
             self.__detach_intent(full)
             self._disabled_intents.pop(full, None)
+            self._intent_context_gates.pop(full, None)
         _calc_padatious_intent.cache_clear()
         if self.config.get("instant_train", False):
             self.train(message)
@@ -631,6 +653,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         for full in list(self._skill2intent.get(skill_id, [])):
             self.__detach_intent(full)
             self._disabled_intents.pop(full, None)
+            self._intent_context_gates.pop(full, None)
         # drop the skill's entities too
         prefix = f"{skill_id}:"
         for lang in self.containers:
@@ -713,6 +736,25 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                           blacklisted_intents, blacklisted_skills)
                    for utt in utterances]
         intents = [i for i in intents if i is not None]
+        # OVOS-CONTEXT-1 §6/§6.1: drop any candidate whose requires/excludes
+        # gating is not satisfied against the session's intent_context. The
+        # shared helper handles liveness/scope/decay; owner_id is the intent's
+        # skill_id (the private-scope default owner). Ungated intents pass.
+        if intents and self._intent_context_gates:
+            intent_context = getattr(sess, "intent_context", None) or {}
+            kept = []
+            for i in intents:
+                gate = self._intent_context_gates.get(i.name)
+                if gate is not None:
+                    requires, excludes = gate
+                    owner_id = i.name.split(":")[0]
+                    if not gate_satisfied(intent_context, requires, excludes,
+                                          owner_id=owner_id):
+                        LOG.debug(f"Padatious intent '{i.name}' dropped: "
+                                  f"OVOS-CONTEXT-1 gating not satisfied")
+                        continue
+                kept.append(i)
+            intents = kept
         # select best
         if intents:
             return max(intents, key=lambda k: k.conf)
