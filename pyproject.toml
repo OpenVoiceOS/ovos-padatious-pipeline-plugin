@@ -30,7 +30,7 @@ dependencies = [
     # prerelease floor to let pip resolve .[test] without --pre.
     "ovos-plugin-manager>=2.3.0a1,<3.0.0",
     "ovos-utils>=0.7.0,<1.0.0",
-    "ovos-spec-tools>=1.4.0a1",
+    "ovos-spec-tools>=1.5.0a1",
     "langcodes",
     "snowballstemmer",
     "PyStemmer",
@@ -42,7 +42,7 @@ test = [
     "pytest-cov",
     # INTENT-4 consumer e2e stack floor. Mirrors ovos-test-harness@dev.
     "ovos-bus-client>=2.5.1a1,<3.0.0",
-    "ovos-spec-tools>=1.4.0a1",
+    "ovos-spec-tools>=1.5.0a1",
 ]
 
 [project.urls]

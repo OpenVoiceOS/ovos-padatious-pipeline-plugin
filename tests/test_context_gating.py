@@ -37,14 +37,17 @@ INTENT = "guarded"
 FULL = f"{SKILL}:{INTENT}"
 
 
-def template_msg(requires=None, excludes=None):
+def template_msg(requires=None, excludes=None, samples=None,
+                 slot_blacklist=None):
     """Build an ovos.intent.register.template payload with optional gates."""
     data = {"skill_id": SKILL, "intent_name": INTENT, "lang": "en-US",
-            "samples": ["do the guarded thing"]}
+            "samples": samples or ["do the guarded thing"]}
     if requires is not None:
         data["requires_context"] = requires
     if excludes is not None:
         data["excludes_context"] = excludes
+    if slot_blacklist is not None:
+        data["slot_blacklist"] = slot_blacklist
     return Message(SpecMessage.INTENT_REGISTER_TEMPLATE, data,
                    {"skill_id": SKILL})
 
@@ -136,3 +139,97 @@ class TestContextGating(TestCase):
         msg = utter_msg({})
         result = self.pipeline.calc_intent("do the guarded thing", "en-US", msg)
         self.assertIsNotNone(result)
+
+
+HEIGHT = f"{SKILL}:height"
+
+
+def height_msg(slot_blacklist=None):
+    """Register a slotted template ``how tall is {person}`` (ungated)."""
+    data = {"skill_id": SKILL, "intent_name": "height", "lang": "en-US",
+            "samples": ["how tall is {person}"]}
+    if slot_blacklist is not None:
+        data["slot_blacklist"] = slot_blacklist
+    return Message(SpecMessage.INTENT_REGISTER_TEMPLATE, data,
+                   {"skill_id": SKILL})
+
+
+class TestContextSlotFill(TestCase):
+    """OVOS-CONTEXT-1 §7 uniform slot fill + INTENT-2 §4.3 slot blacklist."""
+
+    def setUp(self):
+        self.pipeline = PadatiousPipeline(mock.Mock())
+
+    def _stub_match(self, matches, conf=0.9):
+        """Patch the container match so calc_intent yields a height candidate."""
+        candidate = MatchData(HEIGHT, "how tall is x",
+                              matches=dict(matches), conf=conf)
+        patcher = mock.patch.object(opm, "_calc_padatious_intent",
+                                    return_value=candidate)
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
+    def test_slots_stored_on_register(self):
+        """Declared template slots are retained for the §7 fill."""
+        self.pipeline.handle_register_template(height_msg())
+        self.assertEqual(self.pipeline._intent_slots.get(HEIGHT),
+                         frozenset({"person"}))
+
+    def test_uniform_fill_without_requires_context(self):
+        """An unresolved slot fills from context even with NO requires_context."""
+        self.pipeline.handle_register_template(height_msg())
+        self.assertNotIn(HEIGHT, self.pipeline._intent_context_gates)
+        self._stub_match(matches={})  # person unresolved by the utterance
+        msg = utter_msg({f"{SKILL}:person": {"value": "Alice"}})
+        result = self.pipeline.calc_intent("how tall is she", "en-US", msg)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.matches.get("person"), "Alice")
+
+    def test_utterance_value_wins_over_context(self):
+        """'how tall is Bob' keeps person=Bob; context does not override."""
+        self.pipeline.handle_register_template(height_msg())
+        self._stub_match(matches={"person": "Bob"})
+        msg = utter_msg({f"{SKILL}:person": {"value": "Alice"}})
+        result = self.pipeline.calc_intent("how tall is Bob", "en-US", msg)
+        self.assertEqual(result.matches.get("person"), "Bob")
+
+    def test_no_context_leaves_slot_unresolved(self):
+        """With no live context entry the slot stays as the utterance left it."""
+        self.pipeline.handle_register_template(height_msg())
+        self._stub_match(matches={})
+        msg = utter_msg({})
+        result = self.pipeline.calc_intent("how tall is she", "en-US", msg)
+        self.assertNotIn("person", result.matches)
+
+    def test_blacklisted_value_unresolved_then_context_fills(self):
+        """A slot bound to a blacklisted value ('he') is refilled from context."""
+        self.pipeline.handle_register_template(
+            height_msg(slot_blacklist={"person": ["he", "she", "they"]}))
+        self.assertEqual(self.pipeline._intent_slot_blacklists.get(HEIGHT),
+                         {"person": ["he", "she", "they"]})
+        self._stub_match(matches={"person": "he"})
+        msg = utter_msg({f"{SKILL}:person": {"value": "Alice"}})
+        result = self.pipeline.calc_intent("how tall is he", "en-US", msg)
+        self.assertEqual(result.matches.get("person"), "Alice")
+
+    def test_blacklisted_value_whole_word_only(self):
+        """The blacklist is whole-word: 'Theo' is not the pronoun 'the'."""
+        self.pipeline.handle_register_template(
+            height_msg(slot_blacklist={"person": ["the"]}))
+        self._stub_match(matches={"person": "Theo"})
+        msg = utter_msg({f"{SKILL}:person": {"value": "Alice"}})
+        result = self.pipeline.calc_intent("how tall is Theo", "en-US", msg)
+        self.assertEqual(result.matches.get("person"), "Theo")
+
+    def test_blacklisted_but_no_context_stays_unresolved(self):
+        """A blacklisted value with no context candidate is simply dropped."""
+        self.pipeline.handle_register_template(
+            height_msg(slot_blacklist={"person": ["he"]}))
+        self._stub_match(matches={"person": "he"})
+        msg = utter_msg({})
+        result = self.pipeline.calc_intent("how tall is he", "en-US", msg)
+        self.assertNotIn("person", result.matches)
+
+    def test_no_anaphoric_pronoun_table(self):
+        """Pronouns are a locale/payload resource, not a hardcoded table."""
+        self.assertFalse(hasattr(opm, "_ANAPHORIC_PRONOUNS"))
