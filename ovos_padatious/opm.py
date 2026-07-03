@@ -1023,6 +1023,25 @@ class HierarchicalPadatiousPipeline(PadatiousPipeline):
             container.domain_threshold = self.domain_threshold
 
 
+def _faithful_case(value: str, utt: str) -> str:
+    """Return ``value`` in the case it appears with in ``utt``.
+
+    Slot values come back from the lowercase-normalized match; when the same
+    token sequence occurs verbatim (case-insensitively) as a whole-word run in
+    the original utterance, report that faithful-case span instead. Falls back
+    to the normalized value when no such span is found.
+    """
+    needle = str(value).lower().split()
+    if not needle:
+        return value
+    tokens = str(utt).split()
+    lowered = [t.lower() for t in tokens]
+    for i in range(len(lowered) - len(needle) + 1):
+        if lowered[i:i + len(needle)] == needle:
+            return " ".join(tokens[i:i + len(needle)])
+    return value
+
+
 @lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
 def _calc_padatious_intent(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
@@ -1053,6 +1072,13 @@ def _calc_padatious_intent(utt: str,
             match for match in matches if match.conf == best_match.conf)
         intent = min(best_matches, key=lambda x: sum(map(len, x.matches.values())))
         intent.sent = utt
+        # OVOS-INTENT-1 §2: matching runs on the lowercase-normalized input, but
+        # an exact match binds each slot to a verbatim span of the utterance, so
+        # its value can be reported in the utterance's faithful case. A fuzzy
+        # match has no such guarantee and keeps the normalized (lowercase) value.
+        if intent.conf >= 1.0:
+            intent.matches = {slot: _faithful_case(value, utt)
+                              for slot, value in (intent.matches or {}).items()}
         return intent
     except Exception as e:
         LOG.error(e)
