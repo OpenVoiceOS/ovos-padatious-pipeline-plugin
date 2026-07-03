@@ -34,7 +34,7 @@ from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
 from ovos_spec_tools import closest_lang, expand as expand_template, standardize_lang
 from ovos_spec_tools import SpecMessage
-from ovos_spec_tools import gate_satisfied
+from ovos_spec_tools import gate_satisfied, context_slot_candidates
 from ovos_utils import flatten_list
 from ovos_utils.fakebus import FakeBus
 from ovos_utils.list_utils import deduplicate_list
@@ -47,6 +47,11 @@ PadatiousIntentContainer = IntentContainer  # backwards compat
 
 # for easy typing
 PadatiousEngine = Union[Type[IntentContainer], Type[DomainIntentContainer]]
+
+
+# OVOS-INTENT-1: a template slot is written ``{entity_name}`` in a sample; the
+# padaos parser recognises the same lowercase/underscore/colon name form.
+_SLOT_RE = re.compile(r"{([a-z_:]+)}")
 
 
 
@@ -254,6 +259,19 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # Retained across the disable/enable lifecycle (mirrors
         # _intent_definitions); dropped only on deregister.
         self._intent_context_gates = {}
+
+        # OVOS-CONTEXT-1 §7 uniform slot fill: the declared template slots of
+        # each registered intent, keyed by the internal ``<skill_id>:<name>``.
+        # Any declared slot the utterance leaves unresolved is filled from a
+        # live ``session.intent_context`` entry, independent of requires_context.
+        self._intent_slots = {}
+
+        # INTENT-2 §4.3 per-slot value blacklist: ``{slot: [values]}`` carried
+        # in the registration payload. A slot the utterance binds to a
+        # blacklisted value (whole-word-sequence) is treated as UNRESOLVED so
+        # the §7 context candidate fills it. Anaphoric pronouns are supplied
+        # here as a locale resource rather than hardcoded.
+        self._intent_slot_blacklists = {}
 
         # legacy registration contract (kept for back-compat)
         self.bus.on('padatious:register_intent', self.register_intent)
@@ -492,6 +510,26 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if requires or excludes:
             self._intent_context_gates[message.data['name']] = (requires, excludes)
 
+        # OVOS-CONTEXT-1 §7: record the declared template slots so an
+        # unresolved slot can be filled from context at match time.
+        slots = set()
+        for sample in message.data.get('samples', []):
+            slots.update(_SLOT_RE.findall(sample))
+        if slots:
+            self._intent_slots[message.data['name']] = frozenset(slots)
+
+        # INTENT-2 §4.3: a per-slot value blacklist rides in the payload keyed
+        # by slot name. Accept ``slot_blacklist`` or a dict-valued ``blacklist``
+        # (a list-valued ``blacklist`` is the template-method suppression
+        # vocabulary and is left untouched).
+        slot_blacklist = message.data.get('slot_blacklist')
+        if slot_blacklist is None and isinstance(message.data.get('blacklist'), dict):
+            slot_blacklist = message.data.get('blacklist')
+        if slot_blacklist:
+            self._intent_slot_blacklists[message.data['name']] = {
+                slot: [str(v) for v in values]
+                for slot, values in slot_blacklist.items()}
+
         lang = message.data.get('lang', self.lang)
         lang = standardize_lang(lang)
         if lang in self.containers:
@@ -578,7 +616,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                   # OVOS-CONTEXT-1 §6: forward the optional gating declarations
                   # onto the internal registration so they are stored per intent.
                   "requires_context": message.data.get("requires_context"),
-                  "excludes_context": message.data.get("excludes_context")},
+                  "excludes_context": message.data.get("excludes_context"),
+                  # INTENT-2 §4.3: per-slot value blacklist keyed by slot name.
+                  "slot_blacklist": message.data.get("slot_blacklist")},
             context=dict(message.context, skill_id=skill_id))
         self.register_intent(legacy)
 
@@ -621,6 +661,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.__detach_intent(full)
             self._disabled_intents.pop(full, None)
             self._intent_context_gates.pop(full, None)
+            self._intent_slots.pop(full, None)
+            self._intent_slot_blacklists.pop(full, None)
         _calc_padatious_intent.cache_clear()
         if self.config.get("instant_train", False):
             self.train(message)
@@ -654,6 +696,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.__detach_intent(full)
             self._disabled_intents.pop(full, None)
             self._intent_context_gates.pop(full, None)
+            self._intent_slots.pop(full, None)
+            self._intent_slot_blacklists.pop(full, None)
         # drop the skill's entities too
         prefix = f"{skill_id}:"
         for lang in self.containers:
@@ -757,7 +801,64 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             intents = kept
         # select best
         if intents:
-            return max(intents, key=lambda k: k.conf)
+            best = max(intents, key=lambda k: k.conf)
+            self._fill_context_slots(best, sess)
+            return best
+
+    @staticmethod
+    def _word_seq_in(needle: str, haystack: str) -> bool:
+        """True when ``needle`` occurs in ``haystack`` as a whole-word sequence.
+
+        Comparison is case-insensitive and whitespace-collapsed; the needle's
+        tokens must appear as a contiguous run of whole words in the haystack,
+        so ``he`` matches ``he`` but not ``the`` or ``header``.
+        """
+        n = str(needle).lower().split()
+        h = str(haystack).lower().split()
+        if not n or len(n) > len(h):
+            return False
+        for i in range(len(h) - len(n) + 1):
+            if h[i:i + len(n)] == n:
+                return True
+        return False
+
+    def _fill_context_slots(self, intent: PadatiousIntent, sess: Session) -> None:
+        """OVOS-CONTEXT-1 §7 — uniform context slot fill.
+
+        For EVERY declared template slot of the matched intent, if a live
+        non-null ``session.intent_context`` entry exists (private
+        ``<skill_id>:name`` precedence over shared bare ``name``), fill the
+        slot when the utterance left it unresolved. This is independent of
+        requires_context, which gates only the presence flags.
+
+        INTENT-2 §4.3: before the fill, a slot the utterance bound to a value
+        listed in that slot's blacklist (e.g. an anaphoric pronoun) is dropped
+        so it counts as unresolved and the context candidate takes over.
+        """
+        slot_names = self._intent_slots.get(intent.name)
+        if not slot_names:
+            return
+        matches = dict(intent.matches or {})
+
+        # INTENT-2 §4.3: unresolve blacklisted slot values.
+        for slot, values in self._intent_slot_blacklists.get(intent.name, {}).items():
+            bound = matches.get(slot)
+            if bound is not None and any(self._word_seq_in(v, bound) for v in values):
+                LOG.debug(f"Padatious slot '{slot}'='{bound}' blacklisted "
+                          f"(INTENT-2 §4.3): treating as unresolved")
+                matches.pop(slot, None)
+
+        intent_context = getattr(sess, "intent_context", None) or {}
+        owner_id = intent.name.split(":")[0]
+        candidates = context_slot_candidates(intent_context, list(slot_names),
+                                             owner_id)
+        for slot, value in candidates.items():
+            # a value the utterance itself produced wins over the candidate
+            if not matches.get(slot):
+                LOG.debug(f"Padatious slot '{slot}' filled from context "
+                          f"(OVOS-CONTEXT-1 §7): '{value}'")
+                matches[slot] = value
+        intent.matches = matches
 
     def _get_closest_lang(self, lang: str) -> Optional[str]:
         if self.containers:
