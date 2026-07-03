@@ -499,9 +499,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             LOG.debug('Registering Padatious intent: ' + message.data['name'])
             lang, skill_id, name, samples, blacklisted_words = self._unpack_object(message)
             if self.engine_class == DomainIntentContainer:
-                self.containers[lang].add_domain_intent(skill_id, name, samples, blacklisted_words)
+                self.containers[lang].add_domain_intent(skill_id, name, samples,
+                                                        blacklisted_words=blacklisted_words)
             else:
-                self.containers[lang].add_intent(name, samples, blacklisted_words)
+                self.containers[lang].add_intent(name, samples,
+                                                 blacklisted_words=blacklisted_words)
 
         if self.config.get("instant_train", False) or self.first_train.is_set():
             self.train(message)
