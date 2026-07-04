@@ -13,52 +13,62 @@
 # limitations under the License.
 
 import math
+from typing import List, Optional, Any
 
 from ovos_padatious.entity_edge import EntityEdge
 from ovos_padatious.match_data import MatchData
 
 
-class PosIntent(object):
+class PosIntent:
     """
-    Positional intent
-    Used to extract entities
+    A class for handling positional intents used to extract entities from sentences.
 
     Args:
-        token (str): token to attach to (something like {word})
+        token (str): The token to attach to (something like {word}).
+        intent_name (str): Optional name of the intent. Defaults to an empty string.
     """
 
-    def __init__(self, token, intent_name=''):
+    def __init__(self, token: str, intent_name: str = '') -> None:
         self.token = token
-        self.edges = [EntityEdge(-1, token, intent_name), EntityEdge(+1, token, intent_name)]
+        self.edges: List[EntityEdge] = [
+            EntityEdge(-1, token, intent_name),
+            EntityEdge(+1, token, intent_name)
+        ]
 
-    def match(self, orig_data, entity=None):
+    def match(self, orig_data: Any, entity: Optional[Any] = None) -> List[MatchData]:
+        """
+        Matches the original data against the token and extracts entities.
+
+        Args:
+            orig_data (Any): Original data containing the sentence to match.
+            entity (Optional[Any]): An entity to match against. Defaults to None.
+
+        Returns:
+            List[MatchData]: A list of possible matches with their corresponding data.
+        """
         l_matches = [(self.edges[0].match(orig_data.sent, pos), pos)
                      for pos in range(len(orig_data.sent))]
         r_matches = [(self.edges[1].match(orig_data.sent, pos), pos)
                      for pos in range(len(orig_data.sent))]
 
-        def is_valid(l_pos, r_pos):
+        def is_valid(l_pos: int, r_pos: int) -> bool:
+            """Check if the positions are valid for matching."""
             if r_pos < l_pos:
                 return False
-            for p in range(l_pos, r_pos + 1):
-                if orig_data.sent[p].startswith('{'):
-                    return False
-            return True
+            return all(not orig_data.sent[p].startswith('{') for p in range(l_pos, r_pos + 1))
 
-        possible_matches = []
+        possible_matches: List[MatchData] = []
         for l_conf, l_pos in l_matches:
             if l_conf < 0.2:
                 continue
             for r_conf, r_pos in r_matches:
-                if r_conf < 0.2:
-                    continue
-                if not is_valid(l_pos, r_pos):
+                if r_conf < 0.2 or not is_valid(l_pos, r_pos):
                     continue
 
                 extracted = orig_data.sent[l_pos:r_pos + 1]
 
                 pos_conf = (l_conf - 0.5 + r_conf - 0.5) / 2 + 0.5
-                ent_conf = (entity.match(extracted) if entity else 1)
+                ent_conf = entity.match(extracted) if entity else 1
 
                 new_sent = orig_data.sent[:l_pos] + [self.token] + orig_data.sent[r_pos + 1:]
                 new_matches = orig_data.matches.copy()
@@ -68,21 +78,44 @@ class PosIntent(object):
                 data = MatchData(orig_data.name, new_sent, new_matches,
                                  orig_data.conf + extra_conf)
                 possible_matches.append(data)
+
         return possible_matches
 
-    def save(self, prefix):
+    def save(self, prefix: str) -> None:
+        """
+        Saves the positional intent's data.
+
+        Args:
+            prefix (str): The prefix to use for the saved data.
+        """
         prefix += '.' + self.token
-        for i in self.edges:
-            i.save(prefix)
+        for edge in self.edges:
+            edge.save(prefix)
 
     @classmethod
-    def from_file(cls, prefix, token):
-        prefix += '.' + token
-        self = cls(token)
-        for i in self.edges:
-            i.load(prefix)
-        return self
+    def from_file(cls, prefix: str, token: str) -> 'PosIntent':
+        """
+        Creates a PosIntent instance from saved data.
 
-    def train(self, train_data):
-        for i in self.edges:
-            i.train(train_data)
+        Args:
+            prefix (str): The prefix used for saved data.
+            token (str): The token associated with the intent.
+
+        Returns:
+            PosIntent: A new instance of PosIntent.
+        """
+        prefix += '.' + token
+        instance = cls(token)
+        for edge in instance.edges:
+            edge.load(prefix)
+        return instance
+
+    def train(self, train_data: Any) -> None:
+        """
+        Trains the positional intent on the provided training data.
+
+        Args:
+            train_data (Any): The data to train on.
+        """
+        for edge in self.edges:
+            edge.train(train_data)
