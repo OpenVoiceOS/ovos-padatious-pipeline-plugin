@@ -1,7 +1,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md) 
 # Padatious
 
-An efficient and agile neural network intent parser powered by [fann](https://github.com/libfann/fann).
+An efficient and agile neural network intent parser, implemented in pure numpy with a [FANN](https://github.com/libfann/fann)-compatible model format.
 
 This repository contains a OVOS pipeline plugin and bundles a fork of the original [padatious](https://github.com/MycroftAI/padatious) from the defunct MycroftAI
 
@@ -16,20 +16,9 @@ This repository contains a OVOS pipeline plugin and bundles a fork of the origin
 
 ### Installing
 
-Padatious requires the following native packages to be installed:
+Padatious is pure Python — no native packages or compilers required.
 
- - [`FANN`][fann] (with dev headers)
- - Python development headers
- - `pip3`
- - `swig`
-
-Ubuntu:
-
-```
-sudo apt-get install libfann-dev python3-dev python3-pip swig libfann-dev python3-fann2
-```
-
-Next, install Padatious via `pip3`:
+Install via `pip3`:
 
 ```
 pip3 install padatious
@@ -57,6 +46,4 @@ container.remove_intent('goodbye')
 
 ### License
 
-> **NOTE**: This plugin is an exception to [OVOS universal donor policy](https://openvoiceos.github.io/ovos-technical-manual/license/)
-
-It is licensed under the Apache 2 license, however it depends on fann2 which is licensed under the LGPL. [Why is this an issue?](https://softwareengineering.stackexchange.com/questions/119436/what-does-gpl-with-classpath-exception-mean-in-practice/326325#326325)
+Licensed under the Apache 2 license.

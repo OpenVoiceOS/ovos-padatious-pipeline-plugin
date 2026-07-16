@@ -19,9 +19,6 @@ Padatious consumes the new ``ovos.intent.register.template`` /
 addition to* the legacy ``padatious:register_intent`` family. These tests
 verify the spec payloads land in the same internal container.
 
-Matching requires a trained fann2/libfann model. When the native library
-is unavailable the match assertions are skipped, but registration
-acceptance (the spec->padatious mapping) is still asserted.
 """
 from unittest import TestCase, mock
 
@@ -29,18 +26,6 @@ from ovos_bus_client.message import Message
 from ovos_spec_tools import SpecMessage
 
 from ovos_padatious.opm import PadatiousPipeline
-
-
-def _fann2_available():
-    try:
-        import fann2  # noqa: F401
-        from fann2 import libfann  # noqa: F401
-        return True
-    except Exception:
-        return False
-
-
-FANN2 = _fann2_available()
 
 
 def template_msg(skill_id, intent_name, samples, blacklist=None, lang="en-US"):
@@ -164,18 +149,11 @@ class TestIntent4Registration(TestCase):
         self.assertNotIn("music.skill:play_music",
                          self.pipeline._disabled_intents)
 
-    # ---- match (requires fann2/libfann) ------------------------------ #
+    # ---- match ------------------------------------------------------- #
 
     @mock.patch("ovos_padatious.opm.PadatiousPipeline.train")
     def test_template_intent_matches_utterance(self, _mock_train):
-        """End-to-end: a template registered via the spec topic matches.
-
-        Skipped when fann2/libfann is unavailable; registration acceptance
-        is covered by the tests above regardless.
-        """
-        if not FANN2:
-            self.skipTest("fann2/libfann unavailable; match not exercised")
-
+        """End-to-end: a template registered via the spec topic matches."""
         pipeline = PadatiousPipeline(
             mock.Mock(), config={"instant_train": True})
         pipeline.first_train.set()
