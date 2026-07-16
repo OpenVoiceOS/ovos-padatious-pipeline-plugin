@@ -19,6 +19,7 @@ format, so models trained with libfann keep loading and models saved here
 remain loadable by libfann.
 """
 import os
+import zlib
 from functools import lru_cache
 from typing import List, Optional
 
@@ -101,6 +102,10 @@ class training_data:
     def __init__(self):
         self.inputs: Optional[np.ndarray] = None
         self.outputs: Optional[np.ndarray] = None
+        self.seed = 0
+        # counts trainings against this data, so a caller retrying with a
+        # fresh net explores a different initialization
+        self.attempt = 0
 
     def set_train_data(self, inputs, outputs) -> None:
         self.inputs = np.asarray(inputs, dtype=np.float64)
@@ -108,6 +113,9 @@ class training_data:
         if self.inputs.ndim != 2 or self.outputs.ndim != 2 or \
                 len(self.inputs) != len(self.outputs):
             raise ValueError("inputs and outputs must be equal-length 2D data")
+        self.seed = zlib.crc32(self.outputs.tobytes(),
+                               zlib.crc32(self.inputs.tobytes()))
+        self.attempt = 0
 
 
 class neural_net:
@@ -122,12 +130,19 @@ class neural_net:
         self.stop_function = STOPFUNC_BIT
         self.bit_fail_limit = 0.35  # FANN default
         self.bit_fail = 0
+        self._seed_from_data = False
 
     # --- configuration -------------------------------------------------
 
     def create_standard_array(self, layers: List[int]) -> None:
         self.layers = list(layers)
-        rng = np.random.default_rng()
+        # placeholder weights; train_on_data reseeds from the training data
+        # itself so identical data always yields identical models (libfann
+        # seeded from the clock, making trained models irreproducible)
+        self._init_weights(np.random.default_rng(0))
+        self._seed_from_data = True
+
+    def _init_weights(self, rng) -> None:
         self.weights = [
             rng.uniform(-0.1, 0.1, size=(n_in + 1, n_out))
             for n_in, n_out in zip(self.layers[:-1], self.layers[1:])
@@ -174,6 +189,11 @@ class neural_net:
     def train_on_data(self, data: training_data, max_epochs: int,
                       epochs_between_reports: int, desired_error: float) -> None:
         x, y = data.inputs, data.outputs
+        if self._seed_from_data:
+            self._seed_from_data = False
+            self._init_weights(np.random.default_rng(
+                [data.seed, data.attempt] + self.layers))
+            data.attempt += 1
         grads_prev = [np.zeros_like(w) for w in self.weights]
         deltas = [np.full_like(w, _RPROP_DELTA_ZERO) for w in self.weights]
         n = len(x)
@@ -202,15 +222,23 @@ class neural_net:
                         activations[i], self.hidden_activation, self.steepness)
             grads.reverse()
 
-            # iRPROP-: sign-based step size adaptation
-            for w, g, g_prev, d in zip(self.weights, grads, grads_prev, deltas):
-                sign_change = g * g_prev
-                np.multiply(d, _RPROP_INCREASE, out=d, where=sign_change > 0)
-                np.multiply(d, _RPROP_DECREASE, out=d, where=sign_change < 0)
+            # iRPROP- weight update, replicating FANN's
+            # fann_update_weights_irpropm exactly: slope is the negative
+            # gradient; a zero sign-product counts as "same sign" (step still
+            # grows); on a sign flip the slope is zeroed BEFORE the direction
+            # test, so the weight moves +step that epoch; weights clip at 1500
+            for w, g, s_prev, d in zip(self.weights, grads, grads_prev, deltas):
+                slope = -g
+                same_sign = slope * s_prev
+                np.maximum(d, 0.0001, out=d)
+                flipped = same_sign < 0
+                np.multiply(d, _RPROP_INCREASE, out=d, where=~flipped)
+                np.multiply(d, _RPROP_DECREASE, out=d, where=flipped)
                 np.clip(d, _RPROP_DELTA_MIN, _RPROP_DELTA_MAX, out=d)
-                g[sign_change < 0] = 0.0  # iRPROP-: forget reverted gradient
-                w -= np.sign(g) * d
-                g_prev[...] = g
+                slope[flipped] = 0.0
+                w += np.where(slope < 0, -d, d)
+                np.clip(w, -1500.0, 1500.0, out=w)
+                s_prev[...] = slope
 
     def test_data(self, data: training_data) -> None:
         out = self._forward(data.inputs)[-1]
