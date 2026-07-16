@@ -19,6 +19,7 @@ format, so models trained with libfann keep loading and models saved here
 remain loadable by libfann.
 """
 import os
+from functools import lru_cache
 from typing import List, Optional
 
 import numpy as np
@@ -50,15 +51,17 @@ _HEADER = "FANN_FLO_2.1"
 _STEPWISE_RESULTS = np.array([0.005, 0.05, 0.25, 0.75, 0.95, 0.995])
 
 
-def _stepwise(x: np.ndarray, steepness: float, symmetric: bool) -> np.ndarray:
+@lru_cache(maxsize=None)
+def _stepwise_points(steepness: float, symmetric: bool):
     if symmetric:
         ys = 2.0 * _STEPWISE_RESULTS - 1.0
-        xs = np.arctanh(ys) / steepness
-        lo, hi = -1.0, 1.0
-    else:
-        ys = _STEPWISE_RESULTS
-        xs = np.log(ys / (1.0 - ys)) / (2.0 * steepness)
-        lo, hi = 0.0, 1.0
+        return np.arctanh(ys) / steepness, ys, -1.0, 1.0
+    ys = _STEPWISE_RESULTS
+    return np.log(ys / (1.0 - ys)) / (2.0 * steepness), ys, 0.0, 1.0
+
+
+def _stepwise(x: np.ndarray, steepness: float, symmetric: bool) -> np.ndarray:
+    xs, ys, lo, hi = _stepwise_points(steepness, symmetric)
     return np.interp(x, xs, ys, left=lo, right=hi)
 
 
@@ -73,10 +76,23 @@ def _activate(x: np.ndarray, func: int, steepness: float) -> np.ndarray:
 
 
 def _activate_deriv(y: np.ndarray, func: int, steepness: float) -> np.ndarray:
-    # derivative expressed in terms of the activation output y
+    # derivative expressed in terms of the activation output y; FANN clips y
+    # away from the saturation points so gradients never fully die
     if func in _SYMMETRIC:
+        y = np.clip(y, -0.98, 0.98)
         return steepness * (1.0 - y * y)
+    y = np.clip(y, 0.01, 0.99)
     return 2.0 * steepness * y * (1.0 - y)
+
+
+def _error_transform(err: np.ndarray, func: int) -> np.ndarray:
+    """FANN's error post-processing: halve for symmetric activations, then
+    apply the TANH error function (its default) which amplifies large errors."""
+    if func in _SYMMETRIC:
+        err = err / 2.0
+    clipped = np.clip(err, -0.9999999, 0.9999999)
+    return np.where(np.abs(err) > 0.9999999, np.sign(err) * 17.0,
+                    np.log((1.0 + clipped) / (1.0 - clipped)))
 
 
 class training_data:
@@ -137,14 +153,18 @@ class neural_net:
         last = len(self.weights) - 1
         for i, w in enumerate(self.weights):
             func = self.output_activation if i == last else self.hidden_activation
-            biased = np.hstack([activations[-1],
-                                np.ones((len(activations[-1]), 1))])
-            activations.append(_activate(biased @ w, func, self.steepness))
+            # w rows are (inputs..., bias)
+            z = activations[-1] @ w[:-1] + w[-1]
+            activations.append(_activate(z, func, self.steepness))
         return activations
 
     def run(self, input_vector) -> List[float]:
-        x = np.asarray(input_vector, dtype=np.float64).reshape(1, -1)
-        return self._forward(x)[-1][0].tolist()
+        x = np.asarray(input_vector, dtype=np.float64)
+        last = len(self.weights) - 1
+        for i, w in enumerate(self.weights):
+            func = self.output_activation if i == last else self.hidden_activation
+            x = _activate(x @ w[:-1] + w[-1], func, self.steepness)
+        return x.tolist()
 
     # --- training ------------------------------------------------------
 
@@ -169,13 +189,14 @@ class neural_net:
             elif np.mean(err ** 2) <= desired_error:
                 break
 
-            # backprop gradients of MSE
+            # backprop gradients, with FANN's error transform and
+            # saturation-clipped derivatives
             grads = []
-            delta = err * _activate_deriv(out, self.output_activation,
-                                          self.steepness) / n
+            delta = _error_transform(err, self.output_activation) * \
+                _activate_deriv(out, self.output_activation, self.steepness) / n
             for i in range(len(self.weights) - 1, -1, -1):
-                biased = np.hstack([activations[i], np.ones((n, 1))])
-                grads.append(biased.T @ delta)
+                grads.append(np.vstack([activations[i].T @ delta,
+                                        delta.sum(axis=0, keepdims=True)]))
                 if i > 0:
                     delta = (delta @ self.weights[i][:-1].T) * _activate_deriv(
                         activations[i], self.hidden_activation, self.steepness)
