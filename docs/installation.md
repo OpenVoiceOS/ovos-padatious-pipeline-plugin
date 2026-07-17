@@ -1,26 +1,6 @@
 # Installation
 
-## System Dependencies
-
-Padatious requires native libraries before the Python package can be installed.
-
-### Ubuntu / Debian
-
-```bash
-sudo apt-get install libfann-dev python3-dev python3-pip swig python3-fann2
-```
-
-### Arch Linux
-
-```bash
-sudo pacman -S fann swig
-```
-
-### Fedora / RHEL
-
-```bash
-sudo dnf install fann-devel python3-devel swig
-```
+Padatious is pure Python (numpy) — no native libraries or compilers are required.
 
 ## Python Package
 

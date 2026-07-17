@@ -19,7 +19,7 @@ registration time (keyed by the internal ``<skill_id>:<name>``) and drops
 gated candidates at match time via the shared ``gate_satisfied`` helper.
 
 These tests exercise the gate in isolation by stubbing the container match
-(``_calc_padatious_intent``), so no trained fann2 model is required.
+(``_calc_padatious_intent``), so no trained model is required.
 """
 from unittest import TestCase, mock
 

@@ -1,6 +1,6 @@
 # ovos-padatious-pipeline-plugin
 
-An efficient neural network intent parser for the [OpenVoiceOS](https://openvoiceos.org/) (OVOS) ecosystem, powered by [FANN](https://github.com/libfann/fann).
+An efficient neural network intent parser for the [OpenVoiceOS](https://openvoiceos.org/) (OVOS) ecosystem, implemented in pure numpy with a [FANN](https://github.com/libfann/fann)-compatible model format.
 
 This repository bundles a fork of the original [padatious](https://github.com/MycroftAI/padatious) from Mycroft AI and exposes it as an OVOS pipeline plugin.
 
@@ -33,6 +33,3 @@ print(result.matches) # {'query': 'cats', 'engine': 'CatTube'}
 ## License
 
 Licensed under the **Apache 2.0** license.
-
-> **Note:** This plugin is an exception to the [OVOS universal donor policy](https://openvoiceos.github.io/ovos-technical-manual/license/).
-> It depends on `fann2`, which is licensed under the LGPL. See the [license compatibility note](https://softwareengineering.stackexchange.com/questions/119436/what-does-gpl-with-classpath-exception-mean-in-practice/326325#326325) for details.

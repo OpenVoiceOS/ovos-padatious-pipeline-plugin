@@ -380,7 +380,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 self.finished_training_event.set()
                 return
             self.finished_training_event.clear()
-            # TODO - run this in subprocess?, sometimes fann2 segfaults and kills ovos-core...
             for lang in self.containers:
                 if self.containers[lang].must_train:
                     #LOG.debug(f"Training padatious for lang '{lang}'")

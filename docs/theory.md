@@ -171,11 +171,9 @@ The choice to give each intent its own tiny network rather than using a single s
 
 The cost is that each network makes its decision in isolation — there is no global context shared across intents.
 
-### FANN over modern frameworks
+### Tiny dense networks over modern frameworks
 
-FANN (`libfann`) was chosen for its extremely low runtime overhead — it is a C library with minimal Python binding overhead, requires no GPU, and produces models that load in microseconds. This matters for a voice assistant where the full intent pipeline must complete in tens of milliseconds.
-
-The cost is that FANN is a legacy library (unmaintained), has a known tendency to segfault under certain conditions (hence `faulthandler.enable()` at startup), and imposes a hard dependency on native shared libraries that complicates packaging.
+The networks are small enough (tens to hundreds of weights) that a plain numpy implementation (`ovos_padatious.fann`) trains them in milliseconds and runs inference with negligible overhead — no GPU, no native libraries, and models load in microseconds. This matters for a voice assistant where the full intent pipeline must complete in tens of milliseconds. The on-disk model format remains FANN_FLO_2.1, so models trained by historic libfann-based releases keep loading unchanged.
 
 ### Bag-of-words feature representation
 
@@ -196,8 +194,6 @@ Rather than using a softmax over all intents, each binary network is trained wit
 **Training data size.** Contrastive training works well when all intents have comparable sample counts. A very large intent can dominate the negative sample pool and make it harder for small intents to learn.
 
 **Fixed network topology.** Every `SimpleIntent` uses a `[vocab, 10, 1]` network regardless of intent complexity. A very simple intent wastes capacity; a complex one may underfit. There is no automatic capacity tuning.
-
-**FANN stability.** The `fann2` library can segfault under certain conditions (documented in comments in `opm.py`). This is a known risk when training is run in the main process — a crash in the C library brings down the whole OVOS core. The long-term mitigation is to move training to a subprocess.
 
 **Tokenization is language-agnostic.** The tokenizer splits on character-class boundaries (alpha / digit / punctuation). This works for space-separated European languages but is unsuitable for logographic scripts (Chinese, Japanese, Korean) or languages where morphology is encoded by affixes rather than separate tokens (Finnish, Turkish). The optional Snowball stemmer helps somewhat for inflected languages but does not address tokenization.
 

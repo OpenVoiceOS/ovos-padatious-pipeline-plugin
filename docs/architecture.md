@@ -68,7 +68,7 @@ Manage collections of `SimpleIntent` / `Entity` objects respectively. Responsibl
 
 ### `SimpleIntent` (`simple_intent.py`)
 
-One neural network per intent, backed by FANN (`fann2`):
+One neural network per intent, implemented in numpy (`ovos_padatious.fann`):
 
 - **Vectorization**: maps tokens to a binary input vector. Unknown tokens are counted and included as a ratio. Sentence length is encoded as four fractional features.
 - **Architecture**: `[input_size, 10, 1]` feed-forward network with `SIGMOID_SYMMETRIC_STEPWISE` activation.
