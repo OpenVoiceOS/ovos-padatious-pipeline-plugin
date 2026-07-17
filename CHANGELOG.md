@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.0a1) (2026-07-17)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.9.1a1...2.0.0a1)
+
+**Breaking changes:**
+
+- feat!: pure numpy neural network backend, drop fann2 dependency [\#87](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/87) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [1.9.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.9.1a1) (2026-07-04)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.9.0a1...1.9.1a1)
