@@ -147,7 +147,7 @@ class IntentContainer:
             reload_cache (bool): Whether to ignore cached intent.
             must_train (bool): Whether the model needs training after adding the intent.
         """
-        self.blacklisted_words[name] += blacklisted_words or []
+        self.blacklisted_words[name] = blacklisted_words or []
         self.intents.add(name, lines, reload_cache, must_train)
         if self.padaos is not None:
             self.padaos.add_intent(name, lines)
