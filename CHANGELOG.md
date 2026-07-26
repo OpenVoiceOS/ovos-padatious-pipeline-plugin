@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.1a1) (2026-07-26)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.0a1...2.0.1a1)
+
+**Merged pull requests:**
+
+- fix: session blacklist bypassed by the legacy/INTENT-4 intent-name alias [\#89](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/89) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.0a1) (2026-07-17)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.9.1a1...2.0.0a1)
