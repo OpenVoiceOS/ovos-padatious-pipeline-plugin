@@ -72,6 +72,12 @@ class TrainingManager:
             reload_cache (bool): Whether to force reload of cache if it exists.
             must_train (bool): Whether training is required for the new intent/entity.
         """
+        # Re-registering an already-known name (e.g. the legacy and
+        # OVOS-INTENT-4 wire contracts both landing on the same canonical
+        # name, ovos-core#831) must replace the existing entry, not stack a
+        # duplicate matchable object alongside it.
+        self.remove(name)
+
         if not must_train:
             LOG.debug(f"Loading {name} from intent cache")
             self.objects.append(self.cls.from_file(name=name, folder=self.cache))
