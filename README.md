@@ -13,6 +13,17 @@ This repository contains a OVOS pipeline plugin and bundles a fork of the origin
  - Easily extract entities (ie. Find the nearest *gas station* -> `place: gas station`)
  - Fast training with a modular approach to neural networks
 
+## OPM Pipeline Entry Points
+
+Two pipeline entry points are registered:
+
+| Entry point | Backed by | When to use |
+|---|---|---|
+| `ovos-padatious-pipeline-plugin` | `IntentContainer` | Flat intent registry (default). |
+| `ovos-padatious-domain-pipeline-plugin` | `DomainIntentContainer` | Group intents by `skill_id` (domain); every sub-domain scores the query in parallel and the global argmax wins. |
+
+The legacy `domain_engine: true` config flag on the flat pipeline still works but is **deprecated** — prefer selecting `ovos-padatious-domain-pipeline-plugin` at the pipeline level. See [`docs/ovos_pipeline.md`](docs/ovos_pipeline.md) for full details.
+
 
 ### Installing
 

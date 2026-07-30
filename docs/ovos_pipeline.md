@@ -2,13 +2,21 @@
 
 `PadatiousPipeline` integrates Padatious as a confidence-based intent matcher in the OVOS pipeline system.
 
-## Entry Point
+## Entry Points
 
-The plugin is registered via `setup.py` / `setup.cfg` entry points and discovered automatically by OVOS.
+The plugin ships three OPM pipeline entry points, all discovered automatically by OVOS:
 
 ```
-ovos.pipeline.padatious = ovos_padatious.opm:PadatiousPipeline
+ovos-padatious-pipeline-plugin               = ovos_padatious.opm:PadatiousPipeline
+ovos-padatious-domain-pipeline-plugin        = ovos_padatious.opm:DomainPadatiousPipeline
+ovos-padatious-hierarchical-pipeline-plugin  = ovos_padatious.opm:HierarchicalPadatiousPipeline
 ```
+
+- `ovos-padatious-pipeline-plugin` — the flat pipeline backed by `IntentContainer`.
+- `ovos-padatious-domain-pipeline-plugin` — backed by `DomainIntentContainer`. The `skill_id` of each registered intent becomes its domain; all sub-domains score the query in parallel and the global best wins. Configuration lives under `intents.ovos-padatious-domain-pipeline-plugin` (or `padatious_domain`).
+- `ovos-padatious-hierarchical-pipeline-plugin` — backed by `HierarchicalIntentContainer`. A top-level classifier picks one domain, then only that domain's intents are scored. See [Hierarchical Pipeline](hierarchical_pipeline.md).
+
+> The legacy `domain_engine: true` config flag on the flat pipeline still works for backward compatibility, but is **deprecated**. Select `ovos-padatious-domain-pipeline-plugin` at the pipeline level instead.
 
 ## Configuration
 
@@ -39,7 +47,7 @@ Place configuration under `"intent_boxes"` → `"ovos-padatious-pipeline-plugin"
 | `conf_high` | `float` | `0.95` | Minimum confidence for `match_high`. |
 | `conf_med` | `float` | `0.80` | Minimum confidence for `match_medium`. |
 | `conf_low` | `float` | `0.50` | Minimum confidence for `match_low`. |
-| `domain_engine` | `bool` | `false` | Use `DomainIntentContainer` instead of `IntentContainer`. Groups intents by skill for faster disambiguation. |
+| `domain_engine` | `bool` | `false` | **Deprecated** — select the `ovos-padatious-domain-pipeline-plugin` entry point instead. Kept for backward compatibility; when `true` forces the flat pipeline to use `DomainIntentContainer`. |
 | `instant_train` | `bool` | `false` | Trigger training immediately after each intent registration instead of waiting for the `mycroft.skills.train` bus event. |
 | `intent_cache` | `str` | XDG data home | Override the directory where trained models are cached. |
 | `disable_padaos` | `bool` | `false` | Disable the fast regex exact-match layer (padaos). Only the neural network is used. |

@@ -30,6 +30,7 @@ from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
 from ovos_padatious import IntentContainer
 from ovos_padatious.domain_container import DomainIntentContainer
+from ovos_padatious.hierarchical_container import HierarchicalIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
 from ovos_spec_tools import closest_lang, expand as expand_template, standardize_lang
@@ -46,7 +47,16 @@ import faulthandler
 PadatiousIntentContainer = IntentContainer  # backwards compat
 
 # for easy typing
-PadatiousEngine = Union[Type[IntentContainer], Type[DomainIntentContainer]]
+PadatiousEngine = Union[Type[IntentContainer], Type[DomainIntentContainer],
+                        Type[HierarchicalIntentContainer]]
+
+# containers that group intents per domain (skill_id) under a shared API
+_DOMAIN_ENGINES = (DomainIntentContainer, HierarchicalIntentContainer)
+
+# trailing punctuation safe to strip from samples — excludes the characters
+# padatious template syntax relies on ({entity}, [optional], (a|b))
+_TEMPLATE_SYNTAX = set("{}[]()|<>")
+_STRIPPABLE_PUNCT = "".join(c for c in string.punctuation if c not in _TEMPLATE_SYNTAX)
 
 
 # OVOS-INTENT-1: a template slot is written ``{entity_name}`` in a sample; the
@@ -82,11 +92,9 @@ def normalize_utterances(utterances: List[str], lang: str, cast_to_ascii: bool =
     # Replace accented characters and punctuation if needed
     if cast_to_ascii:
         utterances = [remove_accents_and_punct(u) for u in utterances]
-    # strip trailing punctuation, that just causes duplicate training data —
-    # but preserve the slot/vocabulary metacharacters {} <> so a template
-    # ending in a slot ({name}) keeps its closing brace (OVOS-INTENT-1 §3)
-    _trailing_punct = ''.join(c for c in string.punctuation if c not in '{}<>')
-    utterances = [u.rstrip(_trailing_punct) for u in utterances]
+    # strip punctuation marks, that just causes duplicate training data;
+    # template-syntax characters ({entity}, [optional], (a|b)) are preserved
+    utterances = [u.rstrip(_STRIPPABLE_PUNCT) for u in utterances]
     # Stem words if stemmer is provided
     if stemmer is not None:
         utterances = stemmer.stem_sentences(utterances)
@@ -202,7 +210,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.conf_med = self.config.get("conf_med") or 0.8
         self.conf_low = self.config.get("conf_low") or 0.5
 
-        engine_class = engine_class or DomainIntentContainer if self.config.get("domain_engine") else IntentContainer
+        if engine_class is None:
+            engine_class = (DomainIntentContainer
+                            if self.config.get("domain_engine")
+                            else IntentContainer)
         LOG.info(f"Padatious class: {engine_class.__name__}")
 
         self.remove_punct = self.config.get("cast_to_ascii", False)
@@ -214,6 +225,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             # allow user to switch back and forth without retraining
             # cache is cheap, training isn't
             intent_cache += "_domain"
+        elif self.engine_class == HierarchicalIntentContainer:
+            intent_cache += "_hierarchical"
         if use_stemmer:
             intent_cache += "_stemmer"
         if self.remove_punct:
@@ -389,10 +402,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.bus.emit(Message('mycroft.skills.trained'))
             self.finished_training_event.set()
 
-        # Training changes the model; stale LRU cache entries must be evicted
-        # so that the next call to calc_intent reflects the updated state.
-        _calc_padatious_intent.cache_clear()
-
         if not self.first_train.is_set():
             self.first_train.set()
 
@@ -417,7 +426,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 for skill_id, intents in self._skill2intent.items():
                     if intent_name in intents:
                         try:
-                            if isinstance(self.containers[lang], DomainIntentContainer):
+                            if isinstance(self.containers[lang], _DOMAIN_ENGINES):
                                 self.containers[lang].remove_domain_intent(skill_id, intent_name)
                             else:
                                 self.containers[lang].remove_intent(intent_name)
@@ -431,13 +440,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             message (Message): message triggering action
         """
         self.__detach_intent(message.data.get('intent_name'))
-        # Intent roster changed; evict stale cache so next match reflects removal.
-        _calc_padatious_intent.cache_clear()
-        # In instant_train mode, retrain immediately so the model also
-        # forgets the intent — otherwise the cleared cache repopulates from
-        # the still-trained model on the next match.
-        if self.config.get("instant_train", False):
-            self.train(message)
 
     def handle_detach_skill(self, message):
         """Messagebus handler for detaching all intents for skill.
@@ -451,12 +453,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             skill_id = "anonymous_skill"
         for i in self._skill2intent[skill_id]:
             self.__detach_intent(i)
-        # Intent roster changed; evict stale cache so next match reflects removal.
-        _calc_padatious_intent.cache_clear()
-        # See handle_detach_intent — retrain in instant_train mode so the
-        # underlying model state matches the registered_intents list.
-        if self.config.get("instant_train", False):
-            self.train(message)
 
     def _unpack_object(self, message):
         """convert message to training data"""
@@ -550,7 +546,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 self.registered_intents.append(message.data['name'])
             LOG.debug('Registering Padatious intent: ' + message.data['name'])
             lang, skill_id, name, samples, blacklisted_words = self._unpack_object(message)
-            if self.engine_class == DomainIntentContainer:
+            if isinstance(self.containers[lang], _DOMAIN_ENGINES):
                 self.containers[lang].add_domain_intent(skill_id, name, samples,
                                                         blacklisted_words=blacklisted_words)
             else:
@@ -572,7 +568,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.registered_entities.append(message.data)
             lang, skill_id, name, samples, _ = self._unpack_object(message)
             LOG.debug('Registering Padatious entity: ' + message.data['name'])
-            if self.engine_class == DomainIntentContainer:
+            if isinstance(self.containers[lang], _DOMAIN_ENGINES):
                 self.containers[lang].add_domain_entity(skill_id, name, samples)
             else:
                 self.containers[lang].add_entity(name, samples)
@@ -982,6 +978,70 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
     return frozenset(canonical)
 
 
+class DomainPadatiousPipeline(PadatiousPipeline):
+    """Padatious pipeline backed by :class:`DomainIntentContainer`.
+
+    Each registered skill becomes its own domain; matching scans every
+    domain in parallel and the highest-confidence intent wins.
+    Configuration is read from
+    ``intents.ovos-padatious-domain-pipeline-plugin``.
+    """
+
+    def __init__(self, bus: Optional[Union[MessageBusClient, FakeBus]] = None,
+                 config: Optional[Dict] = None):
+        if config is None:
+            config = Configuration().get('intents', {}).get(
+                "ovos-padatious-domain-pipeline-plugin") or {}
+        super().__init__(bus=bus, config=config, engine_class=DomainIntentContainer)
+
+
+class HierarchicalPadatiousPipeline(PadatiousPipeline):
+    """Padatious pipeline backed by :class:`HierarchicalIntentContainer`.
+
+    Each registered skill becomes its own domain. Matching is two-stage: a
+    top-level classifier first selects a single domain, then only that
+    domain's intents are scored. Utterances whose best domain scores below
+    ``domain_threshold`` are rejected before any sub-container runs.
+
+    Configuration is read from
+    ``intents.ovos-padatious-hierarchical-pipeline-plugin`` (or
+    ``padatious_hierarchical``). It accepts every key the flat pipeline does,
+    plus ``domain_threshold`` — the minimum top-level classifier confidence
+    required to route a query (``0.0`` disables the gate).
+    """
+
+    def __init__(self, bus: Optional[Union[MessageBusClient, FakeBus]] = None,
+                 config: Optional[Dict] = None):
+        if config is None:
+            intent_config = Configuration().get('intents', {})
+            config = (intent_config.get("ovos-padatious-hierarchical-pipeline-plugin")
+                      or intent_config.get("padatious_hierarchical") or {})
+        self.domain_threshold = (config or {}).get("domain_threshold", 0.0)
+        super().__init__(bus=bus, config=config,
+                         engine_class=HierarchicalIntentContainer)
+        for container in self.containers.values():
+            container.domain_threshold = self.domain_threshold
+
+
+def _faithful_case(value: str, utt: str) -> str:
+    """Return ``value`` in the case it appears with in ``utt``.
+
+    Slot values come back from the lowercase-normalized match; when the same
+    token sequence occurs verbatim (case-insensitively) as a whole-word run in
+    the original utterance, report that faithful-case span instead. Falls back
+    to the normalized value when no such span is found.
+    """
+    needle = str(value).lower().split()
+    if not needle:
+        return value
+    tokens = str(utt).split()
+    lowered = [t.lower() for t in tokens]
+    for i in range(len(lowered) - len(needle) + 1):
+        if lowered[i:i + len(needle)] == needle:
+            return " ".join(tokens[i:i + len(needle)])
+    return value
+
+
 @lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
 def _calc_padatious_intent(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
@@ -1012,6 +1072,13 @@ def _calc_padatious_intent(utt: str,
             match for match in matches if match.conf == best_match.conf)
         intent = min(best_matches, key=lambda x: sum(map(len, x.matches.values())))
         intent.sent = utt
+        # OVOS-INTENT-1 §2: matching runs on the lowercase-normalized input, but
+        # an exact match binds each slot to a verbatim span of the utterance, so
+        # its value can be reported in the utterance's faithful case. A fuzzy
+        # match has no such guarantee and keeps the normalized (lowercase) value.
+        if intent.conf >= 1.0:
+            intent.matches = {slot: _faithful_case(value, utt)
+                              for slot, value in (intent.matches or {}).items()}
         return intent
     except Exception as e:
         LOG.error(e)
