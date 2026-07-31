@@ -276,4 +276,7 @@ print(result.get('engine', 'google'))  # 'CatTube'
 result.detokenize()
 ```
 
-Converts `sent` and `matches` from token lists back to human-readable strings, handling apostrophes correctly. Called automatically by the OVOS pipeline; typically not needed in direct usage.
+Converts `sent` and `matches` from token lists back to human-readable strings, handling apostrophes correctly. The OVOS pipeline calls this automatically. Direct usage typically does not need it.
+
+---
+[← Intent Format](intent_format.md) · [Home](README.md) · [OVOS Pipeline →](ovos_pipeline.md)

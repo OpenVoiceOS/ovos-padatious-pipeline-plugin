@@ -52,7 +52,7 @@ set a {duration} (timer|alarm)
 | Token | Meaning |
 |---|---|
 | `#` | Matches any digit (`\d`) |
-| `:0` | Wildcard — matches one or more words |
+| `:0` | Wildcard, matches one or more words |
 
 ```
 call extension ##      # matches "call extension 42"
@@ -124,4 +124,7 @@ The intent will not fire if the word `"video"` appears anywhere in the utterance
 - More varied training samples generally improve accuracy.
 - Keep entity files focused — only include realistic values.
 - Use alternatives to cover common phrasings rather than writing each one separately.
-- Intents are independent; the engine scores all of them and returns the best match.
+- Intents are independent. The engine scores all of them and returns the best match.
+
+---
+[← Installation](installation.md) · [Home](README.md) · [API Reference →](api_reference.md)

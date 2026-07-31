@@ -1,35 +1,29 @@
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md) 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md)
+
 # Padatious
 
-An efficient and agile neural network intent parser, implemented in pure numpy with a [FANN](https://github.com/libfann/fann)-compatible model format.
-
-This repository contains a OVOS pipeline plugin and bundles a fork of the original [padatious](https://github.com/MycroftAI/padatious) from the defunct MycroftAI
+Padatious is a neural network intent parser, implemented in pure numpy with a [FANN](https://github.com/libfann/fann)-compatible model format. This repository packages it as an [OpenVoiceOS](https://openvoiceos.org/) (OVOS) pipeline plugin and bundles a maintained fork of the original [padatious](https://github.com/MycroftAI/padatious) from Mycroft AI.
 
 ## Features
 
- - Intents are easy to create
- - Requires a relatively small amount of data
- - Intents run independent of each other
- - Easily extract entities (ie. Find the nearest *gas station* -> `place: gas station`)
- - Fast training with a modular approach to neural networks
+- Intents are easy to create from a handful of example sentences.
+- Each intent trains its own small network, independent of the others.
+- Fast training on a small amount of data.
+- Entity extraction from a matched sentence (for example, `Find the nearest {place}` matches "Find the nearest gas station" and extracts `place: gas station`).
 
+## Installing
 
-### Installing
+Padatious is pure Python (numpy). It needs no native libraries or compilers.
 
-Padatious is pure Python — no native packages or compilers required.
+Install from PyPI:
 
-Install via `pip3`:
-
+```bash
+pip install ovos-padatious-pipeline-plugin
 ```
-pip3 install padatious
-```
-Padatious also works in Python 2 if you are unable to upgrade.
 
-### Direct Usage
+## Direct Usage
 
-Here's a simple example of how to use Padatious:
-
-```Python
+```python
 from ovos_padatious import IntentContainer
 
 container = IntentContainer('intent_cache')
@@ -44,6 +38,14 @@ print(container.calc_intent('Search for cats on CatTube.'))
 container.remove_intent('goodbye')
 ```
 
-### License
+Inside OVOS, the plugin is discovered automatically through its `opm.pipeline` entry point. See [docs/](docs/README.md) for installation details, the intent file syntax, the full Python API, pipeline configuration, and the matching algorithm.
 
-Licensed under the Apache 2 license.
+## Related projects
+
+- [OpenVoiceOS/ovos-spec-tools](https://github.com/OpenVoiceOS/ovos-spec-tools): the reference implementation of the OVOS architecture specifications, used here for sentence-template expansion and language tag handling.
+- [OpenVoiceOS/architecture](https://github.com/OpenVoiceOS/architecture): the OpenVoiceOS architecture specifications.
+- [OpenVoiceOS/ovos-plugin-manager](https://github.com/OpenVoiceOS/ovos-plugin-manager): the plugin and entry-point system that loads this pipeline into OVOS.
+
+## License
+
+Licensed under the Apache 2.0 license.

@@ -1,6 +1,6 @@
 # Installation
 
-Padatious is pure Python (numpy) — no native libraries or compilers are required.
+Padatious is pure Python (numpy). It needs no native libraries or compilers.
 
 ## Python Package
 
@@ -38,3 +38,6 @@ print(container.calc_intent('hello world'))
 ```
 
 If no exceptions are raised and a `MatchData` object is printed, the installation is working correctly.
+
+---
+[Home](README.md) · [Intent Format →](intent_format.md)

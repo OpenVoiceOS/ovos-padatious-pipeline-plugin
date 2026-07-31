@@ -109,12 +109,15 @@ Utterances for unsupported languages are passed through without stemming.
 
 The OVOS pipeline calls matchers at three confidence levels in sequence:
 
-1. `match_high` (≥ `conf_high`, default 0.95) — very confident matches
-2. `match_medium` (≥ `conf_med`, default 0.8) — good matches
-3. `match_low` (≥ `conf_low`, default 0.5) — lower-confidence fallback
+1. `match_high` (≥ `conf_high`, default 0.95): very confident matches
+2. `match_medium` (≥ `conf_med`, default 0.8): good matches
+3. `match_low` (≥ `conf_low`, default 0.5): lower-confidence fallback
 
 Exact regex matches from the padaos layer always receive a confidence of `1.0` and will therefore always satisfy `match_high`.
 
 ## Word Limit
 
 Utterances longer than **50 words** are silently skipped to avoid excessive computation. This limit is not configurable.
+
+---
+[← API Reference](api_reference.md) · [Home](README.md) · [Architecture →](architecture.md)
