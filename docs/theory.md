@@ -2,7 +2,7 @@
 
 ## Design Philosophy
 
-Padatious was designed around a specific constraint: a voice assistant skill developer should be able to define intents with a small number of example sentences and get reliable matching without tuning hyperparameters or understanding machine learning.
+Padatious was designed around a specific constraint. A voice assistant skill developer should be able to define intents with a small number of example sentences. Matching should be reliable without tuning hyperparameters or understanding machine learning.
 
 Two guiding principles follow from this:
 
@@ -16,7 +16,7 @@ Two guiding principles follow from this:
 
 Every query passes through two independent matchers. Their results are merged before the best intent is selected.
 
-### Layer 1 — padaos (regex exact match)
+### Layer 1: padaos (regex exact match)
 
 Before any neural network is consulted, the intent template syntax is compiled into regular expressions. This happens once at train time and is stored in memory.
 
@@ -30,19 +30,19 @@ The regex compiler (`padaos.py`) transforms template lines through a chain of su
 
 When a query fully matches a regex, the intent is returned with confidence `1.0` and extracted entities taken directly from the named capture groups. No neural network runs for that query.
 
-This layer is fast and deterministic. Its limitation is that it only fires on exact structural matches — minor rephrasing, extra words, or typos cause it to miss.
+This layer is fast and deterministic. Its limitation is that it only fires on exact structural matches. Minor rephrasing, extra words, or typos cause it to miss.
 
-### Layer 2 — FANN neural networks (fuzzy match)
+### Layer 2: FANN neural networks (fuzzy match)
 
 For queries that don't produce an exact regex match (or when padaos is disabled), every registered intent's neural network is scored. The best-scoring intent above the confidence threshold wins.
 
-The two layers are complementary: padaos catches the common exact cases with zero inference cost; FANN handles paraphrase and partial matches.
+The two layers are complementary. Padaos catches the common exact cases with zero inference cost. FANN handles paraphrase and partial matches.
 
 ---
 
 ## Feature Engineering (Vectorization)
 
-Each intent's neural network operates on a bag-of-tokens feature vector. The vocabulary is determined at training time from the intent's own sample sentences — tokens that never appeared in training are not given dedicated indices.
+Each intent's neural network operates on a bag-of-tokens feature vector. The vocabulary is determined at training time from the intent's own sample sentences. Tokens that never appeared in training get no dedicated index.
 
 For a given input sentence, the vector is constructed as follows:
 
@@ -64,7 +64,7 @@ Each intent gets one FANN feed-forward network with the architecture:
 [vocab_size]  →  [10]  →  [1]
 ```
 
-The hidden layer uses `SIGMOID_SYMMETRIC_STEPWISE` (maps to `[-1, 1]`); the output uses the same. The output is clamped to `[0, 1]` by `max(0, raw_output)`. A score near `1.0` means "this sentence matches this intent"; near `0.0` means it does not.
+The hidden layer uses `SIGMOID_SYMMETRIC_STEPWISE` (maps to `[-1, 1]`), and the output layer uses the same function. The output is clamped to `[0, 1]` by `max(0, raw_output)`. A score near `1.0` means "this sentence matches this intent". A score near `0.0` means it does not.
 
 ### Training data augmentation
 
@@ -124,7 +124,7 @@ Three signals are combined for each candidate extraction:
 
 The geometric mean (via `sqrt(a × b)`) ensures both signals must be positive for the extraction to help. A strong position but a poor entity value (or vice versa) yields a smaller bonus than both being strong.
 
-The final `MatchData` for each candidate is ranked by total confidence. The pipeline returns the best-confidence result with the **fewest total characters** in its extractions — preferring tight, precise matches over sprawling ones.
+The final `MatchData` for each candidate is ranked by total confidence. The pipeline returns the best-confidence result with the **fewest total characters** in its extractions, preferring tight, precise matches over sprawling ones.
 
 ### Edge training augmentation
 
@@ -134,13 +134,13 @@ Edge networks also receive pollution: for each positive boundary position, addit
 
 ## Domain Classification (`DomainIntentContainer`)
 
-When many intents from many skills are registered, the full pairwise scoring can become noisy — an intent from an unrelated skill may produce a spuriously high score simply because the vocabulary overlaps.
+When many intents from many skills are registered, the full pairwise scoring can become noisy. An intent from an unrelated skill may produce a spuriously high score simply because the vocabulary overlaps.
 
 The domain engine addresses this with a two-pass strategy:
 
-**Pass 1 — domain selection.** A top-level `IntentContainer` is trained on the union of all samples per domain (one sample set per skill). This network classifies "what domain does this query belong to?" and returns the top-k scoring domains.
+**Pass 1: domain selection.** A top-level `IntentContainer` is trained on the union of all samples per domain (one sample set per skill). This network classifies "what domain does this query belong to?" and returns the top-k scoring domains.
 
-**Pass 2 — intent matching.** Only the per-domain containers for the selected domains are scored. These containers have much smaller vocabularies and fewer intents, reducing cross-skill interference.
+**Pass 2: intent matching.** Only the per-domain containers for the selected domains are scored. These containers have much smaller vocabularies and fewer intents, reducing cross-skill interference.
 
 The trade-off is an extra training step and a slightly longer inference path. The benefit is better isolation between unrelated skills.
 
@@ -154,7 +154,7 @@ When an intent is added or loaded, the sorted training lines are hashed with `xx
 
 At startup, `instantiate_from_disk` reads the cache directory and reconstructs all intents whose `.hash`, `.net`, and `.ids` files are present. When `train()` is called, only intents whose training data hash has changed since the last run are actually re-trained.
 
-This means a typical restart after adding one new skill only trains the new skill's intents; all other networks are loaded directly from disk.
+This means a typical restart after adding one new skill only trains the new skill's intents. All other networks load directly from disk.
 
 ---
 
@@ -169,15 +169,15 @@ The choice to give each intent its own tiny network rather than using a single s
 - **No catastrophic forgetting.** Adding a new intent never touches existing network weights.
 - **The vocabulary is minimal.** Each network only allocates features for tokens it has actually seen, so even 200 intents do not collectively produce a huge feature space.
 
-The cost is that each network makes its decision in isolation — there is no global context shared across intents.
+The cost is that each network makes its decision in isolation. There is no global context shared across intents.
 
 ### Tiny dense networks over modern frameworks
 
-The networks are small enough (tens to hundreds of weights) that a plain numpy implementation (`ovos_padatious.fann`) trains them in milliseconds and runs inference with negligible overhead — no GPU, no native libraries, and models load in microseconds. This matters for a voice assistant where the full intent pipeline must complete in tens of milliseconds. The on-disk model format remains FANN_FLO_2.1, so models trained by historic libfann-based releases keep loading unchanged.
+The networks are small enough, tens to hundreds of weights, that a plain numpy implementation (`ovos_padatious.fann`) trains them in milliseconds. Inference runs with negligible overhead: no GPU, no native libraries, and models load in microseconds. This matters for a voice assistant, where the full intent pipeline must complete in tens of milliseconds. The on-disk model format remains FANN_FLO_2.1, so models trained by historic libfann-based releases keep loading unchanged.
 
 ### Bag-of-words feature representation
 
-Ignoring word order makes the vectorization simple and fast, and means the network is robust to paraphrasing within the same vocabulary. It also means the network cannot distinguish "dog bites man" from "man bites dog". In practice, for the short, constrained utterances typical of voice commands, word order ambiguity is rare.
+Ignoring word order keeps the vectorization simple and fast, and lets the network tolerate paraphrasing within the same vocabulary. It also means the network cannot distinguish "dog bites man" from "man bites dog". In practice, for the short, constrained utterances typical of voice commands, word order ambiguity is rare.
 
 ### Contrastive negative sampling
 
@@ -193,10 +193,13 @@ Rather than using a softmax over all intents, each binary network is trained wit
 
 **Training data size.** Contrastive training works well when all intents have comparable sample counts. A very large intent can dominate the negative sample pool and make it harder for small intents to learn.
 
-**Fixed network topology.** Every `SimpleIntent` uses a `[vocab, 10, 1]` network regardless of intent complexity. A very simple intent wastes capacity; a complex one may underfit. There is no automatic capacity tuning.
+**Fixed network topology.** Every `SimpleIntent` uses a `[vocab, 10, 1]` network regardless of intent complexity. A very simple intent wastes capacity. A complex one may underfit. There is no automatic capacity tuning.
 
 **Tokenization is language-agnostic.** The tokenizer splits on character-class boundaries (alpha / digit / punctuation). This works for space-separated European languages but is unsuitable for logographic scripts (Chinese, Japanese, Korean) or languages where morphology is encoded by affixes rather than separate tokens (Finnish, Turkish). The optional Snowball stemmer helps somewhat for inflected languages but does not address tokenization.
 
 **Entity extraction is O(N²).** For each slot, every pair of positions in the sentence is evaluated by the edge networks. Long sentences are thus quadratically expensive in entity extraction, which is why utterances exceeding 50 words are rejected entirely.
 
 **Regex exact matching requires exact templates.** The padaos layer only fires when the query matches the template structure precisely. It provides no tolerance for punctuation variation, extra articles, or different word forms not explicitly listed as alternatives.
+
+---
+[← Architecture](architecture.md) · [Home](README.md)

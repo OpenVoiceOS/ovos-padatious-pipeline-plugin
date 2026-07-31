@@ -4,8 +4,8 @@
 
 The plugin is composed of two loosely-coupled layers:
 
-1. **Core engine** (`ovos_padatious/`) — a pure-Python intent matching library that can be used standalone.
-2. **OVOS plugin** (`ovos_padatious/opm.py`) — wraps the core engine as an OVOS pipeline plugin.
+1. **Core engine** (`ovos_padatious/`): a pure-Python intent matching library that can be used standalone.
+2. **OVOS plugin** (`ovos_padatious/opm.py`): wraps the core engine as an OVOS pipeline plugin.
 
 ```
  User utterance
@@ -33,7 +33,7 @@ The top-level API class. It:
 
 - Holds an `IntentManager` and an `EntityManager`.
 - Optionally holds a `padaos.IntentContainer` for fast exact matching.
-- Tracks a `must_train` flag. Calling any `add_*` / `load_*` / `remove_*` method sets it; calling `train()` clears it.
+- Tracks a `must_train` flag. Calling any `add_*` / `load_*` / `remove_*` method sets it. Calling `train()` clears it.
 - Serializes all registration calls in `serialized_args` so the container can be replicated via `get_training_args` / `apply_training_args`.
 
 ### `DomainIntentContainer` (`domain_container.py`)
@@ -56,7 +56,7 @@ A lightweight, regex-based exact matcher that runs **before** the neural network
 - Deterministic, predictable results for common utterances.
 - Optional disabling via `disable_padaos=True`.
 
-Regex compilation is protected by a `threading.Lock` for thread safety.
+A `threading.Lock` protects regex compilation for thread safety.
 
 ### `IntentManager` / `EntityManager` (`intent_manager.py`, `entity_manager.py`)
 
@@ -101,8 +101,8 @@ Maps tokens to fixed indices for the neural network input vector. Backed by a pe
 
 ### `util.py`
 
-- `tokenize(sent)` — lowercases and splits on whitespace/punctuation boundaries.
-- `resolve_conflicts(inputs, outputs)` — handles cases where the same input vector maps to conflicting target outputs during training.
+- `tokenize(sent)`: lowercases the input and splits it on whitespace and punctuation boundaries.
+- `resolve_conflicts(inputs, outputs)`: handles cases where the same input vector maps to conflicting target outputs during training.
 
 ## Threading Model
 
@@ -126,3 +126,6 @@ Maps tokens to fixed indices for the neural network input vector. Backed by a pe
 ```
 
 The hash files allow `instantiate_from_disk()` to skip re-training unchanged intents on startup.
+
+---
+[← OVOS Pipeline](ovos_pipeline.md) · [Home](README.md) · [Theory →](theory.md)
