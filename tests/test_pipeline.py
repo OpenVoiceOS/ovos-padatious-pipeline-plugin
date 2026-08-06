@@ -76,7 +76,8 @@ class UtteranceIntentMatchingTest(unittest.TestCase):
 
         match = _calc_padatious_intent("weather", container)
 
-        self.assertIs(match, exact)
+        self.assertIsNot(match, exact)
+        self.assertEqual(match.__dict__, exact.__dict__)
         container.calc_intents.assert_not_called()
 
     def test_blocked_exact_match_falls_back_to_neural_candidates(self):
@@ -94,5 +95,6 @@ class UtteranceIntentMatchingTest(unittest.TestCase):
             "weather", container,
             blacklisted_intents=frozenset({"blocked.skill:current"}))
 
-        self.assertIs(match, allowed)
+        self.assertIsNot(match, allowed)
+        self.assertEqual(match.__dict__, allowed.__dict__)
         container.calc_intents.assert_called_once_with("weather")

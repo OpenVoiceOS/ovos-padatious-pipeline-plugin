@@ -18,7 +18,7 @@ import string
 from collections import defaultdict
 from functools import lru_cache
 from os.path import expanduser, isfile
-from threading import Event, RLock
+from threading import Event, Lock, RLock
 from typing import Optional, Dict, List, Union, Type
 
 import snowballstemmer
@@ -985,16 +985,25 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
     return frozenset(canonical)
 
 
+_MATCH_CACHE_SIZE = 128
+_match_cache_generation = 0
+_match_flights: Dict[tuple, Event] = {}
+_match_flights_lock = Lock()
+
+
 # Confidence tiers retry the same utterance, while concurrent clients interleave
 # several different utterances. Keep a bounded working set large enough to
 # retain those results instead of deterministically evicting them after three
-# keys. Registration, deregistration, enable, and disable handlers invalidate
-# this cache whenever the matching model changes.
-@lru_cache(maxsize=128)
-def _calc_padatious_intent(utt: str,
-                           intent_container: Union[IntentContainer, DomainIntentContainer],
-                           blacklisted_intents: frozenset = frozenset(),
-                           blacklisted_skills: frozenset = frozenset()) -> Optional[PadatiousIntent]:
+# keys. The generation is part of the key so an old in-flight calculation
+# cannot repopulate results visible after model invalidation.
+@lru_cache(maxsize=_MATCH_CACHE_SIZE)
+def _cached_padatious_intent(
+        _generation: int,
+        utt: str,
+        intent_container: Union[IntentContainer, DomainIntentContainer],
+        blacklisted_intents: frozenset = frozenset(),
+        blacklisted_skills: frozenset = frozenset()
+) -> Optional[PadatiousIntent]:
     """
     Try to match an utterance to an intent in an intent_container
     @param utt: str - text to match intent against
@@ -1027,8 +1036,66 @@ def _calc_padatious_intent(utt: str,
         best_match = max(matches, key=lambda x: x.conf)
         best_matches = (
             match for match in matches if match.conf == best_match.conf)
-        intent = min(best_matches, key=lambda x: sum(map(len, x.matches.values())))
+        intent = min(best_matches,
+                     key=lambda x: sum(map(len, x.matches.values())))
         intent.sent = utt
         return intent
     except Exception as e:
         LOG.error(e)
+        return None
+
+
+def _calc_padatious_intent(
+        utt: str,
+        intent_container: Union[IntentContainer, DomainIntentContainer],
+        blacklisted_intents: frozenset = frozenset(),
+        blacklisted_skills: frozenset = frozenset()
+) -> Optional[PadatiousIntent]:
+    """Return one cached match and coalesce identical concurrent misses."""
+    with _match_flights_lock:
+        generation = _match_cache_generation
+        key = (generation, utt, intent_container,
+               blacklisted_intents, blacklisted_skills)
+        flight = _match_flights.get(key)
+        leader = flight is None
+        if leader:
+            flight = Event()
+            _match_flights[key] = flight
+
+    if not leader:
+        flight.wait()
+        cached = _cached_padatious_intent(*key)
+        return _copy_padatious_intent(cached)
+
+    try:
+        cached = _cached_padatious_intent(*key)
+        return _copy_padatious_intent(cached)
+    finally:
+        with _match_flights_lock:
+            flight.set()
+            if _match_flights.get(key) is flight:
+                _match_flights.pop(key)
+
+
+def _copy_padatious_intent(
+        intent: Optional[PadatiousIntent]
+) -> Optional[PadatiousIntent]:
+    """Copy a cached result before session-specific slot filling mutates it."""
+    if intent is None:
+        return None
+    return PadatiousIntent(intent.name, intent.sent,
+                           matches=dict(intent.matches), conf=intent.conf)
+
+
+def _clear_padatious_intent_cache() -> None:
+    """Invalidate cached matches without reviving stale in-flight results."""
+    global _match_cache_generation
+    with _match_flights_lock:
+        _match_cache_generation += 1
+        _cached_padatious_intent.cache_clear()
+
+
+# Preserve the private helper's existing cache-control surface used throughout
+# the registration lifecycle and by downstream tests.
+_calc_padatious_intent.cache_clear = _clear_padatious_intent_cache
+_calc_padatious_intent.cache_info = _cached_padatious_intent.cache_info
