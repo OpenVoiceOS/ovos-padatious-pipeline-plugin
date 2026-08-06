@@ -985,7 +985,10 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
     return frozenset(canonical)
 
 
-@lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
+# A runtime commonly interleaves more than three utterances. Keep enough
+# bounded history for confidence-tier retries without deterministic eviction
+# under even a modest concurrent workload.
+@lru_cache(maxsize=128)
 def _calc_padatious_intent(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
                            blacklisted_intents: frozenset = frozenset(),
