@@ -1005,9 +1005,18 @@ def _calc_padatious_intent(utt: str,
         # Matches are canonical by construction (registration-time alias
         # collapse, see PadatiousPipeline.register_intent), so only the
         # blacklist needs canonicalizing here.
-        matches = [m for m in intent_container.calc_intents(utt.lower())
-                   if m.name not in blacklisted_intents
-                   and m.name.split(":")[0] not in blacklisted_skills]
+        def allowed(matches):
+            return [match for match in matches
+                    if match.name not in blacklisted_intents
+                    and match.name.split(":")[0] not in blacklisted_skills]
+
+        # Padaos exact matches have authoritative confidence 1.0. Resolve them
+        # before neural inference so deterministic utterances do not queue
+        # behind CPU-heavy fuzzy matching. If every exact match is blocked,
+        # retain the existing behavior and evaluate allowed neural candidates.
+        matches = allowed(intent_container.calc_exact_intents(utt.lower()))
+        if not matches:
+            matches = allowed(intent_container.calc_intents(utt.lower()))
         if len(matches) == 0:
             return None
         best_match = max(matches, key=lambda x: x.conf)

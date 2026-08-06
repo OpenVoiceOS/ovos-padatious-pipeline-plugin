@@ -48,6 +48,11 @@ Place configuration under `"intent_boxes"` → `"ovos-padatious-pipeline-plugin"
 | `cast_to_ascii` | `bool` | `false` | Strip accented characters and punctuation from utterances before matching. |
 | `stem` | `bool` | `false` | Apply Snowball stemming to utterances and training samples. Improves recall for inflected languages. |
 
+The pipeline resolves deterministic Padaos matches before scheduling neural
+inference. Neural matching still runs when there is no allowed exact match, and
+the public `calc_intents()` API continues to return both neural and exact
+candidates.
+
 ### Cache directory suffixes
 
 The actual cache path is modified automatically based on active options:

@@ -168,6 +168,23 @@ class DomainIntentContainer:
             return self.domains[domain].calc_intent(query)
         return MatchData(name=None, sent=query, matches=None, conf=0.0)
 
+    def calc_exact_intents(self, query: str, domain: Optional[str] = None,
+                           top_k_domains: int = 2) -> List[MatchData]:
+        """Return deterministic Padaos matches without neural inference."""
+        if self.must_train:
+            self.train()
+        if domain:
+            container = self.domains.get(domain)
+            return container.calc_exact_intents(query) if container else []
+
+        matches = []
+        domains = self.domain_engine.calc_exact_intents(query)[:top_k_domains]
+        for domain_match in domains:
+            container = self.domains.get(domain_match.name)
+            if container:
+                matches.extend(container.calc_exact_intents(query))
+        return sorted(matches, reverse=True, key=lambda match: match.conf)
+
     def calc_intents(self, query: str, domain: Optional[str] = None, top_k_domains: int = 2) -> List[MatchData]:
         """
         Calculate matching intents for a query across domains or within a specific domain.

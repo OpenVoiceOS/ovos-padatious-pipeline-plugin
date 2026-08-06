@@ -299,6 +299,23 @@ class IntentContainer:
             self.must_train = False
         return True
 
+    def calc_exact_intents(self, query: str) -> List[MatchData]:
+        """Return deterministic Padaos matches without neural inference."""
+        if self.must_train:
+            self.train()
+        if self.padaos is None:
+            return []
+
+        sent = tokenize(query)
+        matches = []
+        for perfect_match in self.padaos.calc_intents(query):
+            name = perfect_match['name']
+            if any(word in query for word in self.blacklisted_words[name]):
+                continue
+            matches.append(MatchData(
+                name, sent, matches=perfect_match['entities'], conf=1.0))
+        return matches
+
     def calc_intents(self, query: str) -> List[MatchData]:
         """
         Tests all the intents against the query and returns
@@ -316,12 +333,8 @@ class IntentContainer:
         intents = {i.name: i
                    for i in self.intents.calc_intents(query, self.entities)
                    if not any(k in query for k in self.blacklisted_words[i.name])}
-        sent = tokenize(query)
-
-        if self.padaos is not None:
-            for perfect_match in self.padaos.calc_intents(query):
-                name = perfect_match['name']
-                intents[name] = MatchData(name, sent, matches=perfect_match['entities'], conf=1.0)
+        for perfect_match in self.calc_exact_intents(query):
+            intents[perfect_match.name] = perfect_match
         return list(intents.values())
 
     def calc_intent(self, query: str) -> MatchData:

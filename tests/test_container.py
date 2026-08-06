@@ -173,6 +173,39 @@ class TestIntentContainer(unittest.TestCase):
         intents = self.cont.calc_intents('this is a bad test')
         self.assertEqual(intents[0].name, 'test')
 
+    def test_calc_exact_intents_does_not_schedule_neural_inference(self):
+        self.cont.must_train = False
+        self.cont.padaos = MagicMock()
+        self.cont.padaos.calc_intents.return_value = [{
+            'name': 'test',
+            'entities': {'thing': 'mycroft'},
+        }]
+        self.cont.intents.calc_intents = MagicMock()
+
+        matches = self.cont.calc_exact_intents('tell me about mycroft')
+
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].name, 'test')
+        self.assertEqual(matches[0].conf, 1.0)
+        self.assertEqual(matches[0].matches, {'thing': 'mycroft'})
+        self.cont.intents.calc_intents.assert_not_called()
+
+    def test_calc_intents_keeps_neural_and_exact_candidates(self):
+        self.cont.must_train = False
+        neural = MagicMock(name='neural', conf=0.8)
+        neural.name = 'neural'
+        self.cont.intents.calc_intents = MagicMock(return_value=[neural])
+        self.cont.padaos = MagicMock()
+        self.cont.padaos.calc_intents.return_value = [{
+            'name': 'exact',
+            'entities': {},
+        }]
+
+        matches = self.cont.calc_intents('query')
+
+        self.assertEqual({match.name for match in matches},
+                         {'neural', 'exact'})
+
     def test_blacklist(self):
         self._add_intent(blacklist=True)
         self.cont.train(False)
