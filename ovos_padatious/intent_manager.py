@@ -13,6 +13,7 @@
 # limitations under the License.
 import time
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from typing import List
 
 from ovos_utils.log import LOG
@@ -43,6 +44,8 @@ class IntentManager(TrainingManager):
             max_workers=max_workers,
             thread_name_prefix="padatious-inference"
         )
+        self._executor_lock = Lock()
+        self._executor_closed = False
 
     @property
     def intent_names(self):
@@ -75,7 +78,15 @@ class IntentManager(TrainingManager):
 
         # Reuse one bounded executor. Constructing a pool for every utterance
         # multiplies the worker count when several queries arrive together.
-        matches = list(self._executor.map(match_intent, self.objects))
+        # ThreadPoolExecutor.map submits its complete iterable before returning.
+        # Protect only that submission step so shutdown cannot race it; result
+        # consumption stays outside the lock and concurrent queries still run.
+        with self._executor_lock:
+            if self._executor_closed:
+                LOG.debug("Skipping intent matching on a stopped manager")
+                return []
+            results = self._executor.map(match_intent, self.objects)
+        matches = list(results)
 
         # Filter out None results from failed matches
         matches = [match for match in matches if match]
@@ -84,4 +95,9 @@ class IntentManager(TrainingManager):
 
     def shutdown(self, wait: bool = True) -> None:
         """Release inference workers owned by this manager."""
-        self._executor.shutdown(wait=wait)
+        with self._executor_lock:
+            if self._executor_closed:
+                return
+            self._executor_closed = True
+            executor = self._executor
+        executor.shutdown(wait=wait)

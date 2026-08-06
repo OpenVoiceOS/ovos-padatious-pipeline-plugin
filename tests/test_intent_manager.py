@@ -13,7 +13,7 @@
 # limitations under the License.
 import time
 from concurrent.futures import ThreadPoolExecutor
-from threading import Lock
+from threading import Event, Lock
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -78,3 +78,53 @@ def test_worker_bound_applies_across_concurrent_queries(tmp_path):
         manager.shutdown()
 
     assert state["peak"] == 2
+
+
+def test_shutdown_waits_for_submission_but_not_result_consumption(tmp_path):
+    manager = IntentManager(str(tmp_path), max_workers=1)
+    manager._executor.shutdown()
+    submit_started = Event()
+    release_submission = Event()
+    result_consumption_started = Event()
+    release_results = Event()
+    shutdown_called = Event()
+
+    class DeferredResults:
+        def __iter__(self):
+            result_consumption_started.set()
+            assert release_results.wait(2)
+            return iter(())
+
+    class ControlledExecutor:
+        map_calls = 0
+
+        def map(self, function, objects):
+            self.map_calls += 1
+            submit_started.set()
+            assert release_submission.wait(2)
+            return DeferredResults()
+
+        def shutdown(self, wait=True):
+            shutdown_called.set()
+
+    executor = ControlledExecutor()
+    manager._executor = executor
+
+    with ThreadPoolExecutor(max_workers=2) as callers:
+        calculation = callers.submit(
+            manager.calc_intents, "query", MagicMock())
+        assert submit_started.wait(1)
+        shutdown = callers.submit(manager.shutdown, False)
+        assert not shutdown_called.wait(0.05)
+
+        release_submission.set()
+        assert result_consumption_started.wait(1)
+        assert shutdown_called.wait(1)
+        shutdown.result(timeout=1)
+        assert not calculation.done()
+
+        release_results.set()
+        assert calculation.result(timeout=1) == []
+
+    assert manager.calc_intents("after shutdown", MagicMock()) == []
+    assert executor.map_calls == 1
