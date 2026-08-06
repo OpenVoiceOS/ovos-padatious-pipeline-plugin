@@ -985,7 +985,12 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
     return frozenset(canonical)
 
 
-@lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
+# Confidence tiers retry the same utterance, while concurrent clients interleave
+# several different utterances. Keep a bounded working set large enough to
+# retain those results instead of deterministically evicting them after three
+# keys. Registration, deregistration, enable, and disable handlers invalidate
+# this cache whenever the matching model changes.
+@lru_cache(maxsize=128)
 def _calc_padatious_intent(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
                            blacklisted_intents: frozenset = frozenset(),
