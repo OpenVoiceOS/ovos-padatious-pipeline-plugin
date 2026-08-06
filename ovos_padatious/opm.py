@@ -219,7 +219,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if self.remove_punct:
             intent_cache += "_normalized"
         self.containers = {lang: self.engine_class(cache_dir=f"{intent_cache}/{lang}",
-                                                   disable_padaos=self.config.get("disable_padaos", False))
+                                                   disable_padaos=self.config.get("disable_padaos", False),
+                                                   inference_workers=self.config.get("inference_workers"))
                            for lang in langs}
 
         # pre-load any cached intents
@@ -882,6 +883,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         return None
 
     def shutdown(self):
+        for container in self.containers.values():
+            container.shutdown(wait=False)
         self.bus.remove('padatious:register_intent', self.register_intent)
         self.bus.remove('padatious:register_entity', self.register_entity)
         self.bus.remove('intent.service.padatious.get', self.handle_get_padatious)

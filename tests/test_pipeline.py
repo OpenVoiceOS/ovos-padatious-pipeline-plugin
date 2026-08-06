@@ -3,8 +3,8 @@ import unittest
 from ovos_bus_client.message import Message
 from ovos_utils.messagebus import FakeBus
 
-from ovos_padatious.opm import PadatiousIntentContainer as IntentContainer, \
-    PadatiousPipeline as PadatiousService
+from ovos_padatious.opm import PadatiousIntentContainer as IntentContainer
+from ovos_padatious.opm import PadatiousPipeline as PadatiousService
 
 
 class UtteranceIntentMatchingTest(unittest.TestCase):
@@ -13,7 +13,9 @@ class UtteranceIntentMatchingTest(unittest.TestCase):
                                           {"intent_cache": "~/.local/share/mycroft/intent_cache",
                                            "train_delay": 1,
                                            "single_thread": True,
+                                           "inference_workers": 2,
                                            })
+        self.addCleanup(intent_service.shutdown)
         # register test intents
         filename = "/tmp/test.intent"
         with open(filename, "w") as f:
@@ -35,6 +37,7 @@ class UtteranceIntentMatchingTest(unittest.TestCase):
         # assert padatious is loaded
         for container in intent_service.containers.values():
             self.assertIsInstance(container, IntentContainer)
+            self.assertEqual(container.inference_workers, 2)
 
         # exact match
         intent = intent_service.calc_intent("this is a test", "en-US")

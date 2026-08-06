@@ -24,6 +24,7 @@ Place configuration under `"intent_boxes"` → `"ovos-padatious-pipeline-plugin"
       "domain_engine": false,
       "instant_train": false,
       "intent_cache": "~/.local/share/mycroft/intent_cache",
+      "inference_workers": 4,
       "disable_padaos": false,
       "cast_to_ascii": false,
       "stem": false
@@ -42,6 +43,7 @@ Place configuration under `"intent_boxes"` → `"ovos-padatious-pipeline-plugin"
 | `domain_engine` | `bool` | `false` | Use `DomainIntentContainer` instead of `IntentContainer`. Groups intents by skill for faster disambiguation. |
 | `instant_train` | `bool` | `false` | Trigger training immediately after each intent registration instead of waiting for the `mycroft.skills.train` bus event. |
 | `intent_cache` | `str` | XDG data home | Override the directory where trained models are cached. |
+| `inference_workers` | `int` | Python default | Maximum reusable worker threads per language for neural intent matching. Set this explicitly to bound CPU contention under concurrent load. |
 | `disable_padaos` | `bool` | `false` | Disable the fast regex exact-match layer (padaos). Only the neural network is used. |
 | `cast_to_ascii` | `bool` | `false` | Strip accented characters and punctuation from utterances before matching. |
 | `stem` | `bool` | `false` | Apply Snowball stemming to utterances and training samples. Improves recall for inflected languages. |

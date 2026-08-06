@@ -1,8 +1,9 @@
 import unittest
 from unittest.mock import MagicMock
 
-from ovos_padatious.domain_container import DomainIntentContainer  # Replace 'your_module' with the actual module name
-
+from ovos_padatious.domain_container import (
+    DomainIntentContainer,  # Replace 'your_module' with the actual module name
+)
 from ovos_padatious.match_data import MatchData
 
 
@@ -17,9 +18,12 @@ class TestDomainIntentEngine(unittest.TestCase):
 
     def test_remove_domain(self):
         self.engine.add_domain_intent("domain1", "intent1", ["sample1", "sample2"])
+        container = self.engine.domains["domain1"]
+        container.shutdown = MagicMock()
         self.engine.remove_domain("domain1")
         self.assertNotIn("domain1", self.engine.training_data)
         self.assertNotIn("domain1", self.engine.domains)
+        container.shutdown.assert_called_once_with(wait=False)
 
     def test_remove_domain_intent(self):
         self.engine.add_domain_intent("domain1", "intent1", ["sample1", "sample2"])

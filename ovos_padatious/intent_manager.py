@@ -14,11 +14,13 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
+
+from ovos_utils.log import LOG
+
 from ovos_padatious.intent import Intent
 from ovos_padatious.match_data import MatchData
 from ovos_padatious.training_manager import TrainingManager
 from ovos_padatious.util import tokenize
-from ovos_utils.log import LOG
 
 
 class IntentManager(TrainingManager):
@@ -28,9 +30,19 @@ class IntentManager(TrainingManager):
     Args:
         cache (str): Path to the cache directory for storing trained models.
     """
-    def __init__(self, cache: str, debug: bool = False):
+    def __init__(self, cache: str, debug: bool = False,
+                 max_workers: int | None = None):
         super().__init__(Intent, cache)
+        if max_workers is not None and (
+                isinstance(max_workers, bool)
+                or not isinstance(max_workers, int)
+                or max_workers < 1):
+            raise ValueError("max_workers must be a positive integer or None")
         self.debug = debug
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="padatious-inference"
+        )
 
     @property
     def intent_names(self):
@@ -61,11 +73,15 @@ class IntentManager(TrainingManager):
                 LOG.error(f"Error processing intent '{intent.name}': {e}")
                 return None
 
-        # Parallelize matching
-        with ThreadPoolExecutor() as executor:
-            matches = list(executor.map(match_intent, self.objects))
+        # Reuse one bounded executor. Constructing a pool for every utterance
+        # multiplies the worker count when several queries arrive together.
+        matches = list(self._executor.map(match_intent, self.objects))
 
         # Filter out None results from failed matches
         matches = [match for match in matches if match]
 
         return matches
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Release inference workers owned by this manager."""
+        self._executor.shutdown(wait=wait)

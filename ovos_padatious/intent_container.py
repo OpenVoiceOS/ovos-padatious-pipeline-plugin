@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import collections
 import inspect
 import os
 from functools import wraps
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from ovos_config.meta import get_xdg_base
 from ovos_utils.log import LOG
@@ -26,7 +27,7 @@ from ovos_padatious.entity_manager import EntityManager
 from ovos_padatious.intent_manager import IntentManager
 from ovos_padatious.match_data import MatchData
 from ovos_padatious.util import tokenize
-import collections
+
 
 def _save_args(func):
     """
@@ -54,14 +55,20 @@ class IntentContainer:
 
     Args:
         cache_dir (str): Directory for caching the neural network models and intent/entity files.
+        disable_padaos (bool): Disable exact-pattern matching when true.
+        inference_workers (int): Maximum reusable neural inference workers.
     """
 
-    def __init__(self, cache_dir: Optional[str] = None, disable_padaos: bool = False) -> None:
+    def __init__(self, cache_dir: Optional[str] = None,
+                 disable_padaos: bool = False,
+                 inference_workers: int | None = None) -> None:
         cache_dir = cache_dir or f"{xdg_data_home()}/{get_xdg_base()}/intent_cache"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir: str = cache_dir
         self.must_train: bool = False
-        self.intents: IntentManager = IntentManager(cache_dir)
+        self.inference_workers = inference_workers
+        self.intents: IntentManager = IntentManager(
+            cache_dir, max_workers=inference_workers)
         self.entities: EntityManager = EntityManager(cache_dir)
         self.disable_padaos = disable_padaos
         if self.disable_padaos:
@@ -82,13 +89,20 @@ class IntentContainer:
         """
         os.makedirs(self.cache_dir, exist_ok=True)
         self.must_train = False
-        self.intents = IntentManager(self.cache_dir)
+        old_intents = self.intents
+        self.intents = IntentManager(
+            self.cache_dir, max_workers=self.inference_workers)
+        old_intents.shutdown(wait=False)
         self.entities = EntityManager(self.cache_dir)
         if self.disable_padaos:
             self.padaos = None
         else:
             self.padaos: padaos.IntentContainer = padaos.IntentContainer()
         self.serialized_args = []
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Release inference workers owned by this container."""
+        self.intents.shutdown(wait=wait)
 
     def instantiate_from_disk(self) -> None:
         """

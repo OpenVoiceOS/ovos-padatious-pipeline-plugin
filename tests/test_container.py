@@ -16,6 +16,7 @@ import random
 import unittest
 from os.path import join
 from time import monotonic
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -145,6 +146,15 @@ class TestIntentContainer(unittest.TestCase):
     def test_empty(self):
         self.cont.train(False)
         self.cont.calc_intent('hello')
+
+    def test_clear_replaces_and_stops_inference_executor(self):
+        old_manager = self.cont.intents
+        old_manager.shutdown = MagicMock()
+
+        self.cont.clear()
+
+        self.assertIsNot(self.cont.intents, old_manager)
+        old_manager.shutdown.assert_called_once_with(wait=False)
 
     def _test_entities(self, namespace):
         self.cont.add_intent(namespace + 'intent', [
