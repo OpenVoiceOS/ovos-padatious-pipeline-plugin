@@ -1,8 +1,9 @@
 import unittest
 from unittest.mock import MagicMock
 
-from ovos_padatious.domain_container import DomainIntentContainer  # Replace 'your_module' with the actual module name
-
+from ovos_padatious.domain_container import (
+    DomainIntentContainer,  # Replace 'your_module' with the actual module name
+)
 from ovos_padatious.match_data import MatchData
 
 
@@ -17,9 +18,12 @@ class TestDomainIntentEngine(unittest.TestCase):
 
     def test_remove_domain(self):
         self.engine.add_domain_intent("domain1", "intent1", ["sample1", "sample2"])
+        container = self.engine.domains["domain1"]
+        container.shutdown = MagicMock()
         self.engine.remove_domain("domain1")
         self.assertNotIn("domain1", self.engine.training_data)
         self.assertNotIn("domain1", self.engine.domains)
+        container.shutdown.assert_called_once_with(wait=False)
 
     def test_remove_domain_intent(self):
         self.engine.add_domain_intent("domain1", "intent1", ["sample1", "sample2"])
@@ -67,6 +71,23 @@ class TestDomainIntentEngine(unittest.TestCase):
         result = self.engine.calc_intents("query")
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0].name, "intent1")
+
+    def test_calc_exact_intents_uses_exact_domain_path(self):
+        self.engine.train = MagicMock()
+        mock_domain_container = MagicMock()
+        exact = MatchData(
+            name="intent1", sent="query", matches={}, conf=1.0)
+        mock_domain_container.calc_exact_intents.return_value = [exact]
+        self.engine.domains["domain1"] = mock_domain_container
+        self.engine.domain_engine.calc_exact_intents = MagicMock(return_value=[
+            MatchData(name="domain1", sent="query", matches={}, conf=1.0)
+        ])
+
+        result = self.engine.calc_exact_intents("query")
+
+        self.assertEqual(result, [exact])
+        mock_domain_container.calc_exact_intents.assert_called_once_with(
+            "query")
 
     def test_train(self):
         self.engine.training_data["domain1"] = ["sample1", "sample2"]

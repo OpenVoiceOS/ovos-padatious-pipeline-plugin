@@ -1,6 +1,8 @@
 from collections import defaultdict
 from typing import Dict, List, Optional
+
 from ovos_utils.log import LOG
+
 from ovos_padatious.intent_container import IntentContainer
 from ovos_padatious.match_data import MatchData
 
@@ -11,9 +13,16 @@ class DomainIntentContainer:
     into specific domains, providing flexible and hierarchical intent matching.
     """
 
-    def __init__(self, cache_dir: Optional[str] = None, disable_padaos: bool = False):
+    def __init__(self, cache_dir: Optional[str] = None,
+                 disable_padaos: bool = False,
+                 inference_workers: int | None = None):
         """
         Initialize the DomainIntentEngine.
+
+        Args:
+            cache_dir (str): Directory for cached intent models.
+            disable_padaos (bool): Disable exact-pattern matching when true.
+            inference_workers (int): Maximum workers in each intent engine.
 
         Attributes:
             domain_engine (IntentContainer): A top-level intent container for cross-domain calculations.
@@ -22,8 +31,10 @@ class DomainIntentContainer:
         """
         self.cache_dir = cache_dir
         self.disable_padaos = disable_padaos
+        self.inference_workers = inference_workers
         self.domain_engine = IntentContainer(cache_dir=cache_dir,
-                                             disable_padaos=disable_padaos)
+                                             disable_padaos=disable_padaos,
+                                             inference_workers=inference_workers)
         self.domains: Dict[str, IntentContainer] = {}
         self.training_data: Dict[str, List[str]] = defaultdict(list)
         self.instantiate_from_disk()
@@ -48,7 +59,7 @@ class DomainIntentContainer:
         if domain_name in self.training_data:
             self.training_data.pop(domain_name)
         if domain_name in self.domains:
-            self.domains.pop(domain_name)
+            self.domains.pop(domain_name).shutdown(wait=False)
         if domain_name in self.domain_engine.intent_names:
             self.domain_engine.remove_intent(domain_name)
 
@@ -64,7 +75,8 @@ class DomainIntentContainer:
         """
         if domain_name not in self.domains:
             self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir,
-                                                        disable_padaos=self.disable_padaos)
+                                                        disable_padaos=self.disable_padaos,
+                                                        inference_workers=self.inference_workers)
             self.domains[domain_name].instantiate_from_disk()
 
         self.domains[domain_name].add_intent(intent_name, intent_samples,
@@ -94,7 +106,8 @@ class DomainIntentContainer:
         """
         if domain_name not in self.domains:
             self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir,
-                                                        disable_padaos=self.disable_padaos)
+                                                        disable_padaos=self.disable_padaos,
+                                                        inference_workers=self.inference_workers)
         self.domains[domain_name].add_entity(entity_name, entity_samples)
 
     def remove_domain_entity(self, domain_name: str, entity_name: str):
@@ -155,6 +168,23 @@ class DomainIntentContainer:
             return self.domains[domain].calc_intent(query)
         return MatchData(name=None, sent=query, matches=None, conf=0.0)
 
+    def calc_exact_intents(self, query: str, domain: Optional[str] = None,
+                           top_k_domains: int = 2) -> List[MatchData]:
+        """Return deterministic Padaos matches without neural inference."""
+        if self.must_train:
+            self.train()
+        if domain:
+            container = self.domains.get(domain)
+            return container.calc_exact_intents(query) if container else []
+
+        matches = []
+        domains = self.domain_engine.calc_exact_intents(query)[:top_k_domains]
+        for domain_match in domains:
+            container = self.domains.get(domain_match.name)
+            if container:
+                matches.extend(container.calc_exact_intents(query))
+        return sorted(matches, reverse=True, key=lambda match: match.conf)
+
     def calc_intents(self, query: str, domain: Optional[str] = None, top_k_domains: int = 2) -> List[MatchData]:
         """
         Calculate matching intents for a query across domains or within a specific domain.
@@ -187,3 +217,9 @@ class DomainIntentContainer:
             LOG.debug(f"Training domain sub-intents: {domain}")
             self.domains[domain].train()
         self.must_train = False
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Release inference workers owned by every domain container."""
+        self.domain_engine.shutdown(wait=wait)
+        for container in self.domains.values():
+            container.shutdown(wait=wait)

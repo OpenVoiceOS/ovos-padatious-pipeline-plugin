@@ -13,35 +13,49 @@
 # limitations under the License.
 #
 """Intent service wrapping padatious."""
+import faulthandler
 import re
 import string
 from collections import defaultdict
 from functools import lru_cache
 from os.path import expanduser, isfile
-from threading import Event, RLock
-from typing import Optional, Dict, List, Union, Type
+from threading import Event, Lock, RLock
+from typing import Dict, List, Optional, Type, Union
 
 import snowballstemmer
-from ovos_config.config import Configuration
-from ovos_config.meta import get_xdg_base
-
 from ovos_bus_client.client import MessageBusClient
 from ovos_bus_client.message import Message
-from ovos_bus_client.session import SessionManager, Session
-from ovos_padatious import IntentContainer
-from ovos_padatious.domain_container import DomainIntentContainer
-from ovos_padatious.match_data import MatchData as PadatiousIntent
-from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
-from ovos_spec_tools import closest_lang, expand as expand_template, standardize_lang
-from ovos_spec_tools import SpecMessage
-from ovos_spec_tools import gate_satisfied, context_slot_candidates
+from ovos_bus_client.session import Session, SessionManager
+from ovos_config.config import Configuration
+from ovos_config.meta import get_xdg_base
+from ovos_plugin_manager.templates.pipeline import (
+    ConfidenceMatcherPipeline,
+    IntentHandlerMatch,
+)
+from ovos_spec_tools import (
+    SpecMessage,
+    closest_lang,
+    context_slot_candidates,
+    gate_satisfied,
+    standardize_lang,
+)
+from ovos_spec_tools import expand as expand_template
 from ovos_utils import flatten_list
 from ovos_utils.fakebus import FakeBus
 from ovos_utils.list_utils import deduplicate_list
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.text_utils import remove_accents_and_punct
 from ovos_utils.xdg_utils import xdg_data_home
-import faulthandler
+
+from ovos_padatious import IntentContainer
+from ovos_padatious._metrics import (
+    CACHE_HIT,
+    CACHE_MISS,
+    EXACT_MATCH,
+    NEURAL_MATCH,
+)
+from ovos_padatious.domain_container import DomainIntentContainer
+from ovos_padatious.match_data import MatchData as PadatiousIntent
 
 PadatiousIntentContainer = IntentContainer  # backwards compat
 
@@ -219,7 +233,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if self.remove_punct:
             intent_cache += "_normalized"
         self.containers = {lang: self.engine_class(cache_dir=f"{intent_cache}/{lang}",
-                                                   disable_padaos=self.config.get("disable_padaos", False))
+                                                   disable_padaos=self.config.get("disable_padaos", False),
+                                                   inference_workers=self.config.get("inference_workers"))
                            for lang in langs}
 
         # pre-load any cached intents
@@ -882,6 +897,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         return None
 
     def shutdown(self):
+        for container in self.containers.values():
+            container.shutdown(wait=False)
         self.bus.remove('padatious:register_intent', self.register_intent)
         self.bus.remove('padatious:register_entity', self.register_entity)
         self.bus.remove('intent.service.padatious.get', self.handle_get_padatious)
@@ -982,18 +999,39 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
     return frozenset(canonical)
 
 
-@lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
-def _calc_padatious_intent(utt: str,
-                           intent_container: Union[IntentContainer, DomainIntentContainer],
-                           blacklisted_intents: frozenset = frozenset(),
-                           blacklisted_skills: frozenset = frozenset()) -> Optional[PadatiousIntent]:
-    """
-    Try to match an utterance to an intent in an intent_container
-    @param utt: str - text to match intent against
+# Confidence tiers retry the same utterance, while concurrent clients interleave
+# several different utterances. Keep a bounded working set large enough to
+# retain those results instead of deterministically evicting them after three
+# keys. Registration, deregistration, enable, and disable handlers invalidate
+# this cache whenever the matching model changes.
+class _CachedPadatiousResult:
+    """Cached match plus enough state to classify each cache access."""
+
+    def __init__(self, intent: Optional[PadatiousIntent], path: Optional[str]):
+        self.intent = intent
+        self.path = path
+        self._accesses = 0
+        self._lock = Lock()
+
+    def mark_access(self) -> bool:
+        """Return ``True`` after the first access to this cached result."""
+        with self._lock:
+            cache_hit = self._accesses > 0
+            self._accesses += 1
+            return cache_hit
+
+
+@lru_cache(maxsize=128)
+def _cached_padatious_intent(
+    utt: str,
+    intent_container: Union[IntentContainer, DomainIntentContainer],
+    blacklisted_intents: frozenset = frozenset(),
+    blacklisted_skills: frozenset = frozenset(),
+) -> _CachedPadatiousResult:
+    """Calculate one cacheable Padatious result and its matching path.
 
     The session blacklists are passed as hashable frozensets so this stays
     ``lru_cache``-able (Session is unhashable under ovos-bus-client>=2.4.0a1).
-    @return: matched PadatiousIntent
     """
     try:
         blacklisted_intents = _canonicalize_blacklist(blacklisted_intents)
@@ -1002,16 +1040,55 @@ def _calc_padatious_intent(utt: str,
         # Matches are canonical by construction (registration-time alias
         # collapse, see PadatiousPipeline.register_intent), so only the
         # blacklist needs canonicalizing here.
-        matches = [m for m in intent_container.calc_intents(utt.lower())
-                   if m.name not in blacklisted_intents
-                   and m.name.split(":")[0] not in blacklisted_skills]
+        def allowed(matches):
+            return [match for match in matches
+                    if match.name not in blacklisted_intents
+                    and match.name.split(":")[0] not in blacklisted_skills]
+
+        # Padaos exact matches have authoritative confidence 1.0. Resolve them
+        # before neural inference so deterministic utterances do not queue
+        # behind CPU-heavy fuzzy matching. If every exact match is blocked,
+        # retain the existing behavior and evaluate allowed neural candidates.
+        path = "exact"
+        matches = allowed(intent_container.calc_exact_intents(utt.lower()))
+        if not matches:
+            path = "neural"
+            matches = allowed(intent_container.calc_intents(utt.lower()))
         if len(matches) == 0:
-            return None
+            return _CachedPadatiousResult(None, None)
         best_match = max(matches, key=lambda x: x.conf)
         best_matches = (
             match for match in matches if match.conf == best_match.conf)
         intent = min(best_matches, key=lambda x: sum(map(len, x.matches.values())))
         intent.sent = utt
-        return intent
+        return _CachedPadatiousResult(intent, path)
     except Exception as e:
         LOG.error(e)
+        return _CachedPadatiousResult(None, None)
+
+
+def _calc_padatious_intent(
+    utt: str,
+    intent_container: Union[IntentContainer, DomainIntentContainer],
+    blacklisted_intents: frozenset = frozenset(),
+    blacklisted_skills: frozenset = frozenset(),
+) -> Optional[PadatiousIntent]:
+    """Return one match while recording cache and selected-path counters."""
+    cached = _cached_padatious_intent(
+        utt,
+        intent_container,
+        blacklisted_intents,
+        blacklisted_skills,
+    )
+    (CACHE_HIT if cached.mark_access() else CACHE_MISS).increment()
+    if cached.path == "exact":
+        EXACT_MATCH.increment()
+    elif cached.path == "neural":
+        NEURAL_MATCH.increment()
+    return cached.intent
+
+
+# Keep the private helper's established cache-management API. Registration and
+# tests use these explicit methods to invalidate or inspect the bounded cache.
+_calc_padatious_intent.cache_clear = _cached_padatious_intent.cache_clear
+_calc_padatious_intent.cache_info = _cached_padatious_intent.cache_info

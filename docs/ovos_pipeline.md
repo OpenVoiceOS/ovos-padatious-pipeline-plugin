@@ -24,6 +24,7 @@ Place configuration under `"intent_boxes"` → `"ovos-padatious-pipeline-plugin"
       "domain_engine": false,
       "instant_train": false,
       "intent_cache": "~/.local/share/mycroft/intent_cache",
+      "inference_workers": 4,
       "disable_padaos": false,
       "cast_to_ascii": false,
       "stem": false
@@ -42,9 +43,31 @@ Place configuration under `"intent_boxes"` → `"ovos-padatious-pipeline-plugin"
 | `domain_engine` | `bool` | `false` | Use `DomainIntentContainer` instead of `IntentContainer`. Groups intents by skill for faster disambiguation. |
 | `instant_train` | `bool` | `false` | Trigger training immediately after each intent registration instead of waiting for the `mycroft.skills.train` bus event. |
 | `intent_cache` | `str` | XDG data home | Override the directory where trained models are cached. |
+| `inference_workers` | positive `int` | Python default | Maximum reusable worker threads per `IntentContainer` for neural intent matching. The value must be a positive integer. In domain mode, the domain classifier and each domain use this limit. Set this explicitly to bound per-container CPU contention under concurrent load. |
 | `disable_padaos` | `bool` | `false` | Disable the fast regex exact-match layer (padaos). Only the neural network is used. |
 | `cast_to_ascii` | `bool` | `false` | Strip accented characters and punctuation from utterances before matching. |
 | `stem` | `bool` | `false` | Apply Snowball stemming to utterances and training samples. Improves recall for inflected languages. |
+
+The pipeline resolves deterministic Padaos matches before scheduling neural
+inference. Neural matching still runs when there is no allowed exact match, and
+the public `calc_intents()` API continues to return both neural and exact
+candidates.
+
+### Process-local metrics
+
+When the hosting OVOS runtime enables its opt-in performance endpoint, the
+plugin contributes four fixed-cardinality cumulative counters through the
+`ovos.performance.metrics` entry-point group:
+
+| Metric | Meaning |
+|---|---|
+| `ovos_padatious_cache_hit_total` | Match requests served by the bounded utterance cache |
+| `ovos_padatious_cache_miss_total` | Match requests that computed a new result |
+| `ovos_padatious_exact_match_total` | Requests whose selected result came from the deterministic exact path, including cached reuse |
+| `ovos_padatious_neural_match_total` | Requests whose selected result came from neural matching, including cached reuse |
+
+No utterance, intent, skill, language, or session value is exported. Counters
+reset when the runtime process restarts.
 
 ### Cache directory suffixes
 

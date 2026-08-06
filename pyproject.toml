@@ -51,6 +51,9 @@ Homepage = "https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin"
 [project.entry-points."opm.pipeline"]
 "ovos-padatious-pipeline-plugin" = "ovos_padatious.opm:PadatiousPipeline"
 
+[project.entry-points."ovos.performance.metrics"]
+padatious = "ovos_padatious._metrics:performance_metrics"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ovos_padatious*"]

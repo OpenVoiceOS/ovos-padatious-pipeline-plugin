@@ -11,10 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import collections
 import inspect
 import os
 from functools import wraps
-from typing import List, Dict, Any, Optional
+from threading import RLock
+from typing import Any, Dict, List, Optional
 
 from ovos_config.meta import get_xdg_base
 from ovos_utils.log import LOG
@@ -26,7 +28,7 @@ from ovos_padatious.entity_manager import EntityManager
 from ovos_padatious.intent_manager import IntentManager
 from ovos_padatious.match_data import MatchData
 from ovos_padatious.util import tokenize
-import collections
+
 
 def _save_args(func):
     """
@@ -54,14 +56,21 @@ class IntentContainer:
 
     Args:
         cache_dir (str): Directory for caching the neural network models and intent/entity files.
+        disable_padaos (bool): Disable exact-pattern matching when true.
+        inference_workers (int): Maximum reusable neural inference workers.
     """
 
-    def __init__(self, cache_dir: Optional[str] = None, disable_padaos: bool = False) -> None:
+    def __init__(self, cache_dir: Optional[str] = None,
+                 disable_padaos: bool = False,
+                 inference_workers: int | None = None) -> None:
         cache_dir = cache_dir or f"{xdg_data_home()}/{get_xdg_base()}/intent_cache"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir: str = cache_dir
         self.must_train: bool = False
-        self.intents: IntentManager = IntentManager(cache_dir)
+        self._train_lock = RLock()
+        self.inference_workers = inference_workers
+        self.intents: IntentManager = IntentManager(
+            cache_dir, max_workers=inference_workers)
         self.entities: EntityManager = EntityManager(cache_dir)
         self.disable_padaos = disable_padaos
         if self.disable_padaos:
@@ -82,13 +91,20 @@ class IntentContainer:
         """
         os.makedirs(self.cache_dir, exist_ok=True)
         self.must_train = False
-        self.intents = IntentManager(self.cache_dir)
+        old_intents = self.intents
+        self.intents = IntentManager(
+            self.cache_dir, max_workers=self.inference_workers)
+        old_intents.shutdown(wait=False)
         self.entities = EntityManager(self.cache_dir)
         if self.disable_padaos:
             self.padaos = None
         else:
             self.padaos: padaos.IntentContainer = padaos.IntentContainer()
         self.serialized_args = []
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Release inference workers owned by this container."""
+        self.intents.shutdown(wait=wait)
 
     def instantiate_from_disk(self) -> None:
         """
@@ -262,20 +278,43 @@ class IntentContainer:
             LOG.warning("'single_thread' argument is deprecated and will be ignored")
         if timeout is not None:
             LOG.warning("'timeout' argument is deprecated and will be ignored")
-        if not self.must_train and not force:
-            return True
+        # The skills manager deliberately emits training requests without
+        # blocking startup. An utterance can therefore arrive while the
+        # background handler is still training. Serialize both paths so the
+        # request joins that work instead of starting a second CPU-heavy
+        # training pass against the same managers and cache files.
+        with self._train_lock:
+            if not self.must_train and not force:
+                return True
 
-        if self.padaos is not None:
-            self.padaos.compile()
+            if self.padaos is not None:
+                self.padaos.compile()
 
-        # Train intents and entities
-        self.intents.train(debug=debug)
-        self.entities.train(debug=debug)
+            # Train intents and entities
+            self.intents.train(debug=debug)
+            self.entities.train(debug=debug)
 
-        self.entities.calc_ent_dict()
+            self.entities.calc_ent_dict()
 
-        self.must_train = False
+            self.must_train = False
         return True
+
+    def calc_exact_intents(self, query: str) -> List[MatchData]:
+        """Return deterministic Padaos matches without neural inference."""
+        if self.must_train:
+            self.train()
+        if self.padaos is None:
+            return []
+
+        sent = tokenize(query)
+        matches = []
+        for perfect_match in self.padaos.calc_intents(query):
+            name = perfect_match['name']
+            if any(word in query for word in self.blacklisted_words[name]):
+                continue
+            matches.append(MatchData(
+                name, sent, matches=perfect_match['entities'], conf=1.0))
+        return matches
 
     def calc_intents(self, query: str) -> List[MatchData]:
         """
@@ -294,12 +333,8 @@ class IntentContainer:
         intents = {i.name: i
                    for i in self.intents.calc_intents(query, self.entities)
                    if not any(k in query for k in self.blacklisted_words[i.name])}
-        sent = tokenize(query)
-
-        if self.padaos is not None:
-            for perfect_match in self.padaos.calc_intents(query):
-                name = perfect_match['name']
-                intents[name] = MatchData(name, sent, matches=perfect_match['entities'], conf=1.0)
+        for perfect_match in self.calc_exact_intents(query):
+            intents[perfect_match.name] = perfect_match
         return list(intents.values())
 
     def calc_intent(self, query: str) -> MatchData:

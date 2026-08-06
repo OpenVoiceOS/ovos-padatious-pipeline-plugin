@@ -14,8 +14,11 @@
 import os
 import random
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from os.path import join
+from threading import Event, Lock
 from time import monotonic
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -115,6 +118,42 @@ class TestIntentContainer(unittest.TestCase):
         test(False, False)
         test(True, True)
 
+    def test_concurrent_calculation_joins_active_training(self):
+        cont = IntentContainer('/tmp/cache-concurrent-training',
+                               disable_padaos=True)
+        training_started = Event()
+        release_training = Event()
+        count_lock = Lock()
+        training_calls = 0
+
+        def slow_train(debug=True):
+            nonlocal training_calls
+            with count_lock:
+                training_calls += 1
+            training_started.set()
+            assert release_training.wait(2)
+
+        cont.must_train = True
+        cont.intents.train = MagicMock(side_effect=slow_train)
+        cont.intents.calc_intents = MagicMock(return_value=[])
+        cont.entities = MagicMock()
+
+        try:
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = [executor.submit(cont.calc_intents, 'test')
+                           for _ in range(8)]
+                assert training_started.wait(1)
+                release_training.set()
+                assert [future.result(timeout=2) for future in futures] == [
+                    [] for _ in futures]
+        finally:
+            release_training.set()
+            cont.shutdown()
+
+        assert training_calls == 1
+        cont.entities.train.assert_called_once_with(debug=True)
+        cont.entities.calc_ent_dict.assert_called_once_with()
+
     def _create_large_intent(self, depth):
         if depth == 0:
             return '(a|b|)'
@@ -134,6 +173,39 @@ class TestIntentContainer(unittest.TestCase):
         intents = self.cont.calc_intents('this is a bad test')
         self.assertEqual(intents[0].name, 'test')
 
+    def test_calc_exact_intents_does_not_schedule_neural_inference(self):
+        self.cont.must_train = False
+        self.cont.padaos = MagicMock()
+        self.cont.padaos.calc_intents.return_value = [{
+            'name': 'test',
+            'entities': {'thing': 'mycroft'},
+        }]
+        self.cont.intents.calc_intents = MagicMock()
+
+        matches = self.cont.calc_exact_intents('tell me about mycroft')
+
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].name, 'test')
+        self.assertEqual(matches[0].conf, 1.0)
+        self.assertEqual(matches[0].matches, {'thing': 'mycroft'})
+        self.cont.intents.calc_intents.assert_not_called()
+
+    def test_calc_intents_keeps_neural_and_exact_candidates(self):
+        self.cont.must_train = False
+        neural = MagicMock(name='neural', conf=0.8)
+        neural.name = 'neural'
+        self.cont.intents.calc_intents = MagicMock(return_value=[neural])
+        self.cont.padaos = MagicMock()
+        self.cont.padaos.calc_intents.return_value = [{
+            'name': 'exact',
+            'entities': {},
+        }]
+
+        matches = self.cont.calc_intents('query')
+
+        self.assertEqual({match.name for match in matches},
+                         {'neural', 'exact'})
+
     def test_blacklist(self):
         self._add_intent(blacklist=True)
         self.cont.train(False)
@@ -145,6 +217,15 @@ class TestIntentContainer(unittest.TestCase):
     def test_empty(self):
         self.cont.train(False)
         self.cont.calc_intent('hello')
+
+    def test_clear_replaces_and_stops_inference_executor(self):
+        old_manager = self.cont.intents
+        old_manager.shutdown = MagicMock()
+
+        self.cont.clear()
+
+        self.assertIsNot(self.cont.intents, old_manager)
+        old_manager.shutdown.assert_called_once_with(wait=False)
 
     def _test_entities(self, namespace):
         self.cont.add_intent(namespace + 'intent', [
