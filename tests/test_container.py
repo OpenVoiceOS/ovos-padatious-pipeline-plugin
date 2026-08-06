@@ -14,7 +14,9 @@
 import os
 import random
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from os.path import join
+from threading import Event, Lock
 from time import monotonic
 from unittest.mock import MagicMock
 
@@ -115,6 +117,42 @@ class TestIntentContainer(unittest.TestCase):
 
         test(False, False)
         test(True, True)
+
+    def test_concurrent_calculation_joins_active_training(self):
+        cont = IntentContainer('/tmp/cache-concurrent-training',
+                               disable_padaos=True)
+        training_started = Event()
+        release_training = Event()
+        count_lock = Lock()
+        training_calls = 0
+
+        def slow_train(debug=True):
+            nonlocal training_calls
+            with count_lock:
+                training_calls += 1
+            training_started.set()
+            assert release_training.wait(2)
+
+        cont.must_train = True
+        cont.intents.train = MagicMock(side_effect=slow_train)
+        cont.intents.calc_intents = MagicMock(return_value=[])
+        cont.entities = MagicMock()
+
+        try:
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = [executor.submit(cont.calc_intents, 'test')
+                           for _ in range(8)]
+                assert training_started.wait(1)
+                release_training.set()
+                assert [future.result(timeout=2) for future in futures] == [
+                    [] for _ in futures]
+        finally:
+            release_training.set()
+            cont.shutdown()
+
+        assert training_calls == 1
+        cont.entities.train.assert_called_once_with(debug=True)
+        cont.entities.calc_ent_dict.assert_called_once_with()
 
     def _create_large_intent(self, depth):
         if depth == 0:

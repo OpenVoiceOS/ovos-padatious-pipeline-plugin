@@ -15,6 +15,7 @@ import collections
 import inspect
 import os
 from functools import wraps
+from threading import RLock
 from typing import Any, Dict, List, Optional
 
 from ovos_config.meta import get_xdg_base
@@ -66,6 +67,7 @@ class IntentContainer:
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir: str = cache_dir
         self.must_train: bool = False
+        self._train_lock = RLock()
         self.inference_workers = inference_workers
         self.intents: IntentManager = IntentManager(
             cache_dir, max_workers=inference_workers)
@@ -276,19 +278,25 @@ class IntentContainer:
             LOG.warning("'single_thread' argument is deprecated and will be ignored")
         if timeout is not None:
             LOG.warning("'timeout' argument is deprecated and will be ignored")
-        if not self.must_train and not force:
-            return True
+        # The skills manager deliberately emits training requests without
+        # blocking startup. An utterance can therefore arrive while the
+        # background handler is still training. Serialize both paths so the
+        # request joins that work instead of starting a second CPU-heavy
+        # training pass against the same managers and cache files.
+        with self._train_lock:
+            if not self.must_train and not force:
+                return True
 
-        if self.padaos is not None:
-            self.padaos.compile()
+            if self.padaos is not None:
+                self.padaos.compile()
 
-        # Train intents and entities
-        self.intents.train(debug=debug)
-        self.entities.train(debug=debug)
+            # Train intents and entities
+            self.intents.train(debug=debug)
+            self.entities.train(debug=debug)
 
-        self.entities.calc_ent_dict()
+            self.entities.calc_ent_dict()
 
-        self.must_train = False
+            self.must_train = False
         return True
 
     def calc_intents(self, query: str) -> List[MatchData]:
