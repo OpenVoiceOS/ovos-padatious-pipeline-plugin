@@ -53,6 +53,22 @@ inference. Neural matching still runs when there is no allowed exact match, and
 the public `calc_intents()` API continues to return both neural and exact
 candidates.
 
+### Process-local metrics
+
+When the hosting OVOS runtime enables its opt-in performance endpoint, the
+plugin contributes four fixed-cardinality cumulative counters through the
+`ovos.performance.metrics` entry-point group:
+
+| Metric | Meaning |
+|---|---|
+| `ovos_padatious_cache_hit_total` | Match requests served by the bounded utterance cache |
+| `ovos_padatious_cache_miss_total` | Match requests that computed a new result |
+| `ovos_padatious_exact_match_total` | Requests whose selected result came from the deterministic exact path, including cached reuse |
+| `ovos_padatious_neural_match_total` | Requests whose selected result came from neural matching, including cached reuse |
+
+No utterance, intent, skill, language, or session value is exported. Counters
+reset when the runtime process restarts.
+
 ### Cache directory suffixes
 
 The actual cache path is modified automatically based on active options:

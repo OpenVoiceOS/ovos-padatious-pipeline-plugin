@@ -11,8 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from ovos_padatious._metrics import (
+    CACHE_HIT,
+    CACHE_MISS,
+    EXACT_MATCH,
+    NEURAL_MATCH,
+    performance_metrics,
+)
 from ovos_padatious.match_data import MatchData
 from ovos_padatious.opm import _calc_padatious_intent
+
+
+def _value(counter):
+    return counter.snapshot()["value"]
 
 
 def test_confidence_retry_cache_keeps_interleaved_utterances():
@@ -48,3 +59,48 @@ def test_confidence_retry_cache_keeps_interleaved_utterances():
 
     assert container.calls == len(utterances)
     assert _calc_padatious_intent.cache_info().maxsize == 128
+
+
+def test_cache_and_selected_match_path_counters():
+    class Container:
+        @staticmethod
+        def calc_exact_intents(utterance):
+            if utterance == "exact":
+                return [MatchData(
+                    name="test-skill:exact",
+                    sent=utterance,
+                    matches={},
+                    conf=1.0,
+                )]
+            return []
+
+        @staticmethod
+        def calc_intents(utterance):
+            return [MatchData(
+                name="test-skill:neural",
+                sent=utterance,
+                matches={},
+                conf=0.9,
+            )]
+
+    container = Container()
+    before = {
+        "hit": _value(CACHE_HIT),
+        "miss": _value(CACHE_MISS),
+        "exact": _value(EXACT_MATCH),
+        "neural": _value(NEURAL_MATCH),
+    }
+    _calc_padatious_intent.cache_clear()
+    try:
+        _calc_padatious_intent("exact", container)
+        _calc_padatious_intent("exact", container)
+        _calc_padatious_intent("fuzzy", container)
+    finally:
+        _calc_padatious_intent.cache_clear()
+
+    assert _value(CACHE_HIT) - before["hit"] == 1
+    assert _value(CACHE_MISS) - before["miss"] == 2
+    assert _value(EXACT_MATCH) - before["exact"] == 2
+    assert _value(NEURAL_MATCH) - before["neural"] == 1
+    snapshots = performance_metrics()
+    assert snapshots["ovos_padatious_cache_hit_total"]["type"] == "counter"

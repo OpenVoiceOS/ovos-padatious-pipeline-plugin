@@ -110,7 +110,10 @@ Maps tokens to fixed indices for the neural network input vector. Backed by a pe
 - A `threading.RLock` (`self.lock`) guards the training path against concurrent invocations.
 - A `threading.Event` (`finished_training_event`) lets callers wait for training to complete before matching.
 - `padaos.IntentContainer._compile()` uses a `threading.Lock` for thread-safe regex compilation.
-- `_calc_padatious_intent` is decorated with `@lru_cache(maxsize=3)` so repeated calls for the same utterance at different confidence levels reuse the result.
+- `_calc_padatious_intent` uses a bounded 128-result LRU so confidence-tier
+  retries reuse matches while interleaved client utterances retain a useful
+  working set. Intent registration and lifecycle changes explicitly invalidate
+  the cache.
 
 ## Cache Layout
 
