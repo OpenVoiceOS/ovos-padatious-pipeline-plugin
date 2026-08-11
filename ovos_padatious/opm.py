@@ -31,6 +31,7 @@ from ovos_bus_client.session import SessionManager, Session
 from ovos_padatious import IntentContainer
 from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
+from ovos_padatious.util import expand_or_skip
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
 from ovos_spec_tools import closest_lang, expand as expand_template, standardize_lang
 from ovos_spec_tools import SpecMessage
@@ -478,7 +479,21 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             with open(file_name) as f:
                 samples = [line.strip() for line in f.readlines()]
 
-        samples = deduplicate_list(flatten_list([expand_template(s) for s in samples]))
+        samples = deduplicate_list(flatten_list([
+            expand_or_skip(s, f"intent/entity {name!r} (skill {skill_id!r})")
+            for s in samples
+        ]))
+        if not samples:
+            # every line was malformed and skipped: registering with zero
+            # samples would silently create a dead intent/entity that can
+            # never match (conf 0.0 forever) instead of surfacing the
+            # problem, so refuse the registration outright.
+            LOG.error(
+                "intent/entity %r (skill %r) has no valid samples after "
+                "skipping malformed template lines - not registering",
+                name, skill_id,
+            )
+            return
         if lang in self.stemmers:
             stemmer = self.stemmers[lang]
         else:
@@ -549,7 +564,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             if message.data['name'] not in self.registered_intents:
                 self.registered_intents.append(message.data['name'])
             LOG.debug('Registering Padatious intent: ' + message.data['name'])
-            lang, skill_id, name, samples, blacklisted_words = self._unpack_object(message)
+            unpacked = self._unpack_object(message)
+            if unpacked is None:
+                return
+            lang, skill_id, name, samples, blacklisted_words = unpacked
             if self.engine_class == DomainIntentContainer:
                 self.containers[lang].add_domain_intent(skill_id, name, samples,
                                                         blacklisted_words=blacklisted_words)
@@ -584,7 +602,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 if e.get("name") != message.data['name']
                 or standardize_lang(e.get("lang") or self.lang) != lang]
             self.registered_entities.append(message.data)
-            lang, skill_id, name, samples, _ = self._unpack_object(message)
+            unpacked = self._unpack_object(message)
+            if unpacked is None:
+                return
+            lang, skill_id, name, samples, _ = unpacked
             LOG.debug('Registering Padatious entity: ' + message.data['name'])
             if self.engine_class == DomainIntentContainer:
                 self.containers[lang].add_domain_entity(skill_id, name, samples)
