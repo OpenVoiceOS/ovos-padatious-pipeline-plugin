@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.3a1) (2026-08-13)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.2a1...2.0.3a1)
+
+**Merged pull requests:**
+
+- fix: entity value sets bias confidence instead of closing the vocabulary [\#97](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/97) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.2a1) (2026-08-13)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.1a2...2.0.2a1)
