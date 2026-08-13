@@ -56,9 +56,18 @@ class EntityManager(TrainingManager):
         Removes an entity from the manager.
 
         Args:
-            name (str): The name of the entity to remove.
+            name (str): The name of the entity to remove. Accepted either
+                bare (``<skill_id>:<entity>`` / ``<entity>``) or already
+                wrapped (``<skill_id>:{<entity>}`` / ``{<entity>}``).
         """
-        name = '{' + name + '}'
+        # entities are stored under Entity.wrap_name(), i.e.
+        # ``<skill_id>:{<entity>}`` - the brace goes around the entity token
+        # only, NOT around the whole namespaced name. Wrapping blindly here
+        # produced ``{<skill_id>:<entity>}``, which matched nothing, so no
+        # entity was ever removable and TrainingManager.add's replace-on-
+        # re-register stacked duplicate objects instead of collapsing them.
+        if '{' not in name:
+            name = Entity.wrap_name(name)
         if name in self.entity_dict:
             del self.entity_dict[name]
         super(EntityManager, self).remove(name)

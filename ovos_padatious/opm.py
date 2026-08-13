@@ -568,7 +568,21 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         """
         lang = message.data.get('lang', self.lang)
         lang = standardize_lang(lang)
+        # ovos-workshop's register_entity_file() munges the entity name with a
+        # trailing ``_<md5>``; match-time slot lookup uses the raw slot token,
+        # so an un-collapsed name yields an unconstrained wildcard slot. Fold
+        # it here, at registration time - this plugin owns its lookup contract
+        # and this repairs every emitter vintage at once.
+        message.data['name'] = _dealias_entity_name(message.data['name'])
+
         if lang in self.containers:
+            # a dual-emitting emitter (>= 9.3) sends the same entity twice,
+            # once per wire contract; both collapse to one canonical name, so
+            # the manifest must hold exactly one entry for it
+            self.registered_entities = [
+                e for e in self.registered_entities
+                if e.get("name") != message.data['name']
+                or standardize_lang(e.get("lang") or self.lang) != lang]
             self.registered_entities.append(message.data)
             lang, skill_id, name, samples, _ = self._unpack_object(message)
             LOG.debug('Registering Padatious entity: ' + message.data['name'])
@@ -951,6 +965,37 @@ def _dealias_intent_name(name: Optional[str]) -> Optional[str]:
     if name and name.endswith(".intent"):
         return name[:-len(".intent")]
     return name
+
+
+# ovos-workshop's ``register_entity_file`` builds the entity name as
+# ``<skill_id>:<basename>_<md5(entity_file)>``. That hash is emitter-internal
+# bookkeeping, never part of the wire contract: the ``<skill_id>:`` prefix
+# already namespaces the entity, and the hash is taken over the file name that
+# is already in the key, so it adds no disambiguation at all.
+_ENTITY_HASH_SUFFIX = re.compile(r"_[0-9a-f]{32}$")
+
+
+def _dealias_entity_name(name: Optional[str]) -> Optional[str]:
+    """Fold the legacy munged entity id onto the canonical
+    ``<skill_id>:<entity>`` id.
+
+    Slot lookup (:meth:`ovos_padatious.entity_manager.EntityManager.find`)
+    builds its candidate key from the matching intent's skill_id plus the RAW
+    slot token written in the template, so a hash-suffixed (or ``.entity``
+    suffixed) registration can never be found and the slot degrades to an
+    unconstrained wildcard.
+
+    Collapsing at REGISTRATION time - where this plugin owns its own lookup
+    contract - repairs every emitter vintage, including deployed ovos-workshop
+    releases that will keep emitting the munged name. It also makes the legacy
+    twin of an ovos-workshop >= 9.3 dual-emit land on the same canonical name
+    as its OVOS-INTENT-4 ``ovos.entity.register`` twin.
+    """
+    if not name:
+        return name
+    if name.endswith(".entity"):
+        name = name[:-len(".entity")]
+    return _ENTITY_HASH_SUFFIX.sub("", name)
 
 
 # Legacy `.intent`-suffixed blacklist entries are deprecated compat, not a
