@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.2a1) (2026-08-13)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.1a2...2.0.2a1)
+
+**Merged pull requests:**
+
+- fix: collapse munged entity names so file-registered slots actually constrain [\#95](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/95) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.1a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.1a2) (2026-07-31)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.1a1...2.0.1a2)
