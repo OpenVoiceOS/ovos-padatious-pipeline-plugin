@@ -18,6 +18,60 @@ from typing import List, Optional, Any
 from ovos_padatious.entity_edge import EntityEdge
 from ovos_padatious.match_data import MatchData
 
+#: Lowest contribution a registered entity value set may make to a candidate.
+#:
+#: Per OVOS-INTENT-1 5.4 an ``.entity`` file (or ``add_entity`` call) is a set
+#: of *training hints*: example values that bias scoring towards the expected
+#: shape of a slot. It is NOT a closed vocabulary. The spec is normative here -
+#: an engine MAY use the set to *score* a slot, but MUST NOT treat it as an
+#: exhaustive allow-list, so a candidate whose slot fills with a value outside
+#: the set MUST remain matchable.
+#:
+#: So the raw ``Entity.match`` score is mapped through :func:`hint_confidence`,
+#: which lifts it onto a floor without ever letting it collapse a candidate.
+ENTITY_HINT_FLOOR = 0.8
+
+#: Raw score at and above which :func:`hint_confidence` is the identity.
+#:
+#: ``Entity.match`` is a neural net, so a *listed* value scores about 0.91, not
+#: 1.0. Anything that rescales the whole range - the obvious
+#: ``1 - bias * (1 - raw)`` - lifts those to ~0.98 and *promotes* in-list
+#: matches across a pipeline confidence band ("what is the weather in porto
+#: today" moved 0.9318 -> 0.9502, crossing ``conf_high``). Keeping the map an
+#: identity from here up makes that impossible: for a listed value the
+#: arithmetic is bit-identical to the pre-fix behaviour.
+ENTITY_HINT_IDENTITY = 0.9
+
+#: Raw ``Entity.match`` score above which the value set is considered to have
+#: actually recognised a span. Only then is it used to discard rival spans.
+ENTITY_HINT_RECOGNISED = 0.5
+
+
+def hint_confidence(raw: float) -> float:
+    """Map a raw ``Entity.match`` score to a slot-scoring contribution.
+
+    The map is **strictly increasing** on ``[0, 1]``, and that is the whole
+    design. Two properties have to hold at once:
+
+    * a value the set does not know must not collapse its candidate, so the
+      map has a floor at :data:`ENTITY_HINT_FLOOR` and never returns less;
+    * the set must still be able to *rank* rival spans that it recognises
+      only weakly. A flat floor cannot: with two spans both mapping to 0.8,
+      the tie falls to ``pos_conf``, which prefers the shorter span, and
+      "play song 2" extracts "2" instead of "song 2". Strict monotonicity is
+      what keeps a partial recognition worth more than none at all.
+
+    Below :data:`ENTITY_HINT_IDENTITY` the score is ramped from the floor by a
+    square root, so the interesting, weakly-recognised end of the range gets
+    most of the resolution. At and above it the map is the identity, which is
+    what stops a listed value from ever gaining confidence.
+    """
+    raw = min(1.0, max(0.0, raw))
+    if raw >= ENTITY_HINT_IDENTITY:
+        return raw
+    span = ENTITY_HINT_IDENTITY - ENTITY_HINT_FLOOR
+    return ENTITY_HINT_FLOOR + span * math.sqrt(raw / ENTITY_HINT_IDENTITY)
+
 
 class PosIntent:
     """
@@ -35,13 +89,18 @@ class PosIntent:
             EntityEdge(+1, token, intent_name)
         ]
 
-    def match(self, orig_data: Any, entity: Optional[Any] = None) -> List[MatchData]:
+    def match(self, orig_data: Any, entity: Optional[Any] = None,
+              template_tokens: Optional[Any] = None) -> List[MatchData]:
         """
         Matches the original data against the token and extracts entities.
 
         Args:
             orig_data (Any): Original data containing the sentence to match.
             entity (Optional[Any]): An entity to match against. Defaults to None.
+            template_tokens (Optional[Any]): Container supporting ``in`` that
+                holds the literal tokens of this intent's own templates. Used
+                only to discard a rival span that swallows template literals
+                around a span the value set recognised. Defaults to None.
 
         Returns:
             List[MatchData]: A list of possible matches with their corresponding data.
@@ -57,7 +116,7 @@ class PosIntent:
                 return False
             return all(not orig_data.sent[p].startswith('{') for p in range(l_pos, r_pos + 1))
 
-        possible_matches: List[MatchData] = []
+        scored: List[tuple] = []
         for l_conf, l_pos in l_matches:
             if l_conf < 0.2:
                 continue
@@ -68,7 +127,14 @@ class PosIntent:
                 extracted = orig_data.sent[l_pos:r_pos + 1]
 
                 pos_conf = (l_conf - 0.5 + r_conf - 0.5) / 2 + 0.5
-                ent_conf = entity.match(extracted) if entity else 1
+                # entity value sets are training hints, not vocabularies: the
+                # set may lift a candidate above the floor but never sink one
+                # below it, so an unlisted value is never collapsed (and so
+                # never discarded) - and an in-list value never *gains*
+                raw = 1.0
+                if entity:
+                    raw = min(1.0, max(0.0, entity.match(extracted)))
+                ent_conf = hint_confidence(raw) if entity else 1.0
 
                 new_sent = orig_data.sent[:l_pos] + [self.token] + orig_data.sent[r_pos + 1:]
                 new_matches = orig_data.matches.copy()
@@ -77,9 +143,41 @@ class PosIntent:
                 extra_conf = math.sqrt(pos_conf * ent_conf) - 0.5
                 data = MatchData(orig_data.name, new_sent, new_matches,
                                  orig_data.conf + extra_conf)
-                possible_matches.append(data)
+                scored.append((raw, l_pos, r_pos, data))
 
-        return possible_matches
+        # With no entity every span scores raw 1.0, so there is no "recognised"
+        # span to discriminate around and the value set steers nothing. Bail
+        # out before the filter, or an entity-less slot would silently lose
+        # spans to an arbitrary tie-broken "best".
+        if not scored or entity is None or template_tokens is None:
+            return [data for _, _, _, data in scored]
+
+        # A value set still steers *which* words fill the slot, but only in the
+        # one case where the alternative is unambiguously wrong: a rival span
+        # that strictly contains a span the set recognised, and whose extra
+        # words are literals of this intent's own templates. "make a timer for
+        # 3 minute" against a numeric value set drops "timer for 3" in favour
+        # of "3", because "timer" and "for" are template literals.
+        #
+        # Anything else survives. In particular a multi-word out-of-list value
+        # whose tail happens to be listed keeps its full span - "weather in new
+        # london" yields "new london", not "london", because "new" is not a
+        # template literal. Discarding on raw score alone truncated those.
+        best_raw, best_l, best_r, _ = max(scored, key=lambda s: s[0])
+        if best_raw < ENTITY_HINT_RECOGNISED:
+            return [data for _, _, _, data in scored]
+
+        def swallows_only_literals(l_pos: int, r_pos: int) -> bool:
+            if (l_pos, r_pos) == (best_l, best_r):
+                return False
+            if l_pos > best_l or r_pos < best_r:
+                return False  # not a strict superset of the recognised span
+            extra = (list(range(l_pos, best_l)) +
+                     list(range(best_r + 1, r_pos + 1)))
+            return all(orig_data.sent[p] in template_tokens for p in extra)
+
+        return [data for _, l_pos, r_pos, data in scored
+                if not swallows_only_literals(l_pos, r_pos)]
 
     def save(self, prefix: str) -> None:
         """

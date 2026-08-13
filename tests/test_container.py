@@ -159,9 +159,13 @@ class TestIntentContainer(unittest.TestCase):
         assert data.conf > 0.5
         assert data['ent'] == 'one'
 
+        # a value set is a training hint, not a closed vocabulary
+        # (OVOS-INTENT-1 5.4): an unlisted value scores lower than a listed
+        # one, but it is still captured and still matches.
         data = self.cont.calc_intent('test two')
         assert high_conf > data.conf
-        assert 'ent' not in data
+        assert data.conf > 0.8
+        assert data['ent'] == 'two'
 
     def test_regular_entities(self):
         self._test_entities('')
@@ -178,7 +182,9 @@ class TestIntentContainer(unittest.TestCase):
         self.cont.add_intent('thing', ['A {thing}'])
         self.cont.add_entity('thing', ['thing'])
         self.cont.train(False)
-        assert self.cont.calc_intent('A dog').conf < 0.5
+        # 'dog' is not in the value set, so it is penalised but still matches
+        assert self.cont.calc_intent('A dog').matches == {'thing': 'dog'}
+        assert 0.8 < self.cont.calc_intent('A dog').conf < 1.0
         assert self.cont.calc_intent('A thing').conf == 1.0
         self.cont.remove_entity('thing')
         assert self.cont.calc_intent('A dog').conf == 1.0
