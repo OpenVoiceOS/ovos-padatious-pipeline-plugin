@@ -46,9 +46,44 @@ def tokenize(sentence):
     class Vars:
         start_pos = -1
         last_type = 'o'
+        in_brace = False
 
     def update(c, i):
-        if c.isalpha() or c in '-{}':
+        # '_' is grouped with the alpha/word class rather than treated as a
+        # break character. This matters most for template slot placeholders
+        # such as '{pokemon_a}': the '{' and '}' are also in this class, so
+        # the whole placeholder tokenizes as a single token '{pokemon_a}'
+        # instead of splitting into ['{pokemon', '_', 'a}']. Downstream code
+        # (Intent.train, EntityManager.find, Entity.wrap_name, ...) all key
+        # off a token that starts with '{' and ends with '}' to recognize a
+        # slot - a split placeholder silently produces a bogus PosIntent
+        # token and an entity name that never resolves.
+        #
+        # tokenize() is shared by template lines (training side) AND by
+        # plain user utterances (runtime match side), so this also changes
+        # how a literal underscore in an utterance tokenizes: 'foo_bar' now
+        # becomes ['foo_bar'] instead of ['foo', '_', 'bar']. That is an
+        # accepted, deliberate side effect: word_with_underscore is already
+        # one identifier/word to a human, splitting on '_' was never useful
+        # for matching ordinary text, and keeping it whole makes template
+        # and utterance tokenization behave consistently for the same input.
+        #
+        # Digits get the same brace-scoped treatment, but ONLY inside a
+        # '{...}' span: '{slot_1}' must tokenize as one token exactly like
+        # '{slot_a}' does, otherwise the same bug resurfaces for any slot
+        # name that happens to contain a digit. Outside of braces, digits
+        # keep splitting from letters exactly as before ('one1' -> ['one',
+        # '1']) - IdManager.adj_token() (id_manager.py) relies on isolated
+        # pure-digit tokens to canonicalize numbers to '#' placeholders for
+        # the neural net, and tests/test_util.py pins 'one1 two2' ->
+        # ['one', '1', 'two', '2'] as existing, load-bearing behavior that
+        # must not change.
+        if c == '{':
+            Vars.in_brace = True
+        elif c == '}':
+            Vars.in_brace = False
+
+        if c.isalpha() or c in '-_{}' or (Vars.in_brace and (c.isdigit() or c == '#')):
             t = 'a'
         elif c.isdigit() or c == '#':
             t = 'n'
