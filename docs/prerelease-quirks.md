@@ -4,6 +4,31 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.0.5a1 — entity training bounded; listed values score exactly 1.0
+
+Entity value sets of any size now train in roughly constant time. The
+per-entity neural net trains on a deterministic, evenly-strided subset of at
+most 128 positive and 128 negative sentences; past a few hundred diverse
+samples the net stopped converging, so every training restart burned its
+full epoch budget and a pair of ~2200-value entities took over ten minutes
+to train (breaking service-ready timeouts on cold boots). Engines own
+handling unbounded entity data; this is the subset choice.
+
+The full value set is kept for an exact-match fast path: a listed value now
+scores exactly `1.0` through `Entity.match`, deterministically, instead of
+the ~0.91 the net gave it. Behavior change: an in-list slot value scores the
+same as if no entity were attached — on a default (high-only) pipeline this
+restores routing for utterances that registering an entity had silently
+pushed below `conf_high` (e.g. 0.9318 back to ~0.9547). Out-of-list values
+keep the floor-ramped hint band and still rank below listed ones.
+
+The training-cache hash is salted with a format version, so the whole cache
+— intents included — retrains once on first boot after upgrade and
+regenerates with the new `.samples` sidecar. Containers restored through
+`instantiate_from_disk` bypass that check: a pre-sidecar cache loaded that
+way keeps net scoring for listed values (exactly the old behavior) until
+its entities are registered again.
+
 ## 2.0.4a1 — `tokenize()` no longer splits underscore/digit slot names
 
 `{thing_name}` used to tokenize as `['{thing', '_', 'name}']` instead of one

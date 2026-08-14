@@ -87,7 +87,10 @@ class TrainingManager:
             hash_fn = join(self.cache, name + '.hash')
             old_hsh = None
             min_ver = splitext(ovos_padatious.__version__)[0]
-            new_hsh = lines_hash([min_ver] + lines)
+            # cache format 2: entities persist their value set in a .samples
+            # sidecar for the exact-match path; salting the hash retrains
+            # pre-sidecar caches once so the sidecar exists everywhere
+            new_hsh = lines_hash([min_ver, "format2"] + lines)
 
             if isfile(hash_fn):
                 with open(hash_fn, 'rb') as g:
