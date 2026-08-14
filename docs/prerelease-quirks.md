@@ -4,6 +4,18 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.0.5a1 — default `conf_high` lowered to the hint-identity boundary (0.9)
+
+The plugin-internal default for `conf_high` moves from 0.95 to 0.9, aligned
+with `ENTITY_HINT_IDENTITY`. Out-of-list slot values blend to final
+confidences in the low 0.94s, which straddled the old threshold
+nondeterministically across training runs: the same install routed the same
+utterance at high confidence or not at all depending on how the nets
+converged. With 0.9 the entire entity-hint band clears the high stage
+deterministically. Explicit `conf_high` values in config keep winning — the
+shipped OVOS default config sets its own value, so default installs follow
+the ovos-config release, not this fallback.
+
 ## 2.0.4a1 — `tokenize()` no longer splits underscore/digit slot names
 
 `{thing_name}` used to tokenize as `['{thing', '_', 'name}']` instead of one

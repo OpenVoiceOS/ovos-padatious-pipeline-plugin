@@ -198,7 +198,14 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if self.lang not in langs:
             langs.append(self.lang)
 
-        self.conf_high = self.config.get("conf_high") or 0.95
+        # conf_high defaults to the entity-hint identity boundary
+        # (pos_intent.ENTITY_HINT_IDENTITY): a candidate whose slot value the
+        # hint set does not know blends to a final confidence in the low
+        # 0.94s, which straddled the old 0.95 threshold across training runs
+        # — the same install routed the same utterance high or not at all
+        # depending on how the nets converged. 0.9 puts the whole hint band
+        # on the high side deterministically.
+        self.conf_high = self.config.get("conf_high") or 0.9
         self.conf_med = self.config.get("conf_med") or 0.8
         self.conf_low = self.config.get("conf_low") or 0.5
 
