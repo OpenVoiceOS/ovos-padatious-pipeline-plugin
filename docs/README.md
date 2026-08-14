@@ -14,6 +14,7 @@ This repository bundles a fork of the original [padatious](https://github.com/My
 | [OVOS Pipeline](ovos_pipeline.md) | Using the plugin inside OVOS / configuration options |
 | [Architecture](architecture.md) | Internal architecture and data flow |
 | [Theory](theory.md) | Algorithm design, decisions, and limitations |
+| [Prerelease Quirks](prerelease-quirks.md) | User-visible changes since the last stable release |
 
 ## Quick Example
 
