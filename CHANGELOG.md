@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.4a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.4a2) (2026-08-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.4a1...2.0.4a2)
+
+**Merged pull requests:**
+
+- docs: add prerelease-quirks changelog since 1.4.3 [\#101](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/101) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.4a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.4a1) (2026-08-14)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.3a1...2.0.4a1)
