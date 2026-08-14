@@ -33,13 +33,14 @@ ENTITY_HINT_FLOOR = 0.8
 
 #: Raw score at and above which :func:`hint_confidence` is the identity.
 #:
-#: ``Entity.match`` is a neural net, so a *listed* value scores about 0.91, not
-#: 1.0. Anything that rescales the whole range - the obvious
-#: ``1 - bias * (1 - raw)`` - lifts those to ~0.98 and *promotes* in-list
-#: matches across a pipeline confidence band ("what is the weather in porto
-#: today" moved 0.9318 -> 0.9502, crossing ``conf_high``). Keeping the map an
-#: identity from here up makes that impossible: for a listed value the
-#: arithmetic is bit-identical to the pre-fix behaviour.
+#: A *listed* value short-circuits through ``Entity.samples`` to a raw score
+#: of exactly 1.0, which the identity passes through unchanged: the slot
+#: scores bit-identically to a hint-less slot (``ent_conf == 1.0``), so
+#: attaching an entity never penalises the values it knows. The net only
+#: scores *unlisted* values, and those must not be lifted into this band by
+#: rescaling - the obvious ``1 - bias * (1 - raw)`` promotes weak
+#: recognitions across pipeline confidence thresholds. Keeping the map an
+#: identity from here up, and a ramp below, makes that impossible.
 ENTITY_HINT_IDENTITY = 0.9
 
 #: Raw ``Entity.match`` score above which the value set is considered to have
@@ -63,8 +64,10 @@ def hint_confidence(raw: float) -> float:
 
     Below :data:`ENTITY_HINT_IDENTITY` the score is ramped from the floor by a
     square root, so the interesting, weakly-recognised end of the range gets
-    most of the resolution. At and above it the map is the identity, which is
-    what stops a listed value from ever gaining confidence.
+    most of the resolution. At and above it the map is the identity: a listed
+    value arrives here as an exact 1.0 (``Entity.samples``) and passes through
+    unchanged, and an unlisted value the net happens to score highly is not
+    rescaled any further.
     """
     raw = min(1.0, max(0.0, raw))
     if raw >= ENTITY_HINT_IDENTITY:
@@ -127,10 +130,11 @@ class PosIntent:
                 extracted = orig_data.sent[l_pos:r_pos + 1]
 
                 pos_conf = (l_conf - 0.5 + r_conf - 0.5) / 2 + 0.5
-                # entity value sets are training hints, not vocabularies: the
-                # set may lift a candidate above the floor but never sink one
-                # below it, so an unlisted value is never collapsed (and so
-                # never discarded) - and an in-list value never *gains*
+                # entity value sets are training hints, not vocabularies:
+                # a LISTED value short-circuits to exactly 1.0 through
+                # Entity.samples, scoring as if no hint were attached, and an
+                # unlisted value is floor-ramped by the net - never collapsed
+                # (and so never discarded)
                 raw = 1.0
                 if entity:
                     raw = min(1.0, max(0.0, entity.match(extracted)))

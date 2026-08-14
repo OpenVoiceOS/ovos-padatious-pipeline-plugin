@@ -305,28 +305,57 @@ def test_subset_span_survives(timer_grammar):
     assert '3' in kept, "a subset of the recognised span must survive"
 
 
-def test_in_list_value_never_gains_confidence():
-    """Mutant killed: rescaling instead of flooring.
+def test_in_list_value_scores_as_hintless_baseline():
+    """A listed value must score exactly as if the entity were not attached.
 
-    ``Entity.match`` is a neural net, so a listed value scores ~0.91, not 1.0.
-    A rescale would lift that and promote in-list matches across a pipeline
-    confidence band. Pin the pre-fix value: this utterance measures 0.9318 on
-    dev and must not reach conf_high (0.95).
+    Attaching an ``.entity`` file is a hint, and OVOS-INTENT-1 5.4 says a hint
+    biases scoring, it never punishes: for a value the set *knows*, the
+    arithmetic must be bit-identical to the same grammar with no entity at
+    all (``ent_conf == 1.0`` both ways). The exact-sample path guarantees
+    this deterministically — before it, the net scored listed values ~0.91,
+    so registering an entity silently LOWERED every listed value's final
+    confidence below ``conf_high`` (the finding-38 regression: a default
+    high-only pipeline then dropped the utterance entirely).
+
+    Out-of-list values keep the floor-ramped net score, so this does not
+    reintroduce the rescaling promotion the hint ramp was designed against:
+    unknown values still cannot be lifted by the map.
     """
-    c = IntentContainer(tempfile.mkdtemp())
-    c.add_intent('weather', ['what is the weather in {location}',
-                             'weather in {location}',
-                             'weather for {location} today'])
-    c.add_entity('location', ['london', 'york', 'porto', 'the hague'])
-    c.train(debug=False)
+    grammar = ['what is the weather in {location}',
+               'weather in {location}',
+               'weather for {location} today']
 
-    match = c.calc_intent('what is the weather in porto today')
-    assert match.matches.get('location') == 'porto'
-    assert match.conf == pytest.approx(0.9318, abs=5e-3)
-    assert match.conf < 0.95, "in-list match must not be promoted to conf_high"
+    hinted = IntentContainer(tempfile.mkdtemp())
+    hinted.add_intent('weather', grammar)
+    hinted.add_entity('location', ['london', 'york', 'porto', 'the hague'])
+    hinted.train(debug=False)
+
+    bare = IntentContainer(tempfile.mkdtemp())
+    bare.add_intent('weather', grammar)
+    bare.train(debug=False)
+
+    # the hint-less identity is pinned at the unit level (Entity.match on a
+    # listed value returns exactly 1.0, and hint_confidence(1.0) is the
+    # identity); at container level the bare grammar is not a usable control
+    # because padaos' unconstrained {location} wildcard turns any value into
+    # a perfect 1.0 match. Pin the restored value instead: with ent_conf 1.0
+    # this utterance scores ~0.9547 — back ABOVE conf_high (0.95), which is
+    # where it routed on stable releases (no auto-registered entities), and
+    # up from the regressed 0.9318 the old pin froze
+    utt = 'what is the weather in porto today'
+    hinted_match = hinted.calc_intent(utt)
+    assert hinted_match.matches.get('location') == 'porto'
+    assert hinted_match.conf == pytest.approx(0.9547, abs=5e-3)
+    assert hinted_match.conf > 0.95
 
     # exact template matches are untouched too
-    assert c.calc_intent('weather in porto').conf == pytest.approx(1.0, abs=1e-6)
+    assert hinted.calc_intent('weather in porto').conf == pytest.approx(1.0, abs=1e-6)
+
+    # and an UNLISTED value must still not be promoted to the identity band:
+    # the ramp caps its contribution below ENTITY_HINT_IDENTITY
+    unlisted = hinted.calc_intent('what is the weather in zanzibar today')
+    listed = hinted_match.conf
+    assert unlisted.conf < listed, "unknown value must rank below a listed one"
 
 
 # ---------------------------------------------------------------------------
