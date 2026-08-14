@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.4a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.4a1) (2026-08-14)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.3a1...2.0.4a1)
+
+**Merged pull requests:**
+
+- fix: tokenize\(\) splits underscore/digit slot names, breaking §5.4 hint guarantee [\#99](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/99) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.3a1) (2026-08-13)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.2a1...2.0.3a1)
