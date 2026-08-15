@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import inspect
+import re
 import os
 from functools import wraps
 from typing import List, Dict, Any, Optional
@@ -290,15 +291,27 @@ class IntentContainer:
         """
         if self.must_train:
             self.train()
+
+        def suppressed(intent_name: str) -> bool:
+            # blacklisted words match at word boundaries: "install" suppresses
+            # "install firefox" but not "what is an installment loan"
+            q = query.lower()
+            return any(re.search(rf"\b{re.escape(k.lower())}\b", q)
+                       for k in self.blacklisted_words[intent_name])
+
         # post-processing: discard any matches that contain blacklisted words
         intents = {i.name: i
                    for i in self.intents.calc_intents(query, self.entities)
-                   if not any(k in query for k in self.blacklisted_words[i.name])}
+                   if not suppressed(i.name)}
         sent = tokenize(query)
 
         if self.padaos is not None:
+            # exact template matches honor the same suppression - a perfect
+            # match must not bypass the blacklist the neural tier enforces
             for perfect_match in self.padaos.calc_intents(query):
                 name = perfect_match['name']
+                if suppressed(name):
+                    continue
                 intents[name] = MatchData(name, sent, matches=perfect_match['entities'], conf=1.0)
         return list(intents.values())
 

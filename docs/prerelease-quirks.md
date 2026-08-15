@@ -4,6 +4,15 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.0.7a1 — intent suppression: no exact-match bypass, word boundaries
+
+`blacklisted_words` suppression now applies to padaos exact template
+matches too: an utterance that perfectly matched a template previously
+scored 1.0 and bypassed the blacklist entirely (only neural candidates were
+filtered). And the word check now matches at word boundaries instead of raw
+substring: "install" suppresses "install firefox" but no longer suppresses
+"what is an installment loan".
+
 ## 2.0.6a1 — slot blacklists match by whole-value equality
 
 An INTENT-2 §4.3 slot blacklist now drops a bound value only when the whole
