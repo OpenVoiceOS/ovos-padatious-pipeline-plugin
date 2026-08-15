@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.6a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.6a1) (2026-08-15)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.5a1...2.0.6a1)
+
+**Merged pull requests:**
+
+- fix: slot blacklists match by whole-value equality [\#106](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/106) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.5a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.5a1) (2026-08-14)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.4a2...2.0.5a1)
