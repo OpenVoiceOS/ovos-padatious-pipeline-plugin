@@ -835,23 +835,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self._fill_context_slots(best, sess)
             return best
 
-    @staticmethod
-    def _word_seq_in(needle: str, haystack: str) -> bool:
-        """True when ``needle`` occurs in ``haystack`` as a whole-word sequence.
-
-        Comparison is case-insensitive and whitespace-collapsed; the needle's
-        tokens must appear as a contiguous run of whole words in the haystack,
-        so ``he`` matches ``he`` but not ``the`` or ``header``.
-        """
-        n = str(needle).lower().split()
-        h = str(haystack).lower().split()
-        if not n or len(n) > len(h):
-            return False
-        for i in range(len(h) - len(n) + 1):
-            if h[i:i + len(n)] == n:
-                return True
-        return False
-
     def _fill_context_slots(self, intent: PadatiousIntent, sess: Session) -> None:
         """OVOS-CONTEXT-1 §7 — uniform context slot fill.
 
@@ -870,10 +853,15 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             return
         matches = dict(intent.matches or {})
 
-        # INTENT-2 §4.3: unresolve blacklisted slot values.
+        # INTENT-2 §4.3: unresolve blacklisted slot values. The blacklist
+        # matches by WHOLE-VALUE equality (normalized): a bare anaphoric
+        # "it" is dropped, but a multi-word value that merely contains a
+        # blacklisted word ("the it crowd", "her majesty") is a legitimate
+        # binding and must survive.
         for slot, values in self._intent_slot_blacklists.get(intent.name, {}).items():
             bound = matches.get(slot)
-            if bound is not None and any(self._word_seq_in(v, bound) for v in values):
+            if bound is not None and any(
+                    v.lower().split() == bound.lower().split() for v in values):
                 LOG.debug(f"Padatious slot '{slot}'='{bound}' blacklisted "
                           f"(INTENT-2 §4.3): treating as unresolved")
                 matches.pop(slot, None)
