@@ -221,6 +221,19 @@ class TestContextSlotFill(TestCase):
         result = self.pipeline.calc_intent("how tall is Theo", "en-US", msg)
         self.assertEqual(result.matches.get("person"), "Theo")
 
+    def test_multiword_value_containing_blacklisted_word_survives(self):
+        """INTENT-2 §4.3 blacklists match by whole-value equality: 'her
+        majesty' and 'the it crowd' are legitimate bindings even though they
+        contain blacklisted pronoun tokens."""
+        self.pipeline.handle_register_template(
+            height_msg(slot_blacklist={"person": ["he", "she", "it", "her"]}))
+        for value in ("her majesty", "the it crowd", "it takes two"):
+            self._stub_match(matches={"person": value})
+            msg = utter_msg({f"{SKILL}:person": {"value": "Alice"}})
+            result = self.pipeline.calc_intent(f"how tall is {value}",
+                                               "en-US", msg)
+            self.assertEqual(result.matches.get("person"), value)
+
     def test_blacklisted_but_no_context_stays_unresolved(self):
         """A blacklisted value with no context candidate is simply dropped."""
         self.pipeline.handle_register_template(

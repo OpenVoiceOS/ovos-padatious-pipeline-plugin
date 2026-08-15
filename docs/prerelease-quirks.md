@@ -4,6 +4,16 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.0.6a1 — slot blacklists match by whole-value equality
+
+An INTENT-2 §4.3 slot blacklist now drops a bound value only when the whole
+captured value equals a blacklisted entry (case-insensitive, whitespace
+collapsed). It previously matched by word-subsequence containment, which
+made every multi-word value containing a blacklisted token unmatchable — a
+pronoun blacklist collaterally blocked real titles like "her majesty",
+"the it crowd" or "it takes two". Bare blacklisted values ("it", "he") are
+dropped exactly as before.
+
 ## 2.0.5a1 — entity training bounded; listed values score exactly 1.0
 
 Entity value sets of any size now train in roughly constant time. The
