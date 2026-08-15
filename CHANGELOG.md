@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.7a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.7a1) (2026-08-15)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.6a1...2.0.7a1)
+
+**Merged pull requests:**
+
+- fix: intent suppression covers exact matches and uses word boundaries [\#108](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/108) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.6a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.6a1) (2026-08-15)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.5a1...2.0.6a1)
