@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.8a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.8a1) (2026-08-31)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.7a1...2.0.8a1)
+
+**Merged pull requests:**
+
+- docs: add AGENTS.md with the conventions for coding agents [\#110](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/110) ([JarbasAl](https://github.com/JarbasAl))
+- fix: tolerate malformed templates during intent registration [\#94](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/94) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.7a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.7a1) (2026-08-15)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.6a1...2.0.7a1)
