@@ -4,6 +4,17 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.0.7a2 — malformed template lines are skipped, not fatal
+
+A single malformed template line in a `.intent`/`.entity` file or a bus
+registration (e.g. a single-branch group like `"cansad(e)"`, which the intent
+template spec rejects) no longer aborts registration of the whole
+intent/entity. The offending line is logged as a warning and contributes no
+training sample; every other line in the same file or registration still
+trains normally. If every line in an intent/entity turns out malformed, the
+intent/entity is refused outright (an ERROR is logged naming it) instead of
+being registered empty and silently unmatchable.
+
 ## 2.0.7a1 — intent suppression: no exact-match bypass, word boundaries
 
 `blacklisted_words` suppression now applies to padaos exact template

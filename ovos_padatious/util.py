@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from ovos_utils import flatten_list
+from ovos_utils.log import LOG
 from ovos_spec_tools import expand as expand_template
+from ovos_spec_tools.expansion import MalformedTemplate
 
 from xxhash import xxh32
 from ovos_padatious.bracket_expansion import SentenceTreeParser
@@ -130,8 +132,41 @@ def expand_parentheses(sent):
     return SentenceTreeParser(sent).expand_parentheses()
 
 
+def expand_or_skip(line, context=""):
+    """Expand *line* via ``expand_template``, skipping it on failure.
+
+    ``expand_template`` is deliberately strict per the intent template spec
+    (e.g. it rejects single-branch groups like ``"cansad(e)"`` as
+    :class:`MalformedTemplate`). That strictness is spec-side and must not be
+    relaxed here. A single malformed line must not abort expansion of the
+    remaining training lines, so on :class:`MalformedTemplate` we log a
+    warning and contribute no samples for that line.
+
+    Shared by every ``expand_template`` call site in this plugin (the
+    file-based training path here in ``util.py`` and the messagebus
+    registration path in ``opm.py``) so the tolerance behavior is defined
+    exactly once.
+
+    Args:
+        line: Already-normalised training/sample line to expand.
+        context: Optional human-readable identifier (e.g. ``"intent 'foo'"``)
+            used in the warning log to name the offending registration.
+
+    Returns:
+        List of expanded variants, or ``[]`` if expansion failed.
+    """
+    try:
+        return list(expand_template(line))
+    except MalformedTemplate as e:
+        LOG.warning(
+            "malformed template%s: %r (%s) - skipping line",
+            f" in {context}" if context else "", line, e,
+        )
+        return []
+
+
 def expand_lines(lines):
-    lines = [expand_template(i) for i in remove_comments(lines) if i.strip()]
+    lines = [expand_or_skip(i) for i in remove_comments(lines) if i.strip()]
     return flatten_list(lines)
 
 

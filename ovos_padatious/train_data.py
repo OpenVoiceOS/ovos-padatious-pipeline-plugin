@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from ovos_utils.log import LOG
+
 from ovos_padatious.util import tokenize, expand_lines
 
 
@@ -33,7 +35,19 @@ class TrainData:
 
     def add_lines(self, name, lines):
         lines = expand_lines(lines)
-        self.sent_lists[name] = [tokenize(line) for line in lines if line.strip()]
+        sents = [tokenize(line) for line in lines if line.strip()]
+        if not sents:
+            # every line was malformed and skipped by expand_lines: adding
+            # an empty entry would register a dead intent/entity that can
+            # never match (conf 0.0 forever) instead of surfacing the
+            # problem, so refuse it outright and drop any stale entry.
+            LOG.error(
+                "%r has no valid samples after skipping malformed template "
+                "lines - not registering", name,
+            )
+            self.remove_lines(name)
+            return
+        self.sent_lists[name] = sents
 
     def remove_lines(self, name):
         if name in self.sent_lists:
