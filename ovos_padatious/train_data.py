@@ -14,7 +14,7 @@
 
 from ovos_utils.log import LOG
 
-from ovos_padatious.util import tokenize, expand_lines
+from ovos_padatious.util import tokenize, expand_lines, warn_hash_wildcard
 
 
 class TrainData:
@@ -34,6 +34,7 @@ class TrainData:
         return data
 
     def add_lines(self, name, lines):
+        warn_hash_wildcard(name, lines)
         lines = expand_lines(lines)
         sents = [tokenize(line) for line in lines if line.strip()]
         if not sents:
