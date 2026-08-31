@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.10a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.10a1) (2026-08-31)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.9a1...2.0.10a1)
+
+**Merged pull requests:**
+
+- fix: bound padaos entity alternations and train off the utterance thread [\#115](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/115) ([JarbasAl](https://github.com/JarbasAl))
+
+## [2.0.9a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.9a1) (2026-08-31)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.8a2...2.0.9a1)
+
 ## [2.0.8a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.8a2) (2026-08-31)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.8a1...2.0.8a2)
