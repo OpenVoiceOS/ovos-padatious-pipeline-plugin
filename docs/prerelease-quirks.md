@@ -4,6 +4,22 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.0.8a2 — inline '#' digit wildcard deprecated
+
+The inline `#` digit wildcard in `.intent`/`.entity` template lines (e.g.
+`count to #`) is deprecated: registering an intent or entity with an
+unescaped `#` in a line now logs a one-time deprecation warning naming the
+intent/entity and the offending line. `#` is a padatious-only extension
+(`ovos_padatious.padaos` compiles it to a digit-class regex, and the neural
+net side canonicalizes literal digits to `#` internally) that no other OVOS
+intent engine understands, collides with the `#`-as-comment-marker
+convention used elsewhere, and assumes the matched entity is spoken/ASR'd
+as a literal digit string. Migrate to a `{slot}` placeholder with
+skill-side number parsing instead. Matching behavior is unchanged this
+cycle - `#` still matches digits exactly as before - and escaping it
+(`\#`) or using it only as a leading comment marker does not warn. Removal
+is planned for the next major version.
+
 ## 2.0.7a2 — malformed template lines are skipped, not fatal
 
 A single malformed template line in a `.intent`/`.entity` file or a bus

@@ -13,12 +13,15 @@
 # limitations under the License.
 
 from ovos_utils import flatten_list
-from ovos_utils.log import LOG
+from ovos_utils.log import LOG, log_deprecation
 from ovos_spec_tools import expand as expand_template
 from ovos_spec_tools.expansion import MalformedTemplate
 
 from xxhash import xxh32
 from ovos_padatious.bracket_expansion import SentenceTreeParser
+from ovos_padatious.version import VERSION_MAJOR
+
+_HASH_WILDCARD_REMOVAL = f"{VERSION_MAJOR + 1}.0.0"
 
 
 def lines_hash(lines):
@@ -173,6 +176,47 @@ def expand_lines(lines):
 def remove_comments(lines):
     # NOTE: padatious considers comments as // but all of mycroft/OVOS uses #
     return [i for i in lines if not i.startswith('//')]
+
+
+def warn_hash_wildcard(name, lines):
+    """Deprecation warning for the inline '#' digit wildcard.
+
+    ``#`` in a template line is a padatious-only extension: ``padaos``
+    compiles it to a digit-class regex (``ovos_padatious.padaos``) and
+    ``id_manager``/this module canonicalize literal digits to ``#`` for the
+    neural net. No other OVOS intent engine understands it, it collides with
+    the ``#``-as-comment-marker convention used elsewhere in the ecosystem,
+    and it assumes the entity is spoken/ASR'd as a literal digit string. The
+    portable replacement is a ``{slot}`` placeholder with skill-side number
+    parsing.
+
+    Behavior is unchanged this cycle - ``#`` still matches digits exactly as
+    before. Warns at most once per call (ie. once per intent/entity
+    registration).
+
+    Args:
+        name: Intent/entity name, used to identify the offender in the log.
+        lines: Raw, not-yet-expanded template lines as registered.
+    """
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith('//') or stripped.startswith('#'):
+            continue
+        i = 0
+        while i < len(stripped):
+            c = stripped[i]
+            if c == '\\':
+                i += 2
+                continue
+            if c == '#':
+                log_deprecation(
+                    f"the inline '#' digit wildcard in {name!r} "
+                    f"(line: {line!r}) is deprecated, use a `{{slot}}` "
+                    "placeholder with skill-side number parsing instead",
+                    _HASH_WILDCARD_REMOVAL,
+                )
+                return
+            i += 1
 
 
 def resolve_conflicts(inputs, outputs):
