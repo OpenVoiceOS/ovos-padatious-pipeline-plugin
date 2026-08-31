@@ -4,6 +4,27 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.0.9a2 — bounded padaos entity alternations, training off the query thread
+
+`padaos` (the exact-template matcher) no longer inlines the full value list
+of a large entity into every intent line that references it. Entities with
+more than 64 values fall back to the same wildcard capture already used for
+a `{slot}` with no registered entity at all; exact in-list scoring for
+those values is still guaranteed end-to-end through the neural tier's
+`Entity.samples` exact-match path, so a listed value still scores 1.0
+overall, it just no longer gets padaos's own instant exact match. Without
+this cap, an auto-registered entity with a couple thousand multi-word
+values (ovos-workshop can emit exactly that), referenced from a few dozen
+intent lines, produced megabyte regex sources that took minutes to compile.
+
+Training triggered by a query (`calc_intent`/`calc_intents`) now runs on a
+background worker instead of the calling thread, except for the very first
+training pass on a fresh container, which still blocks since there is no
+previously trained state to answer from. A query issued while a retrain is
+in flight is answered from the last trained state instead of paying for the
+retrain inline. Compiling `padaos`'s regexes now logs a warning naming the
+largest entity when it takes longer than a second.
+
 ## 2.0.8a2 — inline '#' digit wildcard deprecated
 
 The inline `#` digit wildcard in `.intent`/`.entity` template lines (e.g.

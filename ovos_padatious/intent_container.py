@@ -14,6 +14,7 @@
 import inspect
 import re
 import os
+import threading
 from functools import wraps
 from typing import List, Dict, Any, Optional
 
@@ -72,10 +73,35 @@ class IntentContainer:
         self.train_thread: Optional[Any] = None  # deprecated
         self.serialized_args: List[Dict[str, Any]] = []  # Serialized calls for training intents/entities
         self.blacklisted_words: Dict[str, List[str]] = collections.defaultdict(list)
+        # training must never block the query/utterance thread: a
+        # registration burst followed immediately by an utterance would
+        # otherwise pay the full compile+train cost inline (see train()).
+        # A single background worker retrains while queries keep answering
+        # against the previously trained state. ``_train_generation`` is a
+        # lost-update guard: it is bumped on every registration that dirties
+        # the container, and a training pass only clears ``must_train`` if
+        # the generation is still the one it started with - otherwise a
+        # registration landed mid-train and the worker loops immediately
+        # instead of clobbering that registration's dirty flag.
+        self._train_lock = threading.Lock()
+        self._spawn_lock = threading.Lock()
+        self._background_trainer: Optional[threading.Thread] = None
+        self._ever_trained = False
+        self._train_generation = 0
 
     @property
     def intent_names(self):
         return self.intents.intent_names
+
+    def _set_must_train(self, value: bool) -> None:
+        """
+        Sets the dirty flag, bumping ``_train_generation`` whenever it is
+        set True so an in-flight background train can detect that a fresh
+        registration arrived after its snapshot was taken.
+        """
+        if value:
+            self._train_generation += 1
+        self.must_train = value
 
     def clear(self) -> None:
         """
@@ -90,6 +116,9 @@ class IntentContainer:
         else:
             self.padaos: padaos.IntentContainer = padaos.IntentContainer()
         self.serialized_args = []
+        self._ever_trained = False
+        self._background_trainer = None
+        self._train_generation = 0
 
     def instantiate_from_disk(self) -> None:
         """
@@ -152,7 +181,7 @@ class IntentContainer:
         self.intents.add(name, lines, reload_cache, must_train)
         if self.padaos is not None:
             self.padaos.add_intent(name, lines)
-        self.must_train = must_train
+        self._set_must_train(must_train)
 
     @_save_args
     def add_entity(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> None:
@@ -177,7 +206,7 @@ class IntentContainer:
             must_train)
         if self.padaos is not None:
             self.padaos.add_entity(name, lines)
-        self.must_train = must_train
+        self._set_must_train(must_train)
 
     @_save_args
     def load_entity(self, name: str, file_name: str, reload_cache: bool = False, must_train: bool = True) -> None:
@@ -195,7 +224,7 @@ class IntentContainer:
         if self.padaos is not None:
             with open(file_name) as f:
                 self.padaos.add_entity(name, f.read().split('\n'))
-        self.must_train = must_train
+        self._set_must_train(must_train)
 
     @_save_args
     def load_file(self, *args, **kwargs):
@@ -217,7 +246,7 @@ class IntentContainer:
         if self.padaos is not None:
             with open(file_name) as f:
                 self.padaos.add_intent(name, f.read().split('\n'))
-        self.must_train = must_train
+        self._set_must_train(must_train)
 
     @_save_args
     def remove_intent(self, name: str) -> None:
@@ -230,7 +259,7 @@ class IntentContainer:
         self.intents.remove(name)
         if self.padaos is not None:
             self.padaos.remove_intent(name)
-        self.must_train = True
+        self._set_must_train(True)
 
     @_save_args
     def remove_entity(self, name: str) -> None:
@@ -266,17 +295,63 @@ class IntentContainer:
         if not self.must_train and not force:
             return True
 
-        if self.padaos is not None:
-            self.padaos.compile()
+        with self._train_lock:
+            # re-check under the lock: another thread (the background
+            # worker, or a concurrent forced caller) may have just trained
+            if not self.must_train and not force:
+                return True
 
-        # Train intents and entities
-        self.intents.train(debug=debug)
-        self.entities.train(debug=debug)
+            # snapshot the generation before doing any work; if a
+            # registration bumps it before we finish, that registration's
+            # objects were not necessarily part of this pass, so we must
+            # not claim the container is clean when we're done
+            start_gen = self._train_generation
 
-        self.entities.calc_ent_dict()
+            if self.padaos is not None:
+                self.padaos.compile()
 
-        self.must_train = False
+            # Train intents and entities
+            self.intents.train(debug=debug)
+            self.entities.train(debug=debug)
+
+            self.entities.calc_ent_dict()
+
+            if self._train_generation == start_gen:
+                self.must_train = False
+            self._ever_trained = True
         return True
+
+    def _train_in_background(self) -> None:
+        """
+        Ensures training happens off the calling (query/utterance) thread.
+
+        The very first training pass still blocks its caller since there is
+        no previously trained state to answer queries with; every
+        subsequent retrain is handed to a single background worker while
+        queries keep being served against the last trained state. The
+        worker loops internally (instead of piling up threads) whenever a
+        registration lands after its train() pass already started, so a
+        registration can never be silently stranded by a train() call that
+        began before it arrived.
+        """
+        if not self.must_train:
+            return
+        if not self._ever_trained:
+            self.train()
+            return
+        with self._spawn_lock:
+            if self._background_trainer is not None and self._background_trainer.is_alive():
+                return
+            self._background_trainer = threading.Thread(
+                target=self._background_train_loop, daemon=True
+            )
+            self._background_trainer.start()
+
+    def _background_train_loop(self) -> None:
+        # a single worker keeps retraining until a pass completes without
+        # must_train being re-armed by a registration that arrived mid-pass
+        while self.must_train:
+            self.train()
 
     def calc_intents(self, query: str) -> List[MatchData]:
         """
@@ -289,8 +364,7 @@ class IntentContainer:
         Returns:
             List[MatchData]: A list of all intent matches with confidence scores.
         """
-        if self.must_train:
-            self.train()
+        self._train_in_background()
 
         def suppressed(intent_name: str) -> bool:
             # blacklisted words match at word boundaries: "install" suppresses
@@ -312,8 +386,32 @@ class IntentContainer:
                 name = perfect_match['name']
                 if suppressed(name):
                     continue
+                if not self._padaos_entities_verified(name, perfect_match['entities']):
+                    # a slot backed by an over-cap entity matched through
+                    # the unverified wildcard fallback (see
+                    # padaos.PADAOS_ENTITY_INLINE_CAP); padaos conf=1.0
+                    # would grant in-list exactness never actually checked,
+                    # so let the neural tier's own scoring stand instead
+                    continue
                 intents[name] = MatchData(name, sent, matches=perfect_match['entities'], conf=1.0)
         return list(intents.values())
+
+    def _padaos_entities_verified(self, intent_name: str, matched_entities: Dict[str, str]) -> bool:
+        """
+        True unless a matched slot is backed by an entity padaos skipped
+        inlining (too many values); those slots match via a generic
+        wildcard and must be independently confirmed against the entity's
+        known values before their padaos conf=1.0 can be trusted.
+        """
+        namespace = intent_name.split(':')[0] + ':'
+        for ent_name, value in matched_entities.items():
+            if ent_name not in self.padaos.capped_entities and \
+                    (namespace + ent_name) not in self.padaos.capped_entities:
+                continue
+            entity = self.entities.find(intent_name, '{' + ent_name + '}')
+            if entity is None or entity.match(tokenize(value)) != 1.0:
+                return False
+        return True
 
     def calc_intent(self, query: str) -> MatchData:
         """

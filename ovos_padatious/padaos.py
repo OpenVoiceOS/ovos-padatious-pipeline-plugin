@@ -1,6 +1,25 @@
 import re
+import time
 from threading import Lock
 from ovos_utils.log import LOG
+
+#: Upper bound on the number of values inlined into a padaos entity
+#: alternation. padaos builds one ``(a|b|c|...)`` regex per entity and
+#: substitutes it verbatim into EVERY intent line that references the
+#: slot, so the cost is O(values * referencing_lines): an auto-registered
+#: entity with a couple thousand multi-word values (ovos-workshop can emit
+#: exactly that), referenced from a few dozen intent lines, produces
+#: megabyte regex sources whose compilation runs for minutes. Past the
+#: cap the slot falls back to the same wildcard capture padaos already
+#: uses for a ``{slot}`` with no registered entity at all; exact in-list
+#: matching for large entities is still guaranteed end-to-end via the
+#: neural tier's ``Entity.samples`` exact-match path, so nothing is lost
+#: for listed values, only the padaos fast-path for out-of-cap entities.
+PADAOS_ENTITY_INLINE_CAP = 64
+
+#: Compiling a single intent line slower than this is a sign an inlined
+#: entity is too large; logged as a warning naming the offender.
+SLOW_COMPILE_WARN_SECONDS = 1.0
 
 
 class IntentContainer:
@@ -10,6 +29,11 @@ class IntentContainer:
         self.must_compile = True
         self.i = 0
         self.compile_lock = Lock()
+        #: entity names skipped from inlining on the last compile because
+        #: they exceeded PADAOS_ENTITY_INLINE_CAP; their slots fall back to
+        #: an unverified wildcard capture, so callers must not treat a
+        #: match against one of these slots as a verified in-list value.
+        self.capped_entities = set()
 
     def add_intent(self, name, lines):
         with self.compile_lock:
@@ -119,17 +143,33 @@ class IntentContainer:
             self._compile()
 
     def _compile(self):
-        self.entities = {
-            ent_name: r'({})'.format('|'.join(
-                self._create_pattern(line) for line in lines if line.strip()
+        start = time.monotonic()
+        largest_entity, largest_size = None, 0
+        self.entities = {}
+        self.capped_entities = set()
+        for ent_name, lines in self.entity_lines.items():
+            values = [line for line in lines if line.strip()]
+            if len(values) > largest_size:
+                largest_entity, largest_size = ent_name, len(values)
+            if len(values) > PADAOS_ENTITY_INLINE_CAP:
+                self.capped_entities.add(ent_name)
+                # too many values to inline: skip so referencing slots fall
+                # back to the plain wildcard capture (see PADAOS_ENTITY_INLINE_CAP)
+                continue
+            self.entities[ent_name] = r'({})'.format('|'.join(
+                self._create_pattern(line) for line in values
             ))
-            for ent_name, lines in self.entity_lines.items()
-        }
         self.intents = {
             intent_name: self.create_regexes(lines, intent_name)
             for intent_name, lines in self.intent_lines.items()
         }
         self.must_compile = False
+        duration = time.monotonic() - start
+        if duration > SLOW_COMPILE_WARN_SECONDS:
+            LOG.warning(
+                f"padaos compile took {duration:.2f}s; largest entity "
+                f"'{largest_entity}' has {largest_size} values"
+            )
 
     def _calc_entities(self, query, regexes):
         for regex in regexes:
