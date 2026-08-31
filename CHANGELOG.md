@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.8a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.8a2) (2026-08-31)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.8a1...2.0.8a2)
+
+**Merged pull requests:**
+
+- fix: deprecate the inline \# digit wildcard in templates [\#111](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/111) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.8a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.8a1) (2026-08-31)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.7a1...2.0.8a1)
