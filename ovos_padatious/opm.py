@@ -18,7 +18,7 @@ import string
 from collections import defaultdict
 from functools import lru_cache
 from os.path import expanduser, isfile
-from threading import Event, RLock
+from threading import Event, RLock, Thread
 from typing import Optional, Dict, List, Union, Type
 
 import snowballstemmer
@@ -192,6 +192,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         except Exception:
             pass # happens in unittests and such
         self.lock = RLock()
+        self._train_spawn_lock = RLock()
+        self._background_trainer: Optional[Thread] = None
         core_config = Configuration()
         self.lang = standardize_lang(core_config.get("lang", "en-US"))
         langs = core_config.get('secondary_langs') or []
@@ -366,9 +368,42 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     def train(self, message=None):
         """Perform padatious training.
 
+        The very first training pass still runs on the calling thread since
+        there is no previously trained state to answer queries with while it
+        runs. Every subsequent call is triggered from a bus message handler
+        (``register_intent`` et al) whose calling thread is the same thread
+        that pumps incoming bus messages (see ``MessageBusClient.on_message``,
+        which dispatches to handlers synchronously) - blocking here for the
+        full compile+train duration therefore also blocks every other bus
+        message (including the ``intent.service.padatious.*`` getters) from
+        even being processed until training finishes. So, except for
+        ``instant_train`` mode (which explicitly promises the model reflects
+        a registration by the time the call returns) and the first pass,
+        training is handed to a single background worker and this call
+        returns immediately; queries keep being served against the last
+        trained state in the meantime (mirrors
+        ``IntentContainer._train_in_background``).
+
         Args:
             message (Message): optional triggering message
         """
+        if not any(engine.must_train for engine in self.containers.values()):
+            self.bus.emit(Message('mycroft.skills.trained'))
+            return
+
+        if self.config.get("instant_train", False) or not self.first_train.is_set():
+            self._train_sync()
+            return
+
+        with self._train_spawn_lock:
+            if self._background_trainer is not None and self._background_trainer.is_alive():
+                return
+            self._background_trainer = Thread(target=self._train_sync, daemon=True)
+            self._background_trainer.start()
+
+    def _train_sync(self) -> None:
+        """Blocking training pass; only ever call this off the bus thread
+        once ``first_train`` is set (see ``train``)."""
         # wait for any already ongoing training
         # padatious doesnt like threads
         if not self.finished_training_event.is_set():

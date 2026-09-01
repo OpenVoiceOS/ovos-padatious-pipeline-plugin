@@ -166,10 +166,25 @@ class IntentContainer:
         self.must_compile = False
         duration = time.monotonic() - start
         if duration > SLOW_COMPILE_WARN_SECONDS:
-            LOG.warning(
-                f"padaos compile took {duration:.2f}s; largest entity "
-                f"'{largest_entity}' has {largest_size} values"
-            )
+            if largest_entity is None:
+                LOG.warning(f"padaos compile took {duration:.2f}s; "
+                            f"no entities registered")
+            else:
+                # this reports the FULL container compile (every entity and
+                # intent line), not the cost of the named entity alone: an
+                # entity past PADAOS_ENTITY_INLINE_CAP is skipped from
+                # inlining (cheap regardless of its value count), so a slow
+                # compile with a capped "largest entity" means the time is
+                # coming from the sheer number of other entities/intents in
+                # the container, not from this one
+                capped = largest_entity in self.capped_entities
+                LOG.warning(
+                    f"padaos compile took {duration:.2f}s for the full "
+                    f"container ({len(self.entity_lines)} entities, "
+                    f"{len(self.intent_lines)} intents); largest entity "
+                    f"'{largest_entity}' has {largest_size} values"
+                    f"{' (capped, not inlined)' if capped else ''}"
+                )
 
     def _calc_entities(self, query, regexes):
         for regex in regexes:

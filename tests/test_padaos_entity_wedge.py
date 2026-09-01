@@ -28,6 +28,7 @@ import threading
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 from ovos_padatious import padaos, IntentContainer
 import ovos_padatious.training_manager as training_manager
@@ -139,6 +140,61 @@ class TestPadaosCompileTimeScalesDown(unittest.TestCase):
         # unbounded, this configuration takes >30s (verified against dev);
         # capped, it should complete in a couple of seconds.
         self.assertLess(duration, 5.0)
+
+
+class TestSlowCompileWarning(unittest.TestCase):
+    """The slow-compile WARN must not misattribute a container-wide cost to
+    a single (already-capped) entity, and must not crash on an empty
+    container (the ``largest_entity is None`` case)."""
+
+    def test_empty_container_warn_guards_none_entity(self):
+        # the very first compile of a container with no entities/intents
+        # at all must not try to format None as if it were a real name in
+        # a way that reads as a real (broken) entity
+        c = padaos.IntentContainer()
+        with unittest.mock.patch("ovos_padatious.padaos.time.monotonic",
+                                 side_effect=[0.0, 2.0]), \
+                unittest.mock.patch("ovos_padatious.padaos.LOG") as mock_log:
+            c.compile()
+        self.assertTrue(mock_log.warning.called)
+        msg = mock_log.warning.call_args[0][0]
+        self.assertNotIn("'None'", msg)
+
+    def test_capped_entity_compile_is_sub_second_at_ser9_scale(self):
+        # ser9 field report: a 1025-value entity ('largest entity ... has
+        # 1025 values') referenced from a container that took 77.30s to
+        # compile. 1025 > PADAOS_ENTITY_INLINE_CAP (64), so this entity
+        # must be skipped from inlining and cost effectively nothing on
+        # its own; a slow compile at this entity's scale must come from
+        # elsewhere in the container, not from this entity.
+        values = [f"pokemon number {i:05d}" for i in range(1025)]
+        c = padaos.IntentContainer()
+        c.add_entity("pokemon_a", values)
+        c.add_intent("catch", ["catch a {pokemon_a}"])
+
+        start = time.monotonic()
+        c.compile()
+        duration = time.monotonic() - start
+
+        self.assertIn("pokemon_a", c.capped_entities)
+        self.assertLess(duration, 1.0,
+                         "a capped 1025-value entity alone must compile in "
+                         "well under a second")
+
+    def test_warn_names_container_wide_cost_not_the_capped_entity(self):
+        # a slow compile with a *capped* largest entity must say so, so a
+        # reader does not chase the named entity as the culprit when the
+        # cap already made it cheap
+        c = padaos.IntentContainer()
+        c.add_entity("pokemon_a", [f"v{i}" for i in range(1025)])
+        c.add_intent("catch", ["catch a {pokemon_a}"])
+        with unittest.mock.patch("ovos_padatious.padaos.time.monotonic",
+                                 side_effect=[0.0, 5.0]), \
+                unittest.mock.patch("ovos_padatious.padaos.LOG") as mock_log:
+            c.compile()
+        msg = mock_log.warning.call_args[0][0]
+        self.assertIn("full container", msg)
+        self.assertIn("capped", msg)
 
 
 class TestTrainingOffUtteranceThread(unittest.TestCase):
