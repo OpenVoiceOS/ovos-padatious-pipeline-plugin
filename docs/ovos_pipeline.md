@@ -99,7 +99,12 @@ that call for the full compile+train duration.
 
 Outside `instant_train`, the `intent.service.padatious.get` getter and
 every other match-path entry point NEVER wait for a compile - they answer
-immediately from whatever state already exists:
+immediately from whatever state already exists. This holds while a compile
+is actually in flight, not just between passes: the background pass builds
+its regexes against a private snapshot and takes the padaos lock only to
+snapshot and to publish, so neither a query nor a registration arriving mid-pass
+- both delivered on the same bus thread - waits for it. What a match sees
+in that window is the following:
 
 - Before a container has EVER compiled, the padaos exact-match layer has
   nothing to contribute and answers no match at all, but the neural tier
