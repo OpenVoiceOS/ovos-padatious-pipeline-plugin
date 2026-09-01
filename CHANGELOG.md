@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.14a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.14a1) (2026-09-01)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.13a1...2.0.14a1)
+
+**Merged pull requests:**
+
+- fix: padaos compiles in the background, never on the match path [\#124](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/124) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.13a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.13a1) (2026-09-01)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.12a1...2.0.13a1)
