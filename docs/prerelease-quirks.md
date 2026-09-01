@@ -4,6 +4,33 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.0.12a1 — literal intent-line alternation groups are now bounded too
+
+A literal `(a|b|c|...)` alternation typed directly into an intent line
+(rather than referencing a registered entity) went through padaos'
+regex-rewrite pipeline with no bound at all: the 64-branch cap added in
+2.0.9a2 only guarded entity inlining. A generated or pathological line
+with hundreds or thousands of branches, especially repeated across many
+lines of the same intent, could reproduce the same compile blowup the
+entity cap fixed - the expensive part is the rewrite pipeline itself, not
+just the final `re.compile`, so the group is now capped on the raw line
+before that pipeline runs. Groups at or under 64 branches (the common
+case for a hand-written or migrated `.intent` file) are unaffected and
+compile identically to before.
+
+A group over the cap is dropped from padaos entirely for that one line,
+the same way a malformed line already is: padaos keeps compiling this
+intent's other lines, and the neural tier still trains on this line's
+own expanded samples independently. An earlier revision instead degraded
+the over-cap group to the same wildcard capture used for an over-cap
+entity; that is unsafe here specifically because, unlike a capped entity
+slot (whose match can still be checked against that entity's own sample
+list), a literal line group has no registered entity behind it to verify
+against, so the wildcard made the whole line match almost any utterance
+sharing its surrounding words. Padatious' own e2e suite caught exactly
+that: an unrelated utterance falsely matched an intent whose only line
+held an over-cap group.
+
 ## 2.0.11a1 — background training moved off the bus-message thread
 
 `PadatiousPipeline.train()`, the entry point `register_intent`/`register_entity`
