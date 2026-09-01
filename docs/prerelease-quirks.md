@@ -4,6 +4,32 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.0.11a1 — background training moved off the bus-message thread
+
+`PadatiousPipeline.train()`, the entry point `register_intent`/`register_entity`
+and friends actually call from a bus message handler, used to retrain
+synchronously on every call once the container had trained once before.
+`MessageBusClient.on_message` dispatches every incoming bus message to its
+handlers synchronously on the connection's single receive thread, so a slow
+retrain (a large registration burst, or an oversized entity — see 2.0.9a2)
+blocked that thread for the full compile+train duration: every other message
+on the same connection, including a later skill's own registration and the
+`intent.service.padatious.manifest.get` / `intent.service.padatious.get`
+getters other services poll with a bounded timeout, queued behind it and
+could time out. Retraining after the first pass now runs on a single
+background worker, mirroring the query-triggered background training added
+in 2.0.9a2; `instant_train` mode is unaffected and still retrains
+synchronously on every registration, as it always has.
+
+The padaos slow-compile warning now reports that its measured duration
+covers the whole container (every entity and intent line), not just the
+named "largest entity" — a large entity past the inline cap (2.0.9a2) is
+skipped from inlining and therefore cheap on its own, so a slow compile with
+a capped entity named as "largest" was actually coming from elsewhere in the
+container; the warning says so instead of pointing at the capped entity. The
+warning also no longer misfires with a literal `'None'` entity name on a
+container with no entities registered at all.
+
 ## 2.0.9a2 — bounded padaos entity alternations, training off the query thread
 
 `padaos` (the exact-template matcher) no longer inlines the full value list
