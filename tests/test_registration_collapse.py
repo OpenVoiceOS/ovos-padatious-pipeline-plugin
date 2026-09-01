@@ -86,6 +86,9 @@ class TestSessionBlacklistCanonicalization(unittest.TestCase):
         self.pipeline.register_intent(legacy_register_msg())
         self.pipeline.handle_register_template(spec_register_msg())
         self.pipeline.train()
+        # train() never trains on the calling thread, including the very
+        # first pass; join the background worker deterministically.
+        self.pipeline.wait_until_trained(timeout=30)
 
     def test_legacy_named_blacklist_entry_suppresses_canonical_match(self):
         sess = mock.Mock()

@@ -93,10 +93,36 @@ class IntentContainer:
         # background worker to debounce a burst of registrations into one
         # retrain (see _wait_for_quiet).
         self._last_dirty_at = 0.0
+        # Bumped every time a real compile pass actually runs (see train()).
+        # opm.py's _calc_padatious_intent lru_cache includes this in its key
+        # so a query answered "no match" before this container ever
+        # compiled - training triggered from calc_intents' own
+        # _train_in_background, which opm.py's cache-clearing _train_sync
+        # never sees - is not served that stale cached miss forever after
+        # the pass lands.
+        self.compiled_generation = 0
 
     @property
     def intent_names(self):
         return self.intents.intent_names
+
+    @property
+    def needs_compile(self) -> bool:
+        """
+        True if either the hash-cache-aware retrain is pending
+        (``must_train``) or padaos itself is dirty from a registration that
+        never set ``must_train`` (see add_intent/add_entity: a no-op replay
+        of an already-cached intent/entity is never allowed to dirty or
+        clear ``must_train``, but ``padaos.add_intent``/``add_entity`` have
+        no cache-aware skip of their own and always mark the regex
+        container dirty). Callers that gate background/foreground training
+        solely on ``must_train`` (as the ser9 field trace showed opm.py's
+        ``train()`` doing) leave ``padaos.must_compile`` stuck True after a
+        boot that replays only cache hits, with nothing left to clear it
+        until the first live query forces a synchronous compile on the bus
+        thread.
+        """
+        return self.must_train or (self.padaos is not None and self.padaos.must_compile)
 
     def _set_must_train(self, value: bool) -> None:
         """
@@ -194,6 +220,13 @@ class IntentContainer:
         # pending training need this call knows nothing about.
         if changed:
             self._set_must_train(True)
+        elif self.padaos is not None:
+            # padaos.add_intent above always marks padaos dirty regardless
+            # of the cache hit (it has no hash-aware skip of its own), so
+            # the debounce window (_wait_for_quiet) still needs to see this
+            # as activity, or a burst of pure no-op replays never settles
+            # and padaos.must_compile is left stuck until a live query.
+            self._last_dirty_at = time.monotonic()
 
     @_save_args
     def add_entity(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> None:
@@ -221,6 +254,8 @@ class IntentContainer:
         # see add_intent: never dirty (and never clear) on a no-op replay
         if changed:
             self._set_must_train(True)
+        elif self.padaos is not None:
+            self._last_dirty_at = time.monotonic()
 
     @_save_args
     def load_entity(self, name: str, file_name: str, reload_cache: bool = False, must_train: bool = True) -> None:
@@ -311,13 +346,13 @@ class IntentContainer:
         # was an unchanged cache hit and never dirtied ``must_train`` - a
         # fresh container whose cache is 100% up to date still needs its
         # lookup structures populated once before it can answer anything.
-        if not self.must_train and not force and self._ever_trained:
+        if not self.needs_compile and not force and self._ever_trained:
             return True
 
         with self._train_lock:
             # re-check under the lock: another thread (the background
             # worker, or a concurrent forced caller) may have just trained
-            if not self.must_train and not force and self._ever_trained:
+            if not self.needs_compile and not force and self._ever_trained:
                 return True
 
             # snapshot the generation before doing any work; if a
@@ -338,25 +373,33 @@ class IntentContainer:
             if self._train_generation == start_gen:
                 self.must_train = False
             self._ever_trained = True
+            self.compiled_generation += 1
         return True
 
     def _train_in_background(self) -> None:
         """
-        Ensures training happens off the calling (query/utterance) thread.
+        Ensures training NEVER happens on the calling (query/utterance)
+        thread, including the very first pass.
 
-        The very first training pass still blocks its caller since there is
-        no previously trained state to answer queries with; every
-        subsequent retrain is handed to a single background worker while
-        queries keep being served against the last trained state. The
-        worker loops internally (instead of piling up threads) whenever a
-        registration lands after its train() pass already started, so a
-        registration can never be silently stranded by a train() call that
-        began before it arrived.
+        A container that has never trained - even one that is 100% hash
+        cache hits and would compile trivially fast - still has zero
+        previously-trained state to answer with; queries against it are
+        served empty (no match) until the background worker's first pass
+        actually swaps in compiled state, exactly like every other "serve
+        the stale/empty generation while a pass is in flight" rule in this
+        file. Round-8 field trace: a boot whose registrations were all
+        hash-cache hits never called ``train()`` through any of opm.py's
+        own gates (nothing ever dirtied ``must_train``), so the very first
+        live query reached here with ``_ever_trained`` False and used to
+        call ``self.train()`` synchronously - paying the full padaos
+        compile on the bus thread, the same defect this file already fixed
+        one call frame lower (padaos.calc_intents). The worker loops
+        internally (instead of piling up threads) whenever a registration
+        lands after its train() pass already started, so a registration
+        can never be silently stranded by a train() call that began before
+        it arrived.
         """
-        if not self.must_train:
-            return
-        if not self._ever_trained:
-            self.train()
+        if not self.needs_compile:
             return
         with self._spawn_lock:
             if self._background_trainer is not None and self._background_trainer.is_alive():
@@ -394,7 +437,7 @@ class IntentContainer:
     def _background_train_loop(self) -> None:
         # a single worker keeps retraining until a pass completes without
         # must_train being re-armed by a registration that arrived mid-pass
-        while self.must_train:
+        while self.needs_compile:
             self._wait_for_quiet()
             self.train()
 

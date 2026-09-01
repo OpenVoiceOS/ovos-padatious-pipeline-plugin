@@ -40,6 +40,8 @@ container.remove_intent('goodbye')
 
 Inside OVOS, the plugin is discovered automatically through its `opm.pipeline` entry point. See [docs/](docs/README.md) for installation details, the intent file syntax, the full Python API, pipeline configuration, and the matching algorithm.
 
+Inside OVOS, training and compiling always run on a background worker, never on the thread that registered or queried something (including the very first pass); a test or tool that registers an intent and needs to query it right away should call `PadatiousPipeline.wait_until_trained()` (see [docs/ovos_pipeline.md](docs/ovos_pipeline.md#training-is-asynchronous)) rather than polling or sleeping.
+
 ## Related projects
 
 - [OpenVoiceOS/ovos-spec-tools](https://github.com/OpenVoiceOS/ovos-spec-tools): the reference implementation of the OVOS architecture specifications, used here for sentence-template expansion and language tag handling.

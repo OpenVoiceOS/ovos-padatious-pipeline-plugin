@@ -15,6 +15,7 @@
 """Intent service wrapping padatious."""
 import re
 import string
+import time
 from collections import defaultdict
 from functools import lru_cache
 from os.path import expanduser, isfile
@@ -242,6 +243,15 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.finished_training_event = Event()
         self.finished_training_event.set()  # is cleared when training starts
 
+        # Per-lang consecutive compile-failure tracking for the background
+        # worker's backoff (see _train_sync/_train_worker): a persistently
+        # raising compile must not retry at the worker's tight poll rate
+        # forever, spamming an ERROR traceback and a spurious
+        # ``mycroft.skills.trained`` on every pass.
+        self._compile_fail_counts: Dict[str, int] = defaultdict(int)
+        self._compile_backoff_until: Dict[str, float] = {}
+        self._compile_giveup: set = set()
+
         self.registered_intents = []
         self.registered_entities = []
         self._skill2intent = defaultdict(list)
@@ -368,38 +378,80 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     def train(self, message=None):
         """Perform padatious training.
 
-        The very first training pass still runs on the calling thread since
-        there is no previously trained state to answer queries with while it
-        runs. Every subsequent call is triggered from a bus message handler
-        (``register_intent`` et al) whose calling thread is the same thread
-        that pumps incoming bus messages (see ``MessageBusClient.on_message``,
-        which dispatches to handlers synchronously) - blocking here for the
-        full compile+train duration therefore also blocks every other bus
-        message (including the ``intent.service.padatious.*`` getters) from
-        even being processed until training finishes. So, except for
-        ``instant_train`` mode (which explicitly promises the model reflects
-        a registration by the time the call returns) and the first pass,
+        Training NEVER runs on the calling thread, including a pipeline's
+        very first pass ever - the ``mycroft.skills.train`` handler (this
+        method) and every registration handler (``register_intent`` et al)
+        all pump messages synchronously on the same bus-connection thread
+        (see ``MessageBusClient.on_message``), so blocking here for the
+        full compile+train duration - tens of seconds to minutes on a large
+        skill set, per the ser9 field trace - would stall every other bus
+        message (including the ``intent.service.padatious.*`` getters,
+        which must answer immediately) right along with it. The one
+        exception is ``instant_train`` mode, which explicitly promises the
+        model reflects a registration by the time the call returns; that
+        mode is an opt-in trade-off the caller accepts. Everywhere else,
         training is handed to a single background worker and this call
-        returns immediately; queries keep being served against the last
-        trained state in the meantime (mirrors
-        ``IntentContainer._train_in_background``).
+        returns immediately; queries keep being served against whatever the
+        neural tier's own cache-hit-loaded state already provides (see
+        ``IntentContainer._train_in_background``) until the pass lands.
+        Readiness is reported via the ``mycroft.skills.trained`` bus event,
+        which ovos-core (and other completion-waiters) block on instead.
 
         Args:
             message (Message): optional triggering message
         """
-        if not any(engine.must_train for engine in self.containers.values()):
+        # ``needs_compile`` also catches a padaos-only dirty container: a
+        # hash-cache-hit registration replay never sets ``must_train`` (see
+        # IntentContainer.add_intent), but padaos.add_intent/add_entity have
+        # no cache-aware skip of their own and always leave
+        # ``padaos.must_compile`` True. Gating solely on ``must_train`` here
+        # left that padaos compile stuck pending until the first live query
+        # forced it synchronously on the bus thread (ser9 field trace).
+        if not any(engine.needs_compile for engine in self.containers.values()):
             self.bus.emit(Message('mycroft.skills.trained'))
             return
 
-        if self.config.get("instant_train", False) or not self.first_train.is_set():
+        if self.config.get("instant_train", False):
             self._train_sync()
             return
 
+        self._spawn_background_trainer()
+
+    def _spawn_background_trainer(self) -> None:
+        """Ensure the single background training worker is running.
+
+        Never blocks and never trains on the calling thread itself - it
+        only starts (or confirms already-running) ``_train_worker`` on its
+        own daemon thread. Shared by ``train()``'s own background branch
+        and by ``wait_until_trained()``, which must be able to make sure a
+        pass is actually scheduled without ever calling ``_train_sync``
+        (that trains on whichever thread calls it) itself.
+        """
         with self._train_spawn_lock:
             if self._background_trainer is not None and self._background_trainer.is_alive():
                 return
             self._background_trainer = Thread(target=self._train_worker, daemon=True)
             self._background_trainer.start()
+
+    # Backoff schedule for a lang container whose compile keeps raising:
+    # 2s, 4s, 8s, ... capped at 5 minutes, so a persistently broken compile
+    # settles at one attempt every 5 minutes instead of retrying at
+    # ``_wait_for_quiet``'s tight cadence forever.
+    _COMPILE_BACKOFF_BASE_S = 2.0
+    _COMPILE_BACKOFF_CAP_S = 300.0
+    _COMPILE_MAX_CONSECUTIVE_FAILURES = 5
+
+    def _rearm_training(self, lang: str) -> None:
+        """Reset a lang's compile-failure backoff state.
+
+        A registration/entity change is new information the failed compile
+        never saw, so a container that had been given up on (see
+        ``_train_sync``/``_train_worker``) deserves a fresh run of attempts
+        rather than staying parked until process restart.
+        """
+        self._compile_fail_counts.pop(lang, None)
+        self._compile_backoff_until.pop(lang, None)
+        self._compile_giveup.discard(lang)
 
     def _train_worker(self) -> None:
         """Background-thread entry point for ``train()``: waits for a quiet
@@ -407,43 +459,146 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         a registration wave that trickles in over time - e.g. a slow,
         serialized skill boot, or ovos-core's periodic registration
         reconciliation - coalesces into as few full retrains as possible,
-        then keeps going until nothing is left dirty."""
-        while any(engine.must_train for engine in self.containers.values()):
-            for engine in self.containers.values():
-                if engine.must_train:
-                    engine._wait_for_quiet()
-            self._train_sync()
+        then keeps going until nothing is left dirty.
 
-    def _train_sync(self) -> None:
-        """Blocking training pass; only ever call this off the bus thread
-        once ``first_train`` is set (see ``train``)."""
+        A lang whose compile keeps raising is retried with exponential
+        backoff (see ``_train_sync``) and, after
+        ``_COMPILE_MAX_CONSECUTIVE_FAILURES`` in a row, is dropped from this
+        loop entirely (``_compile_giveup``) until a registration touching
+        that lang resets its failure count - otherwise this loop would spin
+        forever at ``_wait_for_quiet``'s cadence on a container that can
+        never succeed.
+        """
+        while True:
+            pending = [lang for lang, engine in self.containers.items()
+                      if engine.needs_compile and lang not in self._compile_giveup]
+            if not pending:
+                return
+            now = time.monotonic()
+            due = [lang for lang in pending if self._compile_backoff_until.get(lang, 0) <= now]
+            if not due:
+                time.sleep(max(0.05, min(self._compile_backoff_until[lang] - now for lang in pending)))
+                continue
+            for lang in due:
+                self.containers[lang]._wait_for_quiet()
+            self._train_sync(only_langs=set(due))
+
+    def _train_sync(self, only_langs: Optional[set] = None) -> None:
+        """Blocking training pass - called either from the background
+        worker's own thread (the normal case) or directly on the calling
+        thread under ``instant_train`` (an explicit, opt-in exception -
+        see ``train``).
+
+        @param only_langs: restrict this pass to these langs (used by the
+            background worker to skip langs still in their backoff window);
+            ``None`` (the default, used by ``instant_train`` and any direct
+            caller) attempts every dirty lang.
+        """
         # wait for any already ongoing training
         # padatious doesnt like threads
         if not self.finished_training_event.is_set():
             self.finished_training_event.wait()
         with self.lock:
-            if not any(engine.must_train for engine in self.containers.values()):
+            target_langs = [lang for lang in self.containers
+                            if self.containers[lang].needs_compile
+                            and (only_langs is None or lang in only_langs)]
+            if not target_langs:
                 # LOG.debug(f"Nothing new to train for padatious")
                 # inform the rest of the system to not wait for training finish
                 self.bus.emit(Message('mycroft.skills.trained'))
                 self.finished_training_event.set()
                 return
             self.finished_training_event.clear()
-            for lang in self.containers:
-                if self.containers[lang].must_train:
+            any_success = False
+            for lang in target_langs:
+                try:
                     #LOG.debug(f"Training padatious for lang '{lang}'")
                     self.containers[lang].train()
-
-            # inform the rest of the system to stop waiting for training finish
-            self.bus.emit(Message('mycroft.skills.trained'))
+                except Exception as e:
+                    # a raising _compile()/train() must never leave
+                    # finished_training_event cleared - every later
+                    # _train_sync call (including from wait_until_trained's
+                    # own polling, which never trains itself) would then
+                    # block forever on its untimed wait() above.
+                    # needs_compile stays True for whichever container
+                    # never finished, so the background worker's own retry
+                    # loop (_train_worker) picks it back up - with backoff -
+                    # on a later pass instead of silently giving up.
+                    self._compile_fail_counts[lang] += 1
+                    n = self._compile_fail_counts[lang]
+                    backoff = min(self._COMPILE_BACKOFF_BASE_S * (2 ** (n - 1)), self._COMPILE_BACKOFF_CAP_S)
+                    self._compile_backoff_until[lang] = time.monotonic() + backoff
+                    LOG.exception(f"padatious training pass failed for lang {lang!r}: {e}")
+                    if n >= self._COMPILE_MAX_CONSECUTIVE_FAILURES and lang not in self._compile_giveup:
+                        self._compile_giveup.add(lang)
+                        LOG.error(
+                            f"padatious training for lang {lang!r} failed {n} times in a "
+                            f"row; giving up until the next registration change for that lang")
+                else:
+                    self._compile_fail_counts[lang] = 0
+                    self._compile_backoff_until.pop(lang, None)
+                    any_success = True
+            # ``mycroft.skills.trained`` promises the model reflects the
+            # latest registrations; emitting it on a pass that trained
+            # nothing successfully would be a false "ready" signal (dev's
+            # pre-#124 behaviour never reached its own emit on a raising
+            # compile either, since the exception was uncaught there).
+            if any_success:
+                self.bus.emit(Message('mycroft.skills.trained'))
             self.finished_training_event.set()
 
-        # Training changes the model; stale LRU cache entries must be evicted
-        # so that the next call to calc_intent reflects the updated state.
-        _calc_padatious_intent.cache_clear()
+        if any_success:
+            # Training changes the model; stale LRU cache entries must be
+            # evicted so that the next call to calc_intent reflects the
+            # updated state.
+            _calc_padatious_intent.cache_clear()
 
         if not self.first_train.is_set():
             self.first_train.set()
+
+    def wait_until_trained(self, timeout: Optional[float] = None) -> bool:
+        """Block until every language container is fully compiled/trained.
+
+        This is a **test/tooling synchronization helper**, not something a
+        skill or a production caller needs: registration is deliberately
+        asynchronous (see ``train()``/``IntentContainer._train_in_background``,
+        which never trains on the calling thread even for a container that
+        has never trained at all) so a query is never blocked behind a
+        compile, and readiness is normally observed via the
+        ``mycroft.skills.trained`` bus event. A test harness that registers
+        an intent and then immediately wants to query it deterministically
+        - without polling ``needs_compile`` on internal containers itself -
+        should call this instead.
+
+        This method JOINS the background worker (ensuring one is actually
+        running via ``_spawn_background_trainer``, then polling
+        ``needs_compile`` against the deadline); it never calls
+        ``_train_sync``/``train()`` itself and so never trains ON THE
+        CALLING THREAD, and the timeout is honoured even while a pass is
+        already in flight - an earlier version of this method called
+        ``_train_sync`` in a loop, whose untimed
+        ``finished_training_event.wait()`` made the ``timeout`` argument a
+        no-op whenever a pass was in progress.
+
+        @param timeout: seconds to wait before giving up, or ``None`` to
+            wait forever.
+        @return: True once every container reports ``needs_compile`` False,
+            False if ``timeout`` elapsed first.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        if not any(engine.needs_compile for engine in self.containers.values()):
+            return True
+        self._spawn_background_trainer()
+        poll_interval = 0.05
+        while any(engine.needs_compile for engine in self.containers.values()):
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                time.sleep(min(poll_interval, remaining))
+            else:
+                time.sleep(poll_interval)
+        return True
 
     @deprecated("'wait_and_train' has been deprecated, use 'train' directly", "2.0.0")
     def wait_and_train(self):
@@ -622,6 +777,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             else:
                 self.containers[lang].add_intent(name, samples,
                                                  blacklisted_words=blacklisted_words)
+            self._rearm_training(lang)
+            # A re-registration (e.g. new samples replacing an existing
+            # intent's) must retire the old regex/model answer immediately,
+            # not only once the next compile lands - otherwise a query
+            # served between this call and that compile keeps matching the
+            # stale definition at conf 1.0 from the lru_cache.
+            _calc_padatious_intent.cache_clear()
 
         if self.config.get("instant_train", False) or self.first_train.is_set():
             self.train(message)
@@ -659,6 +821,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 self.containers[lang].add_domain_entity(skill_id, name, samples)
             else:
                 self.containers[lang].add_entity(name, samples)
+            self._rearm_training(lang)
+            # See register_intent: a replaced entity's slot values must stop
+            # matching immediately, not only after the next compile.
+            _calc_padatious_intent.cache_clear()
 
     # ------------------------------------------------------------------ #
     # OVOS-INTENT-4 spec registration handlers                           #
@@ -871,11 +1037,22 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         sess = SessionManager.get(message)
         # Session is unhashable under ovos-bus-client 2.x, so it cannot be an
         # lru_cache key; pass the blacklists it carries as frozensets instead.
-        blacklisted_intents = frozenset(sess.blacklisted_intents or [])
+        # OVOS-INTENT-4 Sec8.5: a disabled intent must stop matching THE INSTANT
+        # it is disabled, not once some future background compile happens to
+        # drop it from padaos' compiled state - disable/enable are runtime
+        # gates, not compile products. Folding ``_disabled_intents`` into the
+        # blacklist here is a pure name-membership check, independent of
+        # whether the underlying container has recompiled yet.
+        blacklisted_intents = frozenset(sess.blacklisted_intents or []) | frozenset(self._disabled_intents)
         blacklisted_skills = frozenset(sess.blacklisted_skills or [])
 
         intent_container = self.containers.get(lang)
-        intents = [_calc_padatious_intent(utt, intent_container,
+        # See _calc_padatious_intent's compiled_generation param: a query
+        # answered before this container ever compiled must not keep
+        # returning that cached "no match" forever once a (background)
+        # pass actually lands.
+        compiled_generation = getattr(intent_container, "compiled_generation", 0)
+        intents = [_calc_padatious_intent(utt, intent_container, compiled_generation,
                                           blacklisted_intents, blacklisted_skills)
                    for utt in utterances]
         intents = [i for i in intents if i is not None]
@@ -1087,11 +1264,24 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
 @lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
 def _calc_padatious_intent(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
+                           compiled_generation: int = 0,
                            blacklisted_intents: frozenset = frozenset(),
                            blacklisted_skills: frozenset = frozenset()) -> Optional[PadatiousIntent]:
     """
     Try to match an utterance to an intent in an intent_container
     @param utt: str - text to match intent against
+    @param compiled_generation: the container's own compile-pass counter
+        (``IntentContainer.compiled_generation``/
+        ``DomainIntentContainer.compiled_generation``) at call time, folded
+        into the cache key purely so it changes across a compile. A query
+        answered before a container had ever compiled anything (served by
+        the neural tier's own cache-hit state, or with no match at all -
+        see ``IntentContainer._train_in_background``) is training triggered
+        via ``calc_intents`` itself, off any bus-thread ``train()`` call
+        this module's own explicit ``.cache_clear()`` calls would ever see;
+        without this, that lru_cache entry never expires and the SAME
+        utterance keeps returning the pre-compile answer forever, until
+        three unrelated utterances happen to evict it (maxsize=3).
 
     The session blacklists are passed as hashable frozensets so this stays
     ``lru_cache``-able (Session is unhashable under ovos-bus-client>=2.4.0a1).
