@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.15a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.15a1) (2026-09-01)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.14a1...2.0.15a1)
+
+**Merged pull requests:**
+
+- fix: matching never waits on an in-flight compile [\#126](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/126) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.14a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.14a1) (2026-09-01)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.13a1...2.0.14a1)
