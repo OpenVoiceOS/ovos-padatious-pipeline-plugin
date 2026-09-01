@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.12a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.12a1) (2026-09-01)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.11a1...2.0.12a1)
+
+**Merged pull requests:**
+
+- fix: cap literal intent-line alternation groups [\#120](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/120) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.11a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.11a1) (2026-09-01)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.10a1...2.0.11a1)
