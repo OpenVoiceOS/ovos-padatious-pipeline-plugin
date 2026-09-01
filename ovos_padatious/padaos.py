@@ -1,5 +1,6 @@
 import re
 import time
+from itertools import count
 from threading import Lock
 from ovos_utils.log import LOG
 
@@ -37,8 +38,11 @@ class IntentContainer:
         self.intent_lines, self.entity_lines = {}, {}
         self.intents, self.entities = {}, {}
         self.must_compile = True
-        self.i = 0
         self.compile_lock = Lock()
+        #: bumped by every registration; ``_compile`` compares it against
+        #: its own snapshot to tell whether a registration landed while it
+        #: was compiling off-lock.
+        self._mutation_gen = 0
         #: entity names skipped from inlining on the last compile because
         #: they exceeded PADAOS_ENTITY_INLINE_CAP; their slots fall back to
         #: an unverified wildcard capture, so callers must not treat a
@@ -55,6 +59,7 @@ class IntentContainer:
     def add_intent(self, name, lines):
         with self.compile_lock:
             self.must_compile = True
+            self._mutation_gen += 1
             self.intent_lines[name] = lines
             # Replacement is symmetric with removal: re-registering an
             # existing name with different samples must not keep matching
@@ -68,6 +73,7 @@ class IntentContainer:
     def remove_intent(self, name):
         with self.compile_lock:
             self.must_compile = True
+            self._mutation_gen += 1
             if name in self.intent_lines:
                 del self.intent_lines[name]
             # Drop the already-compiled entry immediately too: the match
@@ -81,11 +87,13 @@ class IntentContainer:
     def add_entity(self, name, lines):
         with self.compile_lock:
             self.must_compile = True
+            self._mutation_gen += 1
             self.entity_lines[name] = lines
 
     def remove_entity(self, name):
         with self.compile_lock:
             self.must_compile = True
+            self._mutation_gen += 1
             if name in self.entity_lines:
                 del self.entity_lines[name]
 
@@ -180,14 +188,14 @@ class IntentContainer:
             return match.group(0)
         return self._RAW_ALTERNATION_RE.sub(repl, line)
 
-    def _create_intent_pattern(self, line, intent_name):
+    def _create_intent_pattern(self, line, intent_name, entities, counter):
         namespace = intent_name.split(':')[0] + ':'
         line = self._cap_line_alternations(line)
         line = self._create_pattern(line)
         replacements = {}
         for ent_name in set(re.findall(r'{([a-z_:]+)}', line)):
             replacements[ent_name] = r'(?P<{}__{{}}>.*?\w.*?)'.format(ent_name)
-        for ent_name, ent in self.entities.items():
+        for ent_name, ent in entities.items():
             ent_regex = r'(?P<{}__{{}}>{})'
             if ent_name.startswith(namespace):
                 replacements[ent_name[len(namespace):]] = ent_regex.format(
@@ -196,15 +204,15 @@ class IntentContainer:
             else:
                 replacements[ent_name] = ent_regex.format(ent_name.replace(':', '__colon__'), ent)
         for key, value in replacements.items():
-            line = line.replace('{' + key + '}', value.format(self.i), 1)
-            self.i += 1
+            line = line.replace('{' + key + '}', value.format(next(counter)), 1)
         return '^{}$'.format(line)
 
-    def _create_regex(self, line, intent_name):
+    def _create_regex(self, line, intent_name, entities, counter):
         """ Create regex and return. If error occurs returns None. """
         try:
-            return re.compile(self._create_intent_pattern(line, intent_name),
-                              re.IGNORECASE)
+            return re.compile(
+                self._create_intent_pattern(line, intent_name, entities, counter),
+                re.IGNORECASE)
         except _LineAlternationCapExceeded as e:
             # same treatment as a malformed line (see util.expand_or_skip):
             # log and contribute no padaos pattern for it. The neural tier
@@ -222,40 +230,75 @@ class IntentContainer:
             LOG.exception(f'Failed to parse the line "{line}" for {intent_name}')
             return None
 
-    def create_regexes(self, lines, intent_name):
-        regexes = [self._create_regex(line, intent_name)
+    def create_regexes(self, lines, intent_name, entities, counter):
+        regexes = [self._create_regex(line, intent_name, entities, counter)
                    for line in sorted(lines, key=len, reverse=True)
                    if line.strip()]
         # Filter out all regexes that fails
         return [r for r in regexes if r is not None]
 
     def compile(self):
-        with self.compile_lock:
-            self._compile()
+        """Compile the container. Callers must serialize compiles among
+        themselves: two overlapping passes each publish their own entity
+        set wholesale, so a slower older pass can overwrite a newer one's
+        entities and leave the container reporting itself clean.
+        ``IntentContainer.train`` - the only caller - holds ``_train_lock``
+        for exactly this reason.
+        """
+        self._compile()
 
     def _compile(self):
+        """Rebuild the compiled state and swap it in.
+
+        The compile itself runs against a private snapshot with no lock
+        held: ``add_intent``/``add_entity`` and friends are called from the
+        bus thread that also delivers queries, so holding ``compile_lock``
+        across a compile that runs for tens of seconds stalls every message
+        queued behind the registration waiting on it. Only the snapshot and
+        the swap take the lock.
+        """
+        with self.compile_lock:
+            start_gen = self._mutation_gen
+            entity_lines = dict(self.entity_lines)
+            intent_lines = dict(self.intent_lines)
+
         start = time.monotonic()
         largest_entity, largest_size = None, 0
-        self.entities = {}
-        self.capped_entities = set()
-        for ent_name, lines in self.entity_lines.items():
+        entities, capped_entities = {}, set()
+        for ent_name, lines in entity_lines.items():
             values = [line for line in lines if line.strip()]
             if len(values) > largest_size:
                 largest_entity, largest_size = ent_name, len(values)
             if len(values) > PADAOS_ENTITY_INLINE_CAP:
-                self.capped_entities.add(ent_name)
+                capped_entities.add(ent_name)
                 # too many values to inline: skip so referencing slots fall
                 # back to the plain wildcard capture (see PADAOS_ENTITY_INLINE_CAP)
                 continue
-            self.entities[ent_name] = r'({})'.format('|'.join(
+            entities[ent_name] = r'({})'.format('|'.join(
                 self._create_pattern(line) for line in values
             ))
-        self.intents = {
-            intent_name: self.create_regexes(lines, intent_name)
-            for intent_name, lines in self.intent_lines.items()
+        counter = count()
+        intents = {
+            intent_name: self.create_regexes(lines, intent_name, entities, counter)
+            for intent_name, lines in intent_lines.items()
         }
-        self.must_compile = False
         duration = time.monotonic() - start
+
+        with self.compile_lock:
+            # A registration that landed while this pass ran already
+            # retired its own compiled entry (see add_intent/remove_intent);
+            # publishing this pass's result for that name would resurrect
+            # the definition it just replaced or removed, so keep only the
+            # names whose source lines are still exactly what was compiled.
+            self.intents.update({
+                name: regexes for name, regexes in intents.items()
+                if self.intent_lines.get(name) is intent_lines[name]
+            })
+            self.entities = entities
+            self.capped_entities = capped_entities
+            if self._mutation_gen == start_gen:
+                self.must_compile = False
+
         if duration > SLOW_COMPILE_WARN_SECONDS:
             if largest_entity is None:
                 LOG.warning(f"padaos compile took {duration:.2f}s; "
@@ -268,11 +311,11 @@ class IntentContainer:
                 # compile with a capped "largest entity" means the time is
                 # coming from the sheer number of other entities/intents in
                 # the container, not from this one
-                capped = largest_entity in self.capped_entities
+                capped = largest_entity in capped_entities
                 LOG.warning(
                     f"padaos compile took {duration:.2f}s for the full "
-                    f"container ({len(self.entity_lines)} entities, "
-                    f"{len(self.intent_lines)} intents); largest entity "
+                    f"container ({len(entity_lines)} entities, "
+                    f"{len(intent_lines)} intents); largest entity "
                     f"'{largest_entity}' has {largest_size} values"
                     f"{' (capped, not inlined)' if capped else ''}"
                 )
