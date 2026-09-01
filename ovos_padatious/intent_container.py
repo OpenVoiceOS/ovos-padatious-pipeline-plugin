@@ -15,6 +15,7 @@ import inspect
 import re
 import os
 import threading
+import time
 from functools import wraps
 from typing import List, Dict, Any, Optional
 
@@ -88,6 +89,10 @@ class IntentContainer:
         self._background_trainer: Optional[threading.Thread] = None
         self._ever_trained = False
         self._train_generation = 0
+        # last time a registration dirtied this container; used by the
+        # background worker to debounce a burst of registrations into one
+        # retrain (see _wait_for_quiet).
+        self._last_dirty_at = 0.0
 
     @property
     def intent_names(self):
@@ -101,6 +106,7 @@ class IntentContainer:
         """
         if value:
             self._train_generation += 1
+            self._last_dirty_at = time.monotonic()
         self.must_train = value
 
     def clear(self) -> None:
@@ -178,10 +184,16 @@ class IntentContainer:
             must_train (bool): Whether the model needs training after adding the intent.
         """
         self.blacklisted_words[name] = blacklisted_words or []
-        self.intents.add(name, lines, reload_cache, must_train)
+        changed = self.intents.add(name, lines, reload_cache, must_train)
         if self.padaos is not None:
             self.padaos.add_intent(name, lines)
-        self._set_must_train(must_train)
+        # Only dirty the container when the registration actually changed
+        # something; a no-op replay (see TrainingManager.add) must never
+        # touch ``must_train``, including never clearing it, since a
+        # concurrent unrelated registration may already have a genuine
+        # pending training need this call knows nothing about.
+        if changed:
+            self._set_must_train(True)
 
     @_save_args
     def add_entity(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> None:
@@ -199,14 +211,16 @@ class IntentContainer:
             must_train (bool): Whether the model needs training after adding the entity.
         """
         Entity.verify_name(name)
-        self.entities.add(
+        changed = self.entities.add(
             Entity.wrap_name(name),
             lines,
             reload_cache,
             must_train)
         if self.padaos is not None:
             self.padaos.add_entity(name, lines)
-        self._set_must_train(must_train)
+        # see add_intent: never dirty (and never clear) on a no-op replay
+        if changed:
+            self._set_must_train(True)
 
     @_save_args
     def load_entity(self, name: str, file_name: str, reload_cache: bool = False, must_train: bool = True) -> None:
@@ -292,13 +306,18 @@ class IntentContainer:
             LOG.warning("'single_thread' argument is deprecated and will be ignored")
         if timeout is not None:
             LOG.warning("'timeout' argument is deprecated and will be ignored")
-        if not self.must_train and not force:
+        # The very first call must always run the full finalize step (padaos
+        # compile + entity_dict build) even when every registration so far
+        # was an unchanged cache hit and never dirtied ``must_train`` - a
+        # fresh container whose cache is 100% up to date still needs its
+        # lookup structures populated once before it can answer anything.
+        if not self.must_train and not force and self._ever_trained:
             return True
 
         with self._train_lock:
             # re-check under the lock: another thread (the background
             # worker, or a concurrent forced caller) may have just trained
-            if not self.must_train and not force:
+            if not self.must_train and not force and self._ever_trained:
                 return True
 
             # snapshot the generation before doing any work; if a
@@ -347,10 +366,36 @@ class IntentContainer:
             )
             self._background_trainer.start()
 
+    # Debounced coalescing: a boot-time registration wave can trickle in
+    # over minutes (ser9 field trace: ~128 registrations spread across a
+    # slow, serialized boot), so a fixed short settle barely helps - most
+    # registrations still land just outside a 2s window and each one still
+    # gets its own pass. Instead, wait for a quiet window with NO new
+    # registration before retraining, resetting the timer on every arrival,
+    # capped so a slow-but-steady trickle still trains within a bounded time
+    # instead of deferring forever.
+    _TRAIN_DEBOUNCE_S = 2.0
+    _TRAIN_MAX_DEFER_S = 60.0
+
+    def _wait_for_quiet(self) -> None:
+        """Block until no registration has dirtied this container for
+        ``_TRAIN_DEBOUNCE_S``, or until ``_TRAIN_MAX_DEFER_S`` total has
+        elapsed since this wait started - whichever comes first."""
+        deadline = time.monotonic() + self._TRAIN_MAX_DEFER_S
+        while True:
+            snapshot = self._last_dirty_at
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(self._TRAIN_DEBOUNCE_S, remaining))
+            if self._last_dirty_at == snapshot:
+                return
+
     def _background_train_loop(self) -> None:
         # a single worker keeps retraining until a pass completes without
         # must_train being re-armed by a registration that arrived mid-pass
         while self.must_train:
+            self._wait_for_quiet()
             self.train()
 
     def calc_intents(self, query: str) -> List[MatchData]:

@@ -398,8 +398,21 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         with self._train_spawn_lock:
             if self._background_trainer is not None and self._background_trainer.is_alive():
                 return
-            self._background_trainer = Thread(target=self._train_sync, daemon=True)
+            self._background_trainer = Thread(target=self._train_worker, daemon=True)
             self._background_trainer.start()
+
+    def _train_worker(self) -> None:
+        """Background-thread entry point for ``train()``: waits for a quiet
+        window (see ``IntentContainer._wait_for_quiet``) before each pass so
+        a registration wave that trickles in over time - e.g. a slow,
+        serialized skill boot, or ovos-core's periodic registration
+        reconciliation - coalesces into as few full retrains as possible,
+        then keeps going until nothing is left dirty."""
+        while any(engine.must_train for engine in self.containers.values()):
+            for engine in self.containers.values():
+                if engine.must_train:
+                    engine._wait_for_quiet()
+            self._train_sync()
 
     def _train_sync(self) -> None:
         """Blocking training pass; only ever call this off the bus thread
