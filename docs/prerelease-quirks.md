@@ -4,6 +4,111 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.0.13a3 — re-registration cache invalidation and bounded compile retries
+
+Two more gaps in the 2.0.13a2 entry below, found by a further adversarial
+pass:
+
+- The `compiled_generation`-keyed `_calc_padatious_intent` lru_cache
+  (2.0.13a2) is only bumped by an actual compile. `register_intent`/
+  `register_entity` - and everything that funnels through them, including
+  the OVOS-INTENT-4 spec template-registration handlers and the §8.5
+  enable handler - never cleared that cache themselves, unlike every
+  removal/disable path. So the "OLD compiled entry is dropped immediately"
+  claim in the 2.0.13a2 entry held at the padaos layer but not at the
+  pipeline's own query cache: a query answered before a re-registration
+  could keep matching the retired template at confidence 1.0 until the
+  next compile landed. Registration now clears that cache immediately,
+  symmetric with removal/disable.
+- A compile that keeps raising every pass used to retry forever at the
+  background worker's normal debounce cadence, logging a full traceback
+  and emitting `mycroft.skills.trained` on every failed attempt. Each lang
+  now backs off exponentially (2 seconds, doubling, capped at 5 minutes)
+  and, after enough consecutive failures, that lang stops retrying until a
+  registration change touches it again. `mycroft.skills.trained` is now
+  only emitted for a pass that trained something successfully.
+
+## 2.0.13a2 — padaos never compiles on the match path anymore
+
+A registration whose content exactly matched what was already cached on
+disk (a hash-cache hit) never dirtied the container's `must_train` flag,
+by design - but `padaos.add_intent`/`add_entity` have no such cache-aware
+skip and always marked padaos' own regex container dirty regardless. Every
+gate that decided whether to (background-)train checked `must_train` only,
+so a boot that replayed nothing but cache hits (e.g. every skill's intents
+already cached from an earlier boot) never trained at all: padaos stayed
+dirty with nothing to clear it until the first live query forced a full
+compile synchronously on the bus message thread - tens of seconds on a
+large skill set, stalling that query and every other bus message behind
+it. Those gates now also account for a padaos-only dirty container.
+
+On top of that, `padaos.calc_intents` - the match path itself - no longer
+compiles inline under any circumstances; it serves whatever was compiled
+last (an empty result if nothing ever compiled yet) and leaves compiling
+to the background worker.
+
+Removal and disable/enable are runtime gates, not compile products, and
+still take effect immediately despite the match path no longer compiling:
+`remove_intent` now drops the already-compiled padaos entry for that name
+right away instead of only marking the container dirty, and a disabled
+intent (OVOS-INTENT-4 Sec8.5) is filtered by name at match time rather than
+by waiting for a recompile to forget it. Re-registering an existing name
+with different samples is treated the same way: the OLD compiled entry is
+dropped immediately (`padaos.add_intent`), so a query in between never
+gets a stale match from the retired template - it just gets no match at
+all until the new content compiles. Only genuinely new or changed content
+is visible after the background pass runs, and that now holds without
+exception: a container that has never trained at all (a fresh boot
+replaying a 100% hash-cache-hit registration set, with nothing yet
+dirtying `must_train`) used to still call `train()` synchronously on the
+querying thread the moment its very first query arrived - the same defect
+one call frame up from where this entry started, in
+`IntentContainer._train_in_background`'s "no previously-trained state"
+special case - and `domain_engine: true` kept its own separate inline
+`if self.must_train: self.train()` on every `calc_domain(s)`/`calc_intent(s)`
+call regardless. Both are gone: a container (or `DomainIntentContainer`
+and its per-domain sub-containers) that has never compiled is served empty
+until the background worker's first pass actually lands, exactly like
+every other pending-compile case.
+
+A test or tool that registers something and needs to query it
+deterministically right after should call
+`PadatiousPipeline.wait_until_trained(timeout=...)` rather than sleeping or
+polling internal container flags - see `docs/ovos_pipeline.md`. It joins
+the background worker and never trains on the calling thread itself, so
+`timeout` is honoured even while a pass is already in flight.
+
+Four more gaps in that "never on the calling thread" rule, found by a
+second adversarial pass:
+
+- `mycroft.skills.train` (`PadatiousPipeline.train`, the same method every
+  register handler calls) still ran the first-ever pass synchronously on
+  the bus-message thread handling that event, blocking it for the full
+  compile duration - the ~85s ser9 field figure, one layer up from where
+  this whole entry started. Only `instant_train` mode may still train
+  synchronously now; it is an explicit, documented, opt-in trade-off.
+- A query answered "no match" before a container's very first compile
+  pass landed stayed cached that way forever: `_calc_padatious_intent`'s
+  `lru_cache` was only ever invalidated from `PadatiousPipeline._train_sync`,
+  which never runs for a pass that a QUERY itself triggered (see
+  `IntentContainer._train_in_background`). The cache key now includes each
+  container's own `compiled_generation` counter (bumped every time a real
+  compile pass finishes), so a query made in a different compile
+  generation is a distinct cache entry rather than a stale hit.
+- `domain_engine: true` had no `DomainIntentContainer._wait_for_quiet`:
+  the background worker's debounce step called it unconditionally on
+  every dirty container and died with `AttributeError` for a domain
+  engine, silently killing the worker thread. `mycroft.skills.trained`
+  was never emitted and `wait_until_trained` timed out; only a query
+  forcing training itself ever worked. `DomainIntentContainer` now
+  delegates quiescence to its cross-domain engine and every dirty
+  per-domain sub-container.
+- A training pass whose compile raised left `finished_training_event`
+  cleared forever, hanging every later pass (and `wait_until_trained`) on
+  an untimed wait. `_train_sync` now always sets that event and logs the
+  exception; the failed container stays dirty so the background worker's
+  own retry loop picks it back up on its next debounced pass.
+
 ## 2.0.12a1 — literal intent-line alternation groups are now bounded too
 
 A literal `(a|b|c|...)` alternation typed directly into an intent line

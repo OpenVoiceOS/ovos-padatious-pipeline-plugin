@@ -73,7 +73,7 @@ The plugin subscribes to and emits the following events on the OVOS messagebus.
 | `intent.service.padatious.get` | `handle_get_padatious` | Parse an utterance and return the best intent. |
 | `intent.service.padatious.manifest.get` | `handle_padatious_manifest` | Return a list of all registered intent names. |
 | `intent.service.padatious.entities.manifest.get` | `handle_entity_manifest` | Return a list of all registered entity definitions. |
-| `mycroft.skills.train` | `train` | Trigger training of all pending intents. |
+| `mycroft.skills.train` | `train` | Trigger training of all pending intents (asynchronous - see below). |
 
 ### Emitted (outgoing)
 
@@ -83,6 +83,67 @@ The plugin subscribes to and emits the following events on the OVOS messagebus.
 | `intent.service.padatious.reply` | In response to `intent.service.padatious.get`. |
 | `intent.service.padatious.manifest` | In response to `intent.service.padatious.manifest.get`. |
 | `intent.service.padatious.entities.manifest` | In response to `intent.service.padatious.entities.manifest.get`. |
+
+## Training Is Asynchronous
+
+Training and compiling always happen on a single background worker, never
+on the thread that made a query or a registration — including a
+container's very first pass ever, `mycroft.skills.train` (`train`, the
+same method register handlers call), and `domain_engine: true`
+(`DomainIntentContainer` mirrors the same rule for its cross-domain
+container and every per-domain sub-container, including their shared
+debounce/quiet-window logic). The one exception is `instant_train` mode:
+an explicit, opt-in config flag that promises a registration is fully
+trained by the time the triggering call returns, at the cost of blocking
+that call for the full compile+train duration.
+
+Outside `instant_train`, the `intent.service.padatious.get` getter and
+every other match-path entry point NEVER wait for a compile - they answer
+immediately from whatever state already exists:
+
+- Before a container has EVER compiled, the padaos exact-match layer has
+  nothing to contribute and answers no match at all, but the neural tier
+  can still answer from a hash-cache-hit object it already loaded
+  synchronously at registration time (see `TrainingManager.add`) - so a
+  query in this window may get a real, if lower-confidence, match rather
+  than a hard `None`.
+- Once a compile has landed at least once, a **removal or a disable**
+  (`detach_intent`/`detach_skill`, OVOS-INTENT-4 §8.5 enable/disable) is
+  reflected immediately - a removed intent is dropped from the served
+  state right away, and a disabled intent is filtered at match time by
+  name - never waiting on a recompile to forget it.
+- An **addition or a replacement** (a new intent/entity, or re-registering
+  an existing name with different samples) only becomes matchable once the
+  background pass actually compiles it. A replacement's OLD compiled
+  template stops matching immediately, though - dropped the moment the
+  new registration lands, the same as an outright removal - so a query in
+  between never gets a stale match, only no match until the new content
+  compiles. This holds at the pipeline's own query cache too: registering
+  invalidates it right away, so a query answered from the old definition
+  moments earlier does not keep echoing that answer until the next
+  compile.
+- A match answered "no match" before a container's first compile pass
+  landed is not cached forever: the pass, however it was triggered
+  (including one kicked off by the query itself rather than by
+  `mycroft.skills.train`), invalidates that cached answer so the same
+  utterance is re-evaluated fresh once the pass completes.
+
+A lang whose compile keeps raising is retried with exponential backoff
+(starting at 2 seconds, doubling, capped at 5 minutes) instead of at the
+worker's normal debounce cadence. After enough consecutive failures for a
+given language, that language stops retrying until a registration change
+touches it again; `mycroft.skills.trained` is only ever emitted for a pass
+that actually trained something, never for one that raised.
+
+A test or tool that registers something and needs to query it
+deterministically right afterward — without polling internal container
+flags — can call `PadatiousPipeline.wait_until_trained(timeout=...)`. It
+joins the background worker (spawning one if none is running, then
+waiting on it) and never trains on the calling thread itself, so the
+`timeout` is honoured even while a pass is already in flight; it returns
+`False` rather than hanging past the deadline. This is a synchronization
+helper for tests and tooling; production skills should rely on
+`mycroft.skills.trained` instead.
 
 ## Multilingual Support
 

@@ -8,7 +8,10 @@ The pipeline is configured with ``instant_train: true`` so that each
 ``register_intent`` triggers a synchronous train, making assertions
 deterministic without sleeping or listening for ``mycroft.skills.trained``.
 """
+import time
 import unittest
+import uuid
+from unittest import mock
 
 import pytest
 
@@ -24,6 +27,7 @@ from ovoscope import (  # noqa: E402
     register_padatious_entity,
 )
 
+from ovos_padatious.intent_container import IntentContainer  # noqa: E402
 from ovos_padatious.opm import PadatiousPipeline  # noqa: E402
 
 PIPELINE_ID = "ovos-padatious-pipeline-plugin"
@@ -57,8 +61,11 @@ class _PadatiousHarness(E2EPipelineHarness):
             "name": name, "samples": samples, "lang": lang,
             "skill_id": skill_id,
         }))
-        import time
-        time.sleep(0.1)
+        # A registration is only visible for matching once its (possibly
+        # background/debounced) compile pass has actually run - see
+        # PadatiousPipeline.wait_until_trained. This is a test-only sync
+        # point; skills never need it.
+        self.pipeline.wait_until_trained(timeout=10.0)
 
     def _register_entity(self, name, samples):
         register_padatious_entity(self.bus, name, samples)
@@ -202,6 +209,81 @@ class TestSessionBlacklistAlias(_PadatiousHarness):
             timeout=10.0,
         )
         self.assertIsNotNone(msg)
+
+
+class _NonInstantHarness(E2EPipelineHarness):
+    """Steady-state harness with NO ``instant_train``: ovoscope's boot
+    already leaves ``first_train`` set (the initial empty pass has run),
+    so - unlike ``_PadatiousHarness`` above - a subsequent
+    ``register_intent`` retrains on the background worker instead of
+    blocking the registration call itself. This is what actually exercises
+    ``wait_until_trained``'s join, as opposed to ``instant_train`` mode
+    where the registration call is already fully synchronous on its own.
+
+    ``SKILL_ID`` carries a per-import random suffix rather than a fixed
+    name: this harness's ``PLUGIN_CONFIG`` (unlike the ovoscope config
+    that would normally set an isolated ``intent_cache``) is not reliably
+    propagated into the pipeline in this environment, so a fixed
+    skill/intent name would eventually collect a REAL on-disk hash cache
+    (the plugin's default ``~/.local/share/mycroft/intent_cache``) across
+    repeated local runs, turning this into a hash-cache-hit replay - whose
+    neural object loads synchronously regardless of any training pass, see
+    ``test_never_train_on_calling_thread.py`` - and silently defeating the
+    entire point of this test."""
+    PIPELINE_ID = PIPELINE_ID
+    CONFIG_KEY = CONFIG_KEY
+    PLUGIN_CONFIG = {"conf_low": 0.6}
+    SKILL_ID = f"wait_until_trained_skill_{uuid.uuid4().hex[:8]}"
+
+    pipeline: PadatiousPipeline  # type: ignore[assignment]
+
+
+class TestWaitUntilTrainedGenuinelyGatesTheQuery(_NonInstantHarness):
+    """Pins the dependency end-to-end: a caller that emits a registration
+    and then calls ``wait_until_trained`` must not see a match before the
+    background pass actually lands, and must see it right after. Adversarial
+    review of PR #124 found that gutting ``wait_until_trained`` to
+    ``return True`` left all e2e tests in this module green - none of them
+    exercised a slow enough training pass, under a harness where
+    registration is NOT already synchronous via ``instant_train``, for the
+    difference to show up before generous polling elsewhere absorbed it."""
+
+    def test_wait_until_trained_actually_waits_for_a_slow_background_pass(self):
+        self.assertFalse(self.pipeline.config.get("instant_train", False))
+        # the boot's own initial (empty) pass no longer trains synchronously
+        # either (see docs/ovos_pipeline.md); join it deterministically
+        # before exercising the actual scenario below.
+        self.assertTrue(self.pipeline.wait_until_trained(timeout=10.0),
+                         "boot's initial pass never completed")
+        self.assertTrue(self.pipeline.first_train.is_set(),
+                         "harness precondition: boot's initial pass already ran")
+
+        real_train = IntentContainer.train
+
+        def slow_train(self, *args, **kwargs):
+            time.sleep(0.5)
+            return real_train(self, *args, **kwargs)
+
+        with mock.patch.object(IntentContainer, "train", slow_train):
+            self.bus.emit(Message("padatious:register_intent", {
+                "name": f"{self.SKILL_ID}:hello", "samples": _HELLO_SAMPLES,
+                "lang": "en-US", "skill_id": self.SKILL_ID,
+            }))
+            # register/query race window: a genuinely fresh, never-compiled
+            # registration must not be matchable before its background pass
+            # has run
+            self.assertIsNone(
+                self.pipeline.calc_intent(["hello"], "en-US"),
+                "a fresh registration must not be matchable before its "
+                "background pass has run")
+
+            self.assertTrue(self.pipeline.wait_until_trained(timeout=10.0))
+            # a single direct query, no retry loop: if wait_until_trained
+            # had not genuinely waited for the (artificially slowed)
+            # background pass, this would very likely still be None
+            match = self.pipeline.calc_intent(["hello"], "en-US")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.name, f"{self.SKILL_ID}:hello")
 
 
 if __name__ == "__main__":

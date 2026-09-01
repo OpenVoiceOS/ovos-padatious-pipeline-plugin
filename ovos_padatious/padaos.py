@@ -48,17 +48,35 @@ class IntentContainer:
         #: to verify against, so it is dropped from padaos entirely
         #: instead (see ``_cap_line_alternations``).
         self.capped_entities = set()
+        # one-shot guard so a pending compile logs at most once per
+        # dirty->compiled cycle instead of once per query (see calc_intents)
+        self._warned_pending_compile = False
 
     def add_intent(self, name, lines):
         with self.compile_lock:
             self.must_compile = True
             self.intent_lines[name] = lines
+            # Replacement is symmetric with removal: re-registering an
+            # existing name with different samples must not keep matching
+            # the RETIRED compiled regex - with its now-stale slot
+            # captures - until some future background compile happens to
+            # run. Drop the old compiled entry immediately; the new
+            # content is visible once that compile actually lands, same
+            # as any other addition.
+            self.intents.pop(name, None)
 
     def remove_intent(self, name):
         with self.compile_lock:
             self.must_compile = True
             if name in self.intent_lines:
                 del self.intent_lines[name]
+            # Drop the already-compiled entry immediately too: the match
+            # path (calc_intents) never compiles anymore, so a removal
+            # that only dirtied must_compile would keep matching against
+            # the stale compiled regex until some future background
+            # compile happens to run. Deregistration/detach is a runtime
+            # gate, not a compile product, and must take effect now.
+            self.intents.pop(name, None)
 
     def add_entity(self, name, lines):
         with self.compile_lock:
@@ -271,7 +289,22 @@ class IntentContainer:
     def calc_intents(self, query):
         query = ' ' + query + ' '
         if self.must_compile:
-            self.compile()
+            # The match path must NEVER compile: a synchronous compile here
+            # runs on whatever thread called calc_intents, which in
+            # production is the bus message thread handling the query
+            # itself (see IntentContainer.calc_intents ->
+            # opm.py's handle_get_padatious). A registration burst that
+            # leaves must_compile True (e.g. a hash no-op replay - see
+            # IntentContainer.needs_compile) must instead be compiled by
+            # the background training worker; here we just serve whatever
+            # was compiled last (possibly empty, on a container that has
+            # never compiled at all) rather than block the caller.
+            if not self._warned_pending_compile:
+                LOG.info("padaos compiling in background, "
+                         "serving last compiled state in the meantime")
+                self._warned_pending_compile = True
+        else:
+            self._warned_pending_compile = False
         for intent_name, regexes in self.intents.items():
             entities = list(self._calc_entities(query, regexes))
             if entities:

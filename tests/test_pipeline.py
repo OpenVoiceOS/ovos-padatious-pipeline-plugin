@@ -26,6 +26,10 @@ class UtteranceIntentMatchingTest(unittest.TestCase):
         data = {'file_name': rxfilename, 'lang': 'en-US', 'name': 'test2'}
         intent_service.register_intent(Message("padatious:register_intent", data))
         intent_service.train()
+        # train() never trains on the calling thread anymore, including
+        # the very first pass (see docs/ovos_pipeline.md); join the
+        # background worker deterministically instead of racing it.
+        assert intent_service.wait_until_trained(timeout=30)
 
         return intent_service
 

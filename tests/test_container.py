@@ -72,6 +72,12 @@ class TestFromDisk(unittest.TestCase):
         assert len(cont.intents.objects_to_train) == 0
         assert len(cont.intents.objects) == 2
 
+        # a container that has never trained is served empty until a
+        # (background) pass actually compiles it - even one that is a pure
+        # cache hit and would finish trivially fast, see
+        # IntentContainer._train_in_background. An explicit train() call
+        # forces that first pass synchronously.
+        cont.train(False)
         result = cont.calc_intent('something different')
         assert result.matches['other'] == 'different'
 
@@ -178,6 +184,10 @@ class TestIntentContainer(unittest.TestCase):
         self.cont.train(False)
         assert self.cont.calc_intent('This is a test').conf == 1.0
         self.cont.remove_intent('test')
+        # padaos never recompiles on the match path (it would otherwise
+        # block a query on a full container compile); an explicit train()
+        # call is required to observe a removal
+        self.cont.train(False)
         assert self.cont.calc_intent('This is a test').conf < 0.5
         self.cont.add_intent('thing', ['A {thing}'])
         self.cont.add_entity('thing', ['thing'])
@@ -187,6 +197,7 @@ class TestIntentContainer(unittest.TestCase):
         assert 0.8 < self.cont.calc_intent('A dog').conf < 1.0
         assert self.cont.calc_intent('A thing').conf == 1.0
         self.cont.remove_entity('thing')
+        self.cont.train(False)
         assert self.cont.calc_intent('A dog').conf == 1.0
 
     def test_overlap(self):
