@@ -78,10 +78,11 @@ class TestCalcIntentCacheInvalidatesAfterBackgroundCompile(unittest.TestCase):
                           "triggered PadatiousPipeline.train() itself")
         container = self.pipeline.containers[self.lang]
 
-        # the query itself is what triggers the (background) compile; served
-        # empty this first time, exactly like any other never-compiled query
+        # A never-compiled container waits (bounded) for its first pass
+        # instead of answering from empty structures, so an intent
+        # registered moments ago is matchable on the very first query.
         first = self.pipeline.calc_intent(["hello"], self.lang)
-        self.assertIsNone(first)
+        self.assertIsNotNone(first)
 
         # Poll the CONTAINER's own compile flag directly - never call
         # wait_until_trained()/train()/_train_sync() here, see module

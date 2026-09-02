@@ -19,7 +19,7 @@ import time
 from collections import defaultdict
 from functools import lru_cache
 from os.path import expanduser, isfile
-from threading import Event, RLock, Thread
+from threading import Event, RLock, Thread, current_thread
 from typing import Optional, Dict, List, Union, Type
 
 import snowballstemmer
@@ -430,8 +430,29 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         with self._train_spawn_lock:
             if self._background_trainer is not None and self._background_trainer.is_alive():
                 return
-            self._background_trainer = Thread(target=self._train_worker, daemon=True)
+            self._background_trainer = Thread(target=self._guarded_train_worker, daemon=True)
             self._background_trainer.start()
+
+    def _retire(self) -> None:
+        """Drop the worker handle so the next ``_spawn_background_trainer``
+        starts a fresh thread. Callers must hold ``_train_spawn_lock``."""
+        self._background_trainer = None
+
+    def _guarded_train_worker(self) -> None:
+        """Run the worker, releasing its handle however it ends.
+
+        ``_train_worker`` retires itself under the spawn lock on its normal
+        exit, which is what keeps that exit atomic against a registration
+        arriving at the same moment. An unexpected raise would otherwise
+        leave a dead thread recorded as the current worker for as long as
+        ``is_alive()`` takes to catch up, so the handle is dropped here too.
+        """
+        try:
+            self._train_worker()
+        finally:
+            with self._train_spawn_lock:
+                if self._background_trainer is current_thread():
+                    self._retire()
 
     # Backoff schedule for a lang container whose compile keeps raising:
     # 2s, 4s, 8s, ... capped at 5 minutes, so a persistently broken compile
@@ -442,16 +463,30 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     _COMPILE_MAX_CONSECUTIVE_FAILURES = 5
 
     def _rearm_training(self, lang: str) -> None:
-        """Reset a lang's compile-failure backoff state.
+        """Reset a lang's compile-failure backoff state and make sure a
+        compile is actually scheduled for the registration that just landed.
 
         A registration/entity change is new information the failed compile
         never saw, so a container that had been given up on (see
         ``_train_sync``/``_train_worker``) deserves a fresh run of attempts
         rather than staying parked until process restart.
+
+        Clearing the backoff only decides *how* a pass would be retried; it
+        does not schedule one. During boot ``first_train`` is still unset
+        and ``instant_train`` is off by default, so ``register_intent``
+        trains on neither path and the dirty container had nothing left to
+        compile it until some later live query happened to drive training
+        itself - leaving every intent registered at boot unmatchable in the
+        meantime. Arming the worker here ties the compile to the
+        registration that caused it. The worker still debounces the boot
+        wave into as few passes as possible (see
+        ``IntentContainer._wait_for_quiet``) and still runs entirely off
+        the calling thread.
         """
         self._compile_fail_counts.pop(lang, None)
         self._compile_backoff_until.pop(lang, None)
         self._compile_giveup.discard(lang)
+        self._spawn_background_trainer()
 
     def _train_worker(self) -> None:
         """Background-thread entry point for ``train()``: waits for a quiet
@@ -473,7 +508,20 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             pending = [lang for lang, engine in self.containers.items()
                       if engine.needs_compile and lang not in self._compile_giveup]
             if not pending:
-                return
+                # Retiring the worker has to be atomic against
+                # _spawn_background_trainer, which is now the only thing
+                # that schedules a pass: a registration landing between
+                # this check and the thread actually dying would otherwise
+                # find is_alive() still True, spawn nothing, and strand
+                # that container dirty until some later registration.
+                # Clearing the handle under the spawn lock makes the next
+                # spawn start a fresh worker instead.
+                with self._train_spawn_lock:
+                    if any(engine.needs_compile and lang not in self._compile_giveup
+                           for lang, engine in self.containers.items()):
+                        continue
+                    self._retire()
+                    return
             now = time.monotonic()
             due = [lang for lang in pending if self._compile_backoff_until.get(lang, 0) <= now]
             if not due:
