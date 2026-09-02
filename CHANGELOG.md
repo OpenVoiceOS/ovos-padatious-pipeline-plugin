@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.16a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.16a1) (2026-09-02)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.15a1...2.0.16a1)
+
+**Merged pull requests:**
+
+- fix: an intent is matchable as soon as it is registered [\#128](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/128) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.15a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.15a1) (2026-09-01)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.14a1...2.0.15a1)
