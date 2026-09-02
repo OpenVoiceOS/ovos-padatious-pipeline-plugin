@@ -88,6 +88,12 @@ class IntentContainer:
         self._spawn_lock = threading.Lock()
         self._background_trainer: Optional[threading.Thread] = None
         self._ever_trained = False
+        # Set once a training pass has published compiled state. Until then
+        # this container has nothing to answer with, so calc_intents waits
+        # on it rather than serving a guaranteed empty result (see
+        # FIRST_COMPILE_WAIT_S). After the first pass it stays set forever
+        # and the match path never touches it again.
+        self._first_compile_done = threading.Event()
         self._train_generation = 0
         # last time a registration dirtied this container; used by the
         # background worker to debounce a burst of registrations into one
@@ -149,6 +155,7 @@ class IntentContainer:
             self.padaos: padaos.IntentContainer = padaos.IntentContainer()
         self.serialized_args = []
         self._ever_trained = False
+        self._first_compile_done.clear()
         self._background_trainer = None
         self._train_generation = 0
 
@@ -361,19 +368,26 @@ class IntentContainer:
             # not claim the container is clean when we're done
             start_gen = self._train_generation
 
-            if self.padaos is not None:
-                self.padaos.compile()
+            try:
+                if self.padaos is not None:
+                    self.padaos.compile()
 
-            # Train intents and entities
-            self.intents.train(debug=debug)
-            self.entities.train(debug=debug)
+                # Train intents and entities
+                self.intents.train(debug=debug)
+                self.entities.train(debug=debug)
 
-            self.entities.calc_ent_dict()
+                self.entities.calc_ent_dict()
 
-            if self._train_generation == start_gen:
-                self.must_train = False
-            self._ever_trained = True
-            self.compiled_generation += 1
+                if self._train_generation == start_gen:
+                    self.must_train = False
+                self._ever_trained = True
+                self.compiled_generation += 1
+            finally:
+                # Released even when the pass raised: a waiter must never
+                # be parked behind a compile that will never publish.
+                # Retries are opm's _train_sync backoff to schedule, not a
+                # query's to wait out.
+                self._first_compile_done.set()
         return True
 
     def _train_in_background(self) -> None:
@@ -420,6 +434,13 @@ class IntentContainer:
     _TRAIN_DEBOUNCE_S = 2.0
     _TRAIN_MAX_DEFER_S = 60.0
 
+    # How long a query may wait for the very first compile to publish:
+    # the debounce window plus slack for the pass itself. A registration
+    # storm that never settles re-arms _wait_for_quiet indefinitely, so
+    # this deliberately expires quickly and answers empty rather than
+    # making every query pay a long cap for an answer it will not get.
+    FIRST_COMPILE_WAIT_S = 3.0
+
     def _wait_for_quiet(self) -> None:
         """Block until no registration has dirtied this container for
         ``_TRAIN_DEBOUNCE_S``, or until ``_TRAIN_MAX_DEFER_S`` total has
@@ -453,6 +474,23 @@ class IntentContainer:
             List[MatchData]: A list of all intent matches with confidence scores.
         """
         self._train_in_background()
+        if not self._first_compile_done.is_set() and self.needs_compile \
+                and self.intent_names:
+            # Nothing has ever compiled and there IS something to
+            # compile, so every structure this method reads below is empty
+            # and the answer is a guaranteed "no match" - not a
+            # stale-but-usable previous generation. A container with
+            # nothing pending, and one with no intents registered at all
+            # (an unregistered language), has nothing a query could ever
+            # match and must not wait. Waiting
+            # for the first pass to publish is what makes an intent
+            # matchable as soon as it is registered, without a caller
+            # having to drive training itself. This is an Event wait, not a
+            # lock and not a compile: the pass still runs on the background
+            # worker's thread, and once any generation exists this branch
+            # is never taken again - matching stays lock-free against the
+            # last published state.
+            self._first_compile_done.wait(self.FIRST_COMPILE_WAIT_S)
 
         def suppressed(intent_name: str) -> bool:
             # blacklisted words match at word boundaries: "install" suppresses

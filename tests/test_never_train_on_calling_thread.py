@@ -88,8 +88,19 @@ class TestNeverTrainedContainerNeverCompilesOnCallerThread(unittest.TestCase):
 
                 self.assertEqual(violations, [],
                                   f"{violations}")
-                self.assertLess(elapsed, 0.5,
-                                 "calc_intent blocked on an inline compile")
+                # A container that has never published a generation waits
+                # (bounded, on an Event) for its first pass rather than
+                # answering from empty structures, so this first query is
+                # expected to take about the debounce window - and no
+                # longer. What must never happen is the compile running
+                # HERE, which is the `violations` assertion above.
+                self.assertLess(elapsed,
+                                 IntentContainer._TRAIN_DEBOUNCE_S + 1.0,
+                                 "calc_intent took longer than the debounce "
+                                 "window the wait exists to cover")
+                self.assertFalse(second.needs_compile,
+                                  "the query returned before the pass it "
+                                  "waited for had actually landed")
 
                 # the background pass must still land on its own
                 deadline = time.monotonic() + 10.0
