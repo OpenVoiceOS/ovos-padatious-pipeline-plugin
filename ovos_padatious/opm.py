@@ -13,6 +13,7 @@
 # limitations under the License.
 #
 """Intent service wrapping padatious."""
+import fnmatch
 import re
 import string
 import time
@@ -252,6 +253,15 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._compile_backoff_until: Dict[str, float] = {}
         self._compile_giveup: set = set()
 
+        # ``blacklisted_labels``: intent labels this plugin must never train
+        # or match, e.g. so a neural (m2v) tier can front the default skills'
+        # label set and padatious only handles user-installed skills it owns.
+        # Entries are matched against the SAME canonical ``<skill_id>:<name>``
+        # form registration collapses onto (see ``_dealias_intent_name``), and
+        # may be an exact id or an fnmatch glob (``<skill_id>:*`` blacklists
+        # a whole skill). Defaults to empty: shipped behaviour is unchanged.
+        self._label_blacklist = tuple(self.config.get("blacklisted_labels") or [])
+
         self.registered_intents = []
         self.registered_entities = []
         self._skill2intent = defaultdict(list)
@@ -318,6 +328,12 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     def padatious_config(self, val):
         log_deprecation("self.padatious_config is deprecated, access self.config directly instead", "2.0.0")
         self.config = val
+
+    def _is_blacklisted_label(self, name: str) -> bool:
+        """Check a canonical ``<skill_id>:<name>`` label against the
+        ``blacklisted_labels`` config (exact ids and fnmatch globs, e.g.
+        ``some-skill.openvoiceos:*`` blacklists a whole skill)."""
+        return any(fnmatch.fnmatchcase(name, pattern) for pattern in self._label_blacklist)
 
     def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[
         IntentHandlerMatch]:
@@ -775,6 +791,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # duplicates (ovos-core#831). This plugin owns its own back-compat.
         message.data['name'] = _dealias_intent_name(message.data['name'])
 
+        if self._is_blacklisted_label(message.data['name']):
+            LOG.debug(f"Padatious intent '{message.data['name']}' matches "
+                      f"'blacklisted_labels' config; registration ignored")
+            return
+
         if message.data['name'] not in self._skill2intent[skill_id]:
             self._skill2intent[skill_id].append(message.data['name'])
         # retain the registration so an INTENT-4 enable (§8.5) can re-train
@@ -1101,7 +1122,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # pass actually lands.
         compiled_generation = getattr(intent_container, "compiled_generation", 0)
         intents = [_calc_padatious_intent(utt, intent_container, compiled_generation,
-                                          blacklisted_intents, blacklisted_skills)
+                                          blacklisted_intents, blacklisted_skills,
+                                          self._label_blacklist)
                    for utt in utterances]
         intents = [i for i in intents if i is not None]
         # OVOS-CONTEXT-1 §6/§6.1: drop any candidate whose requires/excludes
@@ -1314,7 +1336,8 @@ def _calc_padatious_intent(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
                            compiled_generation: int = 0,
                            blacklisted_intents: frozenset = frozenset(),
-                           blacklisted_skills: frozenset = frozenset()) -> Optional[PadatiousIntent]:
+                           blacklisted_skills: frozenset = frozenset(),
+                           label_blacklist_patterns: tuple = tuple()) -> Optional[PadatiousIntent]:
     """
     Try to match an utterance to an intent in an intent_container
     @param utt: str - text to match intent against
@@ -1333,6 +1356,11 @@ def _calc_padatious_intent(utt: str,
 
     The session blacklists are passed as hashable frozensets so this stays
     ``lru_cache``-able (Session is unhashable under ovos-bus-client>=2.4.0a1).
+    ``label_blacklist_patterns`` is the ``blacklisted_labels`` config
+    (exact ids and fnmatch globs) checked here as defense in depth: a label
+    blacklisted after a container already trained it must still never be
+    returned (registration itself already refuses to train it in the first
+    place - see ``PadatiousPipeline._is_blacklisted_label``).
     @return: matched PadatiousIntent
     """
     try:
@@ -1344,7 +1372,9 @@ def _calc_padatious_intent(utt: str,
         # blacklist needs canonicalizing here.
         matches = [m for m in intent_container.calc_intents(utt.lower())
                    if m.name not in blacklisted_intents
-                   and m.name.split(":")[0] not in blacklisted_skills]
+                   and m.name.split(":")[0] not in blacklisted_skills
+                   and not any(fnmatch.fnmatchcase(m.name, pattern)
+                               for pattern in label_blacklist_patterns)]
         if len(matches) == 0:
             return None
         best_match = max(matches, key=lambda x: x.conf)
