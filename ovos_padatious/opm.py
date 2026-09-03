@@ -591,7 +591,23 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             # nothing successfully would be a false "ready" signal (dev's
             # pre-#124 behaviour never reached its own emit on a raising
             # compile either, since the exception was uncaught there).
-            if any_success:
+            #
+            # ``train()`` returning without raising is not the same as the
+            # container being clean: a registration can land after its
+            # snapshot was taken but before it returns (see
+            # ``IntentContainer._train_generation``/padaos'
+            # ``_mutation_gen``), in which case ``must_train``/
+            # ``padaos.must_compile`` are correctly left set for the next
+            # pass to pick up - but ``any_success`` alone does not see
+            # that. padaos is the far likelier of the two to still be
+            # dirty here: every ``padaos.add_intent``/``add_entity`` call
+            # marks it unconditionally, with no cache-aware skip of its
+            # own, so a registration trickling in during a compile leaves
+            # it as a second, independent "not actually done yet" signal
+            # this check used to ignore. Only announce readiness for a
+            # container this pass touched once it is ACTUALLY clean.
+            still_dirty = any(self.containers[lang].needs_compile for lang in target_langs)
+            if any_success and not still_dirty:
                 self.bus.emit(Message('mycroft.skills.trained'))
             self.finished_training_event.set()
 
