@@ -1,46 +1,29 @@
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md) 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md)
+
 # Padatious
 
-An efficient and agile neural network intent parser powered by [fann](https://github.com/libfann/fann).
-
-This repository contains a OVOS pipeline plugin and bundles a fork of the original [padatious](https://github.com/MycroftAI/padatious) from the defunct MycroftAI
+Padatious is a neural network intent parser, implemented in pure numpy with a [FANN](https://github.com/libfann/fann)-compatible model format. This repository packages it as an [OpenVoiceOS](https://openvoiceos.org/) (OVOS) pipeline plugin and bundles a maintained fork of the original [padatious](https://github.com/MycroftAI/padatious) from Mycroft AI.
 
 ## Features
 
- - Intents are easy to create
- - Requires a relatively small amount of data
- - Intents run independent of each other
- - Easily extract entities (ie. Find the nearest *gas station* -> `place: gas station`)
- - Fast training with a modular approach to neural networks
+- Intents are easy to create from a handful of example sentences.
+- Each intent trains its own small network, independent of the others.
+- Fast training on a small amount of data.
+- Entity extraction from a matched sentence (for example, `Find the nearest {place}` matches "Find the nearest gas station" and extracts `place: gas station`).
 
+## Installing
 
-### Installing
+Padatious is pure Python (numpy). It needs no native libraries or compilers.
 
-Padatious requires the following native packages to be installed:
+Install from PyPI:
 
- - [`FANN`][fann] (with dev headers)
- - Python development headers
- - `pip3`
- - `swig`
-
-Ubuntu:
-
-```
-sudo apt-get install libfann-dev python3-dev python3-pip swig libfann-dev python3-fann2
+```bash
+pip install ovos-padatious-pipeline-plugin
 ```
 
-Next, install Padatious via `pip3`:
+## Direct Usage
 
-```
-pip3 install padatious
-```
-Padatious also works in Python 2 if you are unable to upgrade.
-
-### Direct Usage
-
-Here's a simple example of how to use Padatious:
-
-```Python
+```python
 from ovos_padatious import IntentContainer
 
 container = IntentContainer('intent_cache')
@@ -55,8 +38,16 @@ print(container.calc_intent('Search for cats on CatTube.'))
 container.remove_intent('goodbye')
 ```
 
-### License
+Inside OVOS, the plugin is discovered automatically through its `opm.pipeline` entry point. See [docs/](docs/README.md) for installation details, the intent file syntax, the full Python API, pipeline configuration, and the matching algorithm.
 
-> **NOTE**: This plugin is an exception to [OVOS universal donor policy](https://openvoiceos.github.io/ovos-technical-manual/license/)
+Inside OVOS, training and compiling always run on a background worker, never on the thread that registered or queried something (including the very first pass); a test or tool that registers an intent and needs to query it right away should call `PadatiousPipeline.wait_until_trained()` (see [docs/ovos_pipeline.md](docs/ovos_pipeline.md#training-is-asynchronous)) rather than polling or sleeping.
 
-It is licensed under the Apache 2 license, however it depends on fann2 which is licensed under the LGPL. [Why is this an issue?](https://softwareengineering.stackexchange.com/questions/119436/what-does-gpl-with-classpath-exception-mean-in-practice/326325#326325)
+## Related projects
+
+- [OpenVoiceOS/ovos-spec-tools](https://github.com/OpenVoiceOS/ovos-spec-tools): the reference implementation of the OVOS architecture specifications, used here for sentence-template expansion and language tag handling.
+- [OpenVoiceOS/architecture](https://github.com/OpenVoiceOS/architecture): the OpenVoiceOS architecture specifications.
+- [OpenVoiceOS/ovos-plugin-manager](https://github.com/OpenVoiceOS/ovos-plugin-manager): the plugin and entry-point system that loads this pipeline into OVOS.
+
+## License
+
+Licensed under the Apache 2.0 license.

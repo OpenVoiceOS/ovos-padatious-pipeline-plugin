@@ -13,10 +13,15 @@
 # limitations under the License.
 
 from ovos_utils import flatten_list
-from ovos_utils.bracket_expansion import expand_template
+from ovos_utils.log import LOG, log_deprecation
+from ovos_spec_tools import expand as expand_template
+from ovos_spec_tools.expansion import MalformedTemplate
 
 from xxhash import xxh32
 from ovos_padatious.bracket_expansion import SentenceTreeParser
+from ovos_padatious.version import VERSION_MAJOR
+
+_HASH_WILDCARD_REMOVAL = f"{VERSION_MAJOR + 1}.0.0"
 
 
 def lines_hash(lines):
@@ -46,9 +51,44 @@ def tokenize(sentence):
     class Vars:
         start_pos = -1
         last_type = 'o'
+        in_brace = False
 
     def update(c, i):
-        if c.isalpha() or c in '-{}':
+        # '_' is grouped with the alpha/word class rather than treated as a
+        # break character. This matters most for template slot placeholders
+        # such as '{pokemon_a}': the '{' and '}' are also in this class, so
+        # the whole placeholder tokenizes as a single token '{pokemon_a}'
+        # instead of splitting into ['{pokemon', '_', 'a}']. Downstream code
+        # (Intent.train, EntityManager.find, Entity.wrap_name, ...) all key
+        # off a token that starts with '{' and ends with '}' to recognize a
+        # slot - a split placeholder silently produces a bogus PosIntent
+        # token and an entity name that never resolves.
+        #
+        # tokenize() is shared by template lines (training side) AND by
+        # plain user utterances (runtime match side), so this also changes
+        # how a literal underscore in an utterance tokenizes: 'foo_bar' now
+        # becomes ['foo_bar'] instead of ['foo', '_', 'bar']. That is an
+        # accepted, deliberate side effect: word_with_underscore is already
+        # one identifier/word to a human, splitting on '_' was never useful
+        # for matching ordinary text, and keeping it whole makes template
+        # and utterance tokenization behave consistently for the same input.
+        #
+        # Digits get the same brace-scoped treatment, but ONLY inside a
+        # '{...}' span: '{slot_1}' must tokenize as one token exactly like
+        # '{slot_a}' does, otherwise the same bug resurfaces for any slot
+        # name that happens to contain a digit. Outside of braces, digits
+        # keep splitting from letters exactly as before ('one1' -> ['one',
+        # '1']) - IdManager.adj_token() (id_manager.py) relies on isolated
+        # pure-digit tokens to canonicalize numbers to '#' placeholders for
+        # the neural net, and tests/test_util.py pins 'one1 two2' ->
+        # ['one', '1', 'two', '2'] as existing, load-bearing behavior that
+        # must not change.
+        if c == '{':
+            Vars.in_brace = True
+        elif c == '}':
+            Vars.in_brace = False
+
+        if c.isalpha() or c in '-_{}' or (Vars.in_brace and (c.isdigit() or c == '#')):
             t = 'a'
         elif c.isdigit() or c == '#':
             t = 'n'
@@ -95,14 +135,88 @@ def expand_parentheses(sent):
     return SentenceTreeParser(sent).expand_parentheses()
 
 
+def expand_or_skip(line, context=""):
+    """Expand *line* via ``expand_template``, skipping it on failure.
+
+    ``expand_template`` is deliberately strict per the intent template spec
+    (e.g. it rejects single-branch groups like ``"cansad(e)"`` as
+    :class:`MalformedTemplate`). That strictness is spec-side and must not be
+    relaxed here. A single malformed line must not abort expansion of the
+    remaining training lines, so on :class:`MalformedTemplate` we log a
+    warning and contribute no samples for that line.
+
+    Shared by every ``expand_template`` call site in this plugin (the
+    file-based training path here in ``util.py`` and the messagebus
+    registration path in ``opm.py``) so the tolerance behavior is defined
+    exactly once.
+
+    Args:
+        line: Already-normalised training/sample line to expand.
+        context: Optional human-readable identifier (e.g. ``"intent 'foo'"``)
+            used in the warning log to name the offending registration.
+
+    Returns:
+        List of expanded variants, or ``[]`` if expansion failed.
+    """
+    try:
+        return list(expand_template(line))
+    except MalformedTemplate as e:
+        LOG.warning(
+            "malformed template%s: %r (%s) - skipping line",
+            f" in {context}" if context else "", line, e,
+        )
+        return []
+
+
 def expand_lines(lines):
-    lines = [expand_template(i) for i in remove_comments(lines) if i.strip()]
+    lines = [expand_or_skip(i) for i in remove_comments(lines) if i.strip()]
     return flatten_list(lines)
 
 
 def remove_comments(lines):
     # NOTE: padatious considers comments as // but all of mycroft/OVOS uses #
     return [i for i in lines if not i.startswith('//')]
+
+
+def warn_hash_wildcard(name, lines):
+    """Deprecation warning for the inline '#' digit wildcard.
+
+    ``#`` in a template line is a padatious-only extension: ``padaos``
+    compiles it to a digit-class regex (``ovos_padatious.padaos``) and
+    ``id_manager``/this module canonicalize literal digits to ``#`` for the
+    neural net. No other OVOS intent engine understands it, it collides with
+    the ``#``-as-comment-marker convention used elsewhere in the ecosystem,
+    and it assumes the entity is spoken/ASR'd as a literal digit string. The
+    portable replacement is a ``{slot}`` placeholder with skill-side number
+    parsing.
+
+    Behavior is unchanged this cycle - ``#`` still matches digits exactly as
+    before. Warns at most once per call (ie. once per intent/entity
+    registration).
+
+    Args:
+        name: Intent/entity name, used to identify the offender in the log.
+        lines: Raw, not-yet-expanded template lines as registered.
+    """
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith('//') or stripped.startswith('#'):
+            continue
+        i = 0
+        while i < len(stripped):
+            c = stripped[i]
+            if c == '\\':
+                i += 2
+                continue
+            if c == '#':
+                log_deprecation(
+                    f"the inline '#' digit wildcard in {name!r} "
+                    f"(line: {line!r}) is deprecated, use a `{{slot}}` "
+                    "placeholder with skill-side number parsing instead",
+                    _HASH_WILDCARD_REMOVAL,
+                )
+                return
+            i += 1
 
 
 def resolve_conflicts(inputs, outputs):

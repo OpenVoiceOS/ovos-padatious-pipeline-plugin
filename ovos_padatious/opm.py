@@ -15,14 +15,14 @@
 """Intent service wrapping padatious."""
 import re
 import string
+import time
 from collections import defaultdict
 from functools import lru_cache
 from os.path import expanduser, isfile
-from threading import Event, RLock
+from threading import Event, RLock, Thread, current_thread
 from typing import Optional, Dict, List, Union, Type
 
 import snowballstemmer
-from langcodes import closest_match
 from ovos_config.config import Configuration
 from ovos_config.meta import get_xdg_base
 
@@ -32,11 +32,13 @@ from ovos_bus_client.session import SessionManager, Session
 from ovos_padatious import IntentContainer
 from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
+from ovos_padatious.util import expand_or_skip
 from ovos_plugin_manager.templates.pipeline import ConfidenceMatcherPipeline, IntentHandlerMatch
+from ovos_spec_tools import closest_lang, expand as expand_template, standardize_lang
+from ovos_spec_tools import SpecMessage
+from ovos_spec_tools import gate_satisfied, context_slot_candidates
 from ovos_utils import flatten_list
-from ovos_utils.bracket_expansion import expand_template
 from ovos_utils.fakebus import FakeBus
-from ovos_utils.lang import standardize_lang_tag
 from ovos_utils.list_utils import deduplicate_list
 from ovos_utils.log import LOG, deprecated, log_deprecation
 from ovos_utils.text_utils import remove_accents_and_punct
@@ -47,6 +49,11 @@ PadatiousIntentContainer = IntentContainer  # backwards compat
 
 # for easy typing
 PadatiousEngine = Union[Type[IntentContainer], Type[DomainIntentContainer]]
+
+
+# OVOS-INTENT-1: a template slot is written ``{entity_name}`` in a sample; the
+# padaos parser recognises the same lowercase/underscore/colon name form.
+_SLOT_RE = re.compile(r"{([a-z_:]+)}")
 
 
 
@@ -68,13 +75,20 @@ def normalize_utterances(utterances: List[str], lang: str, cast_to_ascii: bool =
     """
     # Flatten the list if it's in old style tuple format
     utterances = flatten_list(utterances)  # Assuming flatten_list is defined elsewhere
+    # Normalize case: OVOS-INTENT-1 §2 normalizes input to lowercase for matching,
+    # so training samples and extracted slot values stay case-insensitive
+    # (ovos_spec_tools.expand preserves case; the prior expander lowercased).
+    utterances = [u.lower() for u in utterances]
     # Collapse multiple whitespaces into a single space
     utterances = [re.sub(r'\s+', ' ', u) for u in utterances]
     # Replace accented characters and punctuation if needed
     if cast_to_ascii:
         utterances = [remove_accents_and_punct(u) for u in utterances]
-    # strip punctuation marks, that just causes duplicate training data
-    utterances = [u.rstrip(string.punctuation) for u in utterances]
+    # strip trailing punctuation, that just causes duplicate training data —
+    # but preserve the slot/vocabulary metacharacters {} <> so a template
+    # ending in a slot ({name}) keeps its closing brace (OVOS-INTENT-1 §3)
+    _trailing_punct = ''.join(c for c in string.punctuation if c not in '{}<>')
+    utterances = [u.rstrip(_trailing_punct) for u in utterances]
     # Stem words if stemmer is provided
     if stemmer is not None:
         utterances = stemmer.stem_sentences(utterances)
@@ -106,8 +120,8 @@ class Stemmer:
         Raises:
             ValueError: If the language is unsupported.
         """
-        lang2 = closest_match(lang, list(self.LANGS))[0]
-        if lang2 == "und":
+        lang2 = closest_lang(lang, list(self.LANGS))
+        if lang2 is None:
             raise ValueError(f"unsupported language: {lang}")
         self.snowball = snowballstemmer.stemmer(self.LANGS[lang2])
 
@@ -122,8 +136,7 @@ class Stemmer:
         Returns:
             bool: True if the language is supported, False otherwise.
         """
-        lang2 = closest_match(lang, list(cls.LANGS))[0]
-        return lang2 != "und"
+        return closest_lang(lang, list(cls.LANGS)) is not None
 
     def stem_sentence(self, sentence: str) -> str:
         """
@@ -172,17 +185,20 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     def __init__(self, bus: Optional[Union[MessageBusClient, FakeBus]] = None,
                  config: Optional[Dict] = None,
                  engine_class: Optional[PadatiousEngine] = None):
-
+        intent_config = Configuration().get('intents', {})
+        config = config or intent_config.get("ovos-padatious-pipeline-plugin") or intent_config.get("padatious") or dict()
         super().__init__(bus, config)
         try:
             faulthandler.enable()  # Enables crash logging
         except Exception:
             pass # happens in unittests and such
         self.lock = RLock()
+        self._train_spawn_lock = RLock()
+        self._background_trainer: Optional[Thread] = None
         core_config = Configuration()
-        self.lang = standardize_lang_tag(core_config.get("lang", "en-US"))
+        self.lang = standardize_lang(core_config.get("lang", "en-US"))
         langs = core_config.get('secondary_langs') or []
-        langs = [standardize_lang_tag(l) for l in langs]
+        langs = [standardize_lang(l) for l in langs]
         if self.lang not in langs:
             langs.append(self.lang)
 
@@ -227,11 +243,50 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.finished_training_event = Event()
         self.finished_training_event.set()  # is cleared when training starts
 
+        # Per-lang consecutive compile-failure tracking for the background
+        # worker's backoff (see _train_sync/_train_worker): a persistently
+        # raising compile must not retry at the worker's tight poll rate
+        # forever, spamming an ERROR traceback and a spurious
+        # ``mycroft.skills.trained`` on every pass.
+        self._compile_fail_counts: Dict[str, int] = defaultdict(int)
+        self._compile_backoff_until: Dict[str, float] = {}
+        self._compile_giveup: set = set()
+
         self.registered_intents = []
         self.registered_entities = []
         self._skill2intent = defaultdict(list)
         self.max_words = 50  # if an utterance contains more words than this, don't attempt to match
 
+        # OVOS-INTENT-4 §8.5 enable/disable: padatious has no native
+        # suppression flag, so disable detaches the intent and enable
+        # re-registers it. _intent_definitions retains the register Message
+        # of every registered intent (full name -> Message); _disabled_intents
+        # holds the subset currently suppressed.
+        self._intent_definitions = {}
+        self._disabled_intents = {}
+
+        # OVOS-CONTEXT-1 §6/§6.1 requires_context / excludes_context gating.
+        # Registration MAY carry these declarations; they are stored per
+        # registered intent (keyed by the internal ``<skill_id>:<name>``) and
+        # evaluated at match time via the shared ``gate_satisfied`` helper.
+        # Retained across the disable/enable lifecycle (mirrors
+        # _intent_definitions); dropped only on deregister.
+        self._intent_context_gates = {}
+
+        # OVOS-CONTEXT-1 §7 uniform slot fill: the declared template slots of
+        # each registered intent, keyed by the internal ``<skill_id>:<name>``.
+        # Any declared slot the utterance leaves unresolved is filled from a
+        # live ``session.intent_context`` entry, independent of requires_context.
+        self._intent_slots = {}
+
+        # INTENT-2 §4.3 per-slot value blacklist: ``{slot: [values]}`` carried
+        # in the registration payload. A slot the utterance binds to a
+        # blacklisted value (whole-word-sequence) is treated as UNRESOLVED so
+        # the §7 context candidate fills it. Anaphoric pronouns are supplied
+        # here as a locale resource rather than hardcoded.
+        self._intent_slot_blacklists = {}
+
+        # legacy registration contract (kept for back-compat)
         self.bus.on('padatious:register_intent', self.register_intent)
         self.bus.on('padatious:register_entity', self.register_entity)
         self.bus.on('detach_intent', self.handle_detach_intent)
@@ -240,6 +295,17 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
         self.bus.on('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
         self.bus.on('mycroft.skills.train', self.train)
+
+        # OVOS-INTENT-4 spec registration contract (in addition to legacy).
+        # Padatious is a TEMPLATE engine, so register.template is its primary
+        # consumed topic; keyword registrations are ignored by design (§11).
+        self.bus.on(SpecMessage.INTENT_REGISTER_TEMPLATE, self.handle_register_template)
+        self.bus.on(SpecMessage.ENTITY_REGISTER, self.handle_register_entity_spec)
+        self.bus.on(SpecMessage.INTENT_DEREGISTER, self.handle_deregister_intent_spec)
+        self.bus.on(SpecMessage.ENTITY_DEREGISTER, self.handle_deregister_entity_spec)
+        self.bus.on(SpecMessage.SKILL_DEREGISTER, self.handle_deregister_skill_spec)
+        self.bus.on(SpecMessage.INTENT_ENABLE, self.handle_enable_intent_spec)
+        self.bus.on(SpecMessage.INTENT_DISABLE, self.handle_disable_intent_spec)
 
         LOG.debug('Loaded Padatious intent pipeline')
 
@@ -263,7 +329,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             limit (float): required confidence level.
         """
         LOG.debug(f'Padatious Matching confidence > {limit}')
-        lang = standardize_lang_tag(lang or self.lang)
+        lang = standardize_lang(lang or self.lang)
 
         if lang in self.stemmers:
             stemmer = self.stemmers[lang]
@@ -312,33 +378,291 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     def train(self, message=None):
         """Perform padatious training.
 
+        Training NEVER runs on the calling thread, including a pipeline's
+        very first pass ever - the ``mycroft.skills.train`` handler (this
+        method) and every registration handler (``register_intent`` et al)
+        all pump messages synchronously on the same bus-connection thread
+        (see ``MessageBusClient.on_message``), so blocking here for the
+        full compile+train duration - tens of seconds to minutes on a large
+        skill set, per the ser9 field trace - would stall every other bus
+        message (including the ``intent.service.padatious.*`` getters,
+        which must answer immediately) right along with it. The one
+        exception is ``instant_train`` mode, which explicitly promises the
+        model reflects a registration by the time the call returns; that
+        mode is an opt-in trade-off the caller accepts. Everywhere else,
+        training is handed to a single background worker and this call
+        returns immediately; queries keep being served against whatever the
+        neural tier's own cache-hit-loaded state already provides (see
+        ``IntentContainer._train_in_background``) until the pass lands.
+        Readiness is reported via the ``mycroft.skills.trained`` bus event,
+        which ovos-core (and other completion-waiters) block on instead.
+
         Args:
             message (Message): optional triggering message
+        """
+        # ``needs_compile`` also catches a padaos-only dirty container: a
+        # hash-cache-hit registration replay never sets ``must_train`` (see
+        # IntentContainer.add_intent), but padaos.add_intent/add_entity have
+        # no cache-aware skip of their own and always leave
+        # ``padaos.must_compile`` True. Gating solely on ``must_train`` here
+        # left that padaos compile stuck pending until the first live query
+        # forced it synchronously on the bus thread (ser9 field trace).
+        if not any(engine.needs_compile for engine in self.containers.values()):
+            self.bus.emit(Message('mycroft.skills.trained'))
+            return
+
+        if self.config.get("instant_train", False):
+            self._train_sync()
+            return
+
+        self._spawn_background_trainer()
+
+    def _spawn_background_trainer(self) -> None:
+        """Ensure the single background training worker is running.
+
+        Never blocks and never trains on the calling thread itself - it
+        only starts (or confirms already-running) ``_train_worker`` on its
+        own daemon thread. Shared by ``train()``'s own background branch
+        and by ``wait_until_trained()``, which must be able to make sure a
+        pass is actually scheduled without ever calling ``_train_sync``
+        (that trains on whichever thread calls it) itself.
+        """
+        with self._train_spawn_lock:
+            if self._background_trainer is not None and self._background_trainer.is_alive():
+                return
+            self._background_trainer = Thread(target=self._guarded_train_worker, daemon=True)
+            self._background_trainer.start()
+
+    def _retire(self) -> None:
+        """Drop the worker handle so the next ``_spawn_background_trainer``
+        starts a fresh thread. Callers must hold ``_train_spawn_lock``."""
+        self._background_trainer = None
+
+    def _guarded_train_worker(self) -> None:
+        """Run the worker, releasing its handle however it ends.
+
+        ``_train_worker`` retires itself under the spawn lock on its normal
+        exit, which is what keeps that exit atomic against a registration
+        arriving at the same moment. An unexpected raise would otherwise
+        leave a dead thread recorded as the current worker for as long as
+        ``is_alive()`` takes to catch up, so the handle is dropped here too.
+        """
+        try:
+            self._train_worker()
+        finally:
+            with self._train_spawn_lock:
+                if self._background_trainer is current_thread():
+                    self._retire()
+
+    # Backoff schedule for a lang container whose compile keeps raising:
+    # 2s, 4s, 8s, ... capped at 5 minutes, so a persistently broken compile
+    # settles at one attempt every 5 minutes instead of retrying at
+    # ``_wait_for_quiet``'s tight cadence forever.
+    _COMPILE_BACKOFF_BASE_S = 2.0
+    _COMPILE_BACKOFF_CAP_S = 300.0
+    _COMPILE_MAX_CONSECUTIVE_FAILURES = 5
+
+    def _rearm_training(self, lang: str) -> None:
+        """Reset a lang's compile-failure backoff state and make sure a
+        compile is actually scheduled for the registration that just landed.
+
+        A registration/entity change is new information the failed compile
+        never saw, so a container that had been given up on (see
+        ``_train_sync``/``_train_worker``) deserves a fresh run of attempts
+        rather than staying parked until process restart.
+
+        Clearing the backoff only decides *how* a pass would be retried; it
+        does not schedule one. During boot ``first_train`` is still unset
+        and ``instant_train`` is off by default, so ``register_intent``
+        trains on neither path and the dirty container had nothing left to
+        compile it until some later live query happened to drive training
+        itself - leaving every intent registered at boot unmatchable in the
+        meantime. Arming the worker here ties the compile to the
+        registration that caused it. The worker still debounces the boot
+        wave into as few passes as possible (see
+        ``IntentContainer._wait_for_quiet``) and still runs entirely off
+        the calling thread.
+        """
+        self._compile_fail_counts.pop(lang, None)
+        self._compile_backoff_until.pop(lang, None)
+        self._compile_giveup.discard(lang)
+        self._spawn_background_trainer()
+
+    def _train_worker(self) -> None:
+        """Background-thread entry point for ``train()``: waits for a quiet
+        window (see ``IntentContainer._wait_for_quiet``) before each pass so
+        a registration wave that trickles in over time - e.g. a slow,
+        serialized skill boot, or ovos-core's periodic registration
+        reconciliation - coalesces into as few full retrains as possible,
+        then keeps going until nothing is left dirty.
+
+        A lang whose compile keeps raising is retried with exponential
+        backoff (see ``_train_sync``) and, after
+        ``_COMPILE_MAX_CONSECUTIVE_FAILURES`` in a row, is dropped from this
+        loop entirely (``_compile_giveup``) until a registration touching
+        that lang resets its failure count - otherwise this loop would spin
+        forever at ``_wait_for_quiet``'s cadence on a container that can
+        never succeed.
+        """
+        while True:
+            pending = [lang for lang, engine in self.containers.items()
+                      if engine.needs_compile and lang not in self._compile_giveup]
+            if not pending:
+                # Retiring the worker has to be atomic against
+                # _spawn_background_trainer, which is now the only thing
+                # that schedules a pass: a registration landing between
+                # this check and the thread actually dying would otherwise
+                # find is_alive() still True, spawn nothing, and strand
+                # that container dirty until some later registration.
+                # Clearing the handle under the spawn lock makes the next
+                # spawn start a fresh worker instead.
+                with self._train_spawn_lock:
+                    if any(engine.needs_compile and lang not in self._compile_giveup
+                           for lang, engine in self.containers.items()):
+                        continue
+                    self._retire()
+                    return
+            now = time.monotonic()
+            due = [lang for lang in pending if self._compile_backoff_until.get(lang, 0) <= now]
+            if not due:
+                time.sleep(max(0.05, min(self._compile_backoff_until[lang] - now for lang in pending)))
+                continue
+            for lang in due:
+                self.containers[lang]._wait_for_quiet()
+            self._train_sync(only_langs=set(due))
+
+    def _train_sync(self, only_langs: Optional[set] = None) -> None:
+        """Blocking training pass - called either from the background
+        worker's own thread (the normal case) or directly on the calling
+        thread under ``instant_train`` (an explicit, opt-in exception -
+        see ``train``).
+
+        @param only_langs: restrict this pass to these langs (used by the
+            background worker to skip langs still in their backoff window);
+            ``None`` (the default, used by ``instant_train`` and any direct
+            caller) attempts every dirty lang.
         """
         # wait for any already ongoing training
         # padatious doesnt like threads
         if not self.finished_training_event.is_set():
             self.finished_training_event.wait()
         with self.lock:
-            if not any(engine.must_train for engine in self.containers.values()):
+            target_langs = [lang for lang in self.containers
+                            if self.containers[lang].needs_compile
+                            and (only_langs is None or lang in only_langs)]
+            if not target_langs:
                 # LOG.debug(f"Nothing new to train for padatious")
                 # inform the rest of the system to not wait for training finish
                 self.bus.emit(Message('mycroft.skills.trained'))
                 self.finished_training_event.set()
                 return
             self.finished_training_event.clear()
-            # TODO - run this in subprocess?, sometimes fann2 segfaults and kills ovos-core...
-            for lang in self.containers:
-                if self.containers[lang].must_train:
+            any_success = False
+            for lang in target_langs:
+                try:
                     #LOG.debug(f"Training padatious for lang '{lang}'")
                     self.containers[lang].train()
-
-            # inform the rest of the system to stop waiting for training finish
-            self.bus.emit(Message('mycroft.skills.trained'))
+                except Exception as e:
+                    # a raising _compile()/train() must never leave
+                    # finished_training_event cleared - every later
+                    # _train_sync call (including from wait_until_trained's
+                    # own polling, which never trains itself) would then
+                    # block forever on its untimed wait() above.
+                    # needs_compile stays True for whichever container
+                    # never finished, so the background worker's own retry
+                    # loop (_train_worker) picks it back up - with backoff -
+                    # on a later pass instead of silently giving up.
+                    self._compile_fail_counts[lang] += 1
+                    n = self._compile_fail_counts[lang]
+                    backoff = min(self._COMPILE_BACKOFF_BASE_S * (2 ** (n - 1)), self._COMPILE_BACKOFF_CAP_S)
+                    self._compile_backoff_until[lang] = time.monotonic() + backoff
+                    LOG.exception(f"padatious training pass failed for lang {lang!r}: {e}")
+                    if n >= self._COMPILE_MAX_CONSECUTIVE_FAILURES and lang not in self._compile_giveup:
+                        self._compile_giveup.add(lang)
+                        LOG.error(
+                            f"padatious training for lang {lang!r} failed {n} times in a "
+                            f"row; giving up until the next registration change for that lang")
+                else:
+                    self._compile_fail_counts[lang] = 0
+                    self._compile_backoff_until.pop(lang, None)
+                    any_success = True
+            # ``mycroft.skills.trained`` promises the model reflects the
+            # latest registrations; emitting it on a pass that trained
+            # nothing successfully would be a false "ready" signal (dev's
+            # pre-#124 behaviour never reached its own emit on a raising
+            # compile either, since the exception was uncaught there).
+            #
+            # ``train()`` returning without raising is not the same as the
+            # container being clean: a registration can land after its
+            # snapshot was taken but before it returns (see
+            # ``IntentContainer._train_generation``/padaos'
+            # ``_mutation_gen``), in which case ``must_train``/
+            # ``padaos.must_compile`` are correctly left set for the next
+            # pass to pick up - but ``any_success`` alone does not see
+            # that. padaos is the far likelier of the two to still be
+            # dirty here: every ``padaos.add_intent``/``add_entity`` call
+            # marks it unconditionally, with no cache-aware skip of its
+            # own, so a registration trickling in during a compile leaves
+            # it as a second, independent "not actually done yet" signal
+            # this check used to ignore. Only announce readiness for a
+            # container this pass touched once it is ACTUALLY clean.
+            still_dirty = any(self.containers[lang].needs_compile for lang in target_langs)
+            if any_success and not still_dirty:
+                self.bus.emit(Message('mycroft.skills.trained'))
             self.finished_training_event.set()
+
+        if any_success:
+            # Training changes the model; stale LRU cache entries must be
+            # evicted so that the next call to calc_intent reflects the
+            # updated state.
+            _calc_padatious_intent.cache_clear()
 
         if not self.first_train.is_set():
             self.first_train.set()
+
+    def wait_until_trained(self, timeout: Optional[float] = None) -> bool:
+        """Block until every language container is fully compiled/trained.
+
+        This is a **test/tooling synchronization helper**, not something a
+        skill or a production caller needs: registration is deliberately
+        asynchronous (see ``train()``/``IntentContainer._train_in_background``,
+        which never trains on the calling thread even for a container that
+        has never trained at all) so a query is never blocked behind a
+        compile, and readiness is normally observed via the
+        ``mycroft.skills.trained`` bus event. A test harness that registers
+        an intent and then immediately wants to query it deterministically
+        - without polling ``needs_compile`` on internal containers itself -
+        should call this instead.
+
+        This method JOINS the background worker (ensuring one is actually
+        running via ``_spawn_background_trainer``, then polling
+        ``needs_compile`` against the deadline); it never calls
+        ``_train_sync``/``train()`` itself and so never trains ON THE
+        CALLING THREAD, and the timeout is honoured even while a pass is
+        already in flight - an earlier version of this method called
+        ``_train_sync`` in a loop, whose untimed
+        ``finished_training_event.wait()`` made the ``timeout`` argument a
+        no-op whenever a pass was in progress.
+
+        @param timeout: seconds to wait before giving up, or ``None`` to
+            wait forever.
+        @return: True once every container reports ``needs_compile`` False,
+            False if ``timeout`` elapsed first.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        if not any(engine.needs_compile for engine in self.containers.values()):
+            return True
+        self._spawn_background_trainer()
+        poll_interval = 0.05
+        while any(engine.needs_compile for engine in self.containers.values()):
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                time.sleep(min(poll_interval, remaining))
+            else:
+                time.sleep(poll_interval)
+        return True
 
     @deprecated("'wait_and_train' has been deprecated, use 'train' directly", "2.0.0")
     def wait_and_train(self):
@@ -351,6 +675,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             intent_name (str): intent identifier
         """
+        # Detach/removal must key off the same canonical name registration
+        # collapsed onto, so unregistering by either the legacy `.intent`
+        # alias or the OVOS-INTENT-4 canonical id works (ovos-core#831).
+        intent_name = _dealias_intent_name(intent_name)
         if intent_name in self.registered_intents:
             self.registered_intents.remove(intent_name)
             for lang in self.containers:
@@ -371,6 +699,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             message (Message): message triggering action
         """
         self.__detach_intent(message.data.get('intent_name'))
+        # Intent roster changed; evict stale cache so next match reflects removal.
+        _calc_padatious_intent.cache_clear()
+        # In instant_train mode, retrain immediately so the model also
+        # forgets the intent — otherwise the cleared cache repopulates from
+        # the still-trained model on the next match.
+        if self.config.get("instant_train", False):
+            self.train(message)
 
     def handle_detach_skill(self, message):
         """Messagebus handler for detaching all intents for skill.
@@ -384,6 +719,12 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             skill_id = "anonymous_skill"
         for i in self._skill2intent[skill_id]:
             self.__detach_intent(i)
+        # Intent roster changed; evict stale cache so next match reflects removal.
+        _calc_padatious_intent.cache_clear()
+        # See handle_detach_intent — retrain in instant_train mode so the
+        # underlying model state matches the registered_intents list.
+        if self.config.get("instant_train", False):
+            self.train(message)
 
     def _unpack_object(self, message):
         """convert message to training data"""
@@ -395,7 +736,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         samples = message.data.get("samples")
         name = message.data['name']
         lang = message.data.get('lang', self.lang)
-        lang = standardize_lang_tag(lang)
+        lang = standardize_lang(lang)
         blacklisted_words = message.data.get('blacklisted_words', [])
         if (not file_name or not isfile(file_name)) and not samples:
             LOG.error('Could not find file ' + file_name)
@@ -405,7 +746,21 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             with open(file_name) as f:
                 samples = [line.strip() for line in f.readlines()]
 
-        samples = deduplicate_list(flatten_list([expand_template(s) for s in samples]))
+        samples = deduplicate_list(flatten_list([
+            expand_or_skip(s, f"intent/entity {name!r} (skill {skill_id!r})")
+            for s in samples
+        ]))
+        if not samples:
+            # every line was malformed and skipped: registering with zero
+            # samples would silently create a dead intent/entity that can
+            # never match (conf 0.0 forever) instead of surfacing the
+            # problem, so refuse the registration outright.
+            LOG.error(
+                "intent/entity %r (skill %r) has no valid samples after "
+                "skipping malformed template lines - not registering",
+                name, skill_id,
+            )
+            return
         if lang in self.stemmers:
             stemmer = self.stemmers[lang]
         else:
@@ -427,18 +782,72 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             LOG.warning("Skill ID is missing. Registering under 'anonymous_skill'")
             skill_id = message.data["skill_id"] = "anonymous_skill"
 
-        self._skill2intent[skill_id].append(message.data['name'])
+        # ovos-workshop >= 9.3 dual-registers one logical intent under both
+        # the legacy ``padatious:register_intent`` contract (name suffixed
+        # ``.intent``) and the OVOS-INTENT-4 spec contract (suffix-less,
+        # routed here via handle_register_template). Collapse the alias to
+        # the canonical name HERE, at registration time, so both wire
+        # messages index a single engine entry instead of two matchable
+        # duplicates (ovos-core#831). This plugin owns its own back-compat.
+        message.data['name'] = _dealias_intent_name(message.data['name'])
+
+        if message.data['name'] not in self._skill2intent[skill_id]:
+            self._skill2intent[skill_id].append(message.data['name'])
+        # retain the registration so an INTENT-4 enable (§8.5) can re-train
+        # the intent after a disable detached it
+        self._intent_definitions[message.data['name']] = message
+
+        # OVOS-CONTEXT-1 §6: retain any requires/excludes gating declarations
+        # keyed by the internal intent name. Only stored when present so
+        # intents without a gate keep unchanged (ungated) behavior.
+        requires = message.data.get("requires_context")
+        excludes = message.data.get("excludes_context")
+        if requires or excludes:
+            self._intent_context_gates[message.data['name']] = (requires, excludes)
+
+        # OVOS-CONTEXT-1 §7: record the declared template slots so an
+        # unresolved slot can be filled from context at match time.
+        slots = set()
+        for sample in message.data.get('samples', []):
+            slots.update(_SLOT_RE.findall(sample))
+        if slots:
+            self._intent_slots[message.data['name']] = frozenset(slots)
+
+        # INTENT-2 §4.3: a per-slot value blacklist rides in the payload keyed
+        # by slot name. Accept ``slot_blacklist`` or a dict-valued ``blacklist``
+        # (a list-valued ``blacklist`` is the template-method suppression
+        # vocabulary and is left untouched).
+        slot_blacklist = message.data.get('slot_blacklist')
+        if slot_blacklist is None and isinstance(message.data.get('blacklist'), dict):
+            slot_blacklist = message.data.get('blacklist')
+        if slot_blacklist:
+            self._intent_slot_blacklists[message.data['name']] = {
+                slot: [str(v) for v in values]
+                for slot, values in slot_blacklist.items()}
 
         lang = message.data.get('lang', self.lang)
-        lang = standardize_lang_tag(lang)
+        lang = standardize_lang(lang)
         if lang in self.containers:
-            self.registered_intents.append(message.data['name'])
+            if message.data['name'] not in self.registered_intents:
+                self.registered_intents.append(message.data['name'])
             LOG.debug('Registering Padatious intent: ' + message.data['name'])
-            lang, skill_id, name, samples, blacklisted_words = self._unpack_object(message)
+            unpacked = self._unpack_object(message)
+            if unpacked is None:
+                return
+            lang, skill_id, name, samples, blacklisted_words = unpacked
             if self.engine_class == DomainIntentContainer:
-                self.containers[lang].add_domain_intent(skill_id, name, samples, blacklisted_words)
+                self.containers[lang].add_domain_intent(skill_id, name, samples,
+                                                        blacklisted_words=blacklisted_words)
             else:
-                self.containers[lang].add_intent(name, samples, blacklisted_words)
+                self.containers[lang].add_intent(name, samples,
+                                                 blacklisted_words=blacklisted_words)
+            self._rearm_training(lang)
+            # A re-registration (e.g. new samples replacing an existing
+            # intent's) must retire the old regex/model answer immediately,
+            # not only once the next compile lands - otherwise a query
+            # served between this call and that compile keeps matching the
+            # stale definition at conf 1.0 from the lru_cache.
+            _calc_padatious_intent.cache_clear()
 
         if self.config.get("instant_train", False) or self.first_train.is_set():
             self.train(message)
@@ -450,15 +859,221 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             message (Message): message triggering action
         """
         lang = message.data.get('lang', self.lang)
-        lang = standardize_lang_tag(lang)
+        lang = standardize_lang(lang)
+        # ovos-workshop's register_entity_file() munges the entity name with a
+        # trailing ``_<md5>``; match-time slot lookup uses the raw slot token,
+        # so an un-collapsed name yields an unconstrained wildcard slot. Fold
+        # it here, at registration time - this plugin owns its lookup contract
+        # and this repairs every emitter vintage at once.
+        message.data['name'] = _dealias_entity_name(message.data['name'])
+
         if lang in self.containers:
+            # a dual-emitting emitter (>= 9.3) sends the same entity twice,
+            # once per wire contract; both collapse to one canonical name, so
+            # the manifest must hold exactly one entry for it
+            self.registered_entities = [
+                e for e in self.registered_entities
+                if e.get("name") != message.data['name']
+                or standardize_lang(e.get("lang") or self.lang) != lang]
             self.registered_entities.append(message.data)
-            lang, skill_id, name, samples, _ = self._unpack_object(message)
+            unpacked = self._unpack_object(message)
+            if unpacked is None:
+                return
+            lang, skill_id, name, samples, _ = unpacked
             LOG.debug('Registering Padatious entity: ' + message.data['name'])
             if self.engine_class == DomainIntentContainer:
                 self.containers[lang].add_domain_entity(skill_id, name, samples)
             else:
                 self.containers[lang].add_entity(name, samples)
+            self._rearm_training(lang)
+            # See register_intent: a replaced entity's slot values must stop
+            # matching immediately, not only after the next compile.
+            _calc_padatious_intent.cache_clear()
+
+    # ------------------------------------------------------------------ #
+    # OVOS-INTENT-4 spec registration handlers                           #
+    #                                                                    #
+    # These translate the spec payloads (§§6-8) into the same internal   #
+    # padatious registration calls the legacy handlers use, so both wire #
+    # contracts feed one container. The internal padatious intent/entity #
+    # name is the colon-joined ``<skill_id>:<name>`` the legacy contract #
+    # already used as ``data['name']``.                                  #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _spec_identity(message, name_field):
+        """Pull (skill_id, name) from a §3.2 spec payload.
+
+        Returns (skill_id, name, full_name) where ``full_name`` is the
+        ``<skill_id>:<name>`` key padatious uses internally, or
+        (None, None, None) when identity is missing.
+        """
+        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        name = message.data.get(name_field)
+        if not skill_id or not name:
+            return None, None, None
+        # already-namespaced names are passed through unchanged
+        full = name if name.startswith(f"{skill_id}:") else f"{skill_id}:{name}"
+        return skill_id, name, full
+
+    def handle_register_template(self, message):
+        """Consume ``ovos.intent.register.template`` (OVOS-INTENT-4 §6).
+
+        Maps the spec payload (skill_id, intent_name, lang, samples,
+        blacklist) onto the legacy padatious registration via
+        :meth:`register_intent`.
+        """
+        skill_id, intent_name, full = self._spec_identity(message, "intent_name")
+        if full is None:
+            LOG.warning(f"[{SpecMessage.INTENT_REGISTER_TEMPLATE}] rejected: "
+                        f"missing skill_id/intent_name")
+            return
+        samples = message.data.get("samples")
+        if not samples:  # §6.3 malformed: samples missing/empty
+            LOG.warning(f"[{SpecMessage.INTENT_REGISTER_TEMPLATE}] rejected "
+                        f"skill_id={skill_id} intent_name={intent_name} "
+                        f"lang={message.data.get('lang')}: empty samples")
+            return
+        lang = standardize_lang(message.data.get("lang", self.lang))
+        # §6 'blacklist' is the template-method suppression vocabulary;
+        # padatious calls this 'blacklisted_words'.
+        legacy = Message(
+            "padatious:register_intent",
+            data={"name": full, "samples": list(samples), "lang": lang,
+                  "skill_id": skill_id,
+                  "blacklisted_words": message.data.get("blacklist", []),
+                  # OVOS-CONTEXT-1 §6: forward the optional gating declarations
+                  # onto the internal registration so they are stored per intent.
+                  "requires_context": message.data.get("requires_context"),
+                  "excludes_context": message.data.get("excludes_context"),
+                  # INTENT-2 §4.3: per-slot value blacklist keyed by slot name.
+                  "slot_blacklist": message.data.get("slot_blacklist")},
+            context=dict(message.context, skill_id=skill_id))
+        self.register_intent(legacy)
+
+    def handle_register_entity_spec(self, message):
+        """Consume ``ovos.entity.register`` (OVOS-INTENT-4 §7)."""
+        skill_id, entity_name, full = self._spec_identity(message, "entity_name")
+        if full is None:
+            LOG.warning(f"[{SpecMessage.ENTITY_REGISTER}] rejected: "
+                        f"missing skill_id/entity_name")
+            return
+        samples = message.data.get("samples")
+        if not samples:  # §7.2 malformed: samples missing/empty
+            LOG.warning(f"[{SpecMessage.ENTITY_REGISTER}] rejected "
+                        f"skill_id={skill_id} entity_name={entity_name} "
+                        f"lang={message.data.get('lang')}: empty samples")
+            return
+        lang = standardize_lang(message.data.get("lang", self.lang))
+        legacy = Message(
+            "padatious:register_entity",
+            data={"name": full, "samples": list(samples), "lang": lang,
+                  "skill_id": skill_id},
+            context=dict(message.context, skill_id=skill_id))
+        self.register_entity(legacy)
+
+    def _spec_intent_names(self, message):
+        """Resolve the full padatious intent name(s) targeted by a §8 payload.
+
+        Returns the list of ``<skill_id>:<intent_name>`` keys to act on
+        (``lang`` is ignored: padatious keys intents by name, training data
+        is shared across the per-lang containers).
+        """
+        skill_id, intent_name, full = self._spec_identity(message, "intent_name")
+        if full is None:
+            return []
+        return [full]
+
+    def handle_deregister_intent_spec(self, message):
+        """Consume ``ovos.intent.deregister`` (OVOS-INTENT-4 §8.2)."""
+        for full in self._spec_intent_names(message):
+            self.__detach_intent(full)
+            self._disabled_intents.pop(full, None)
+            self._intent_context_gates.pop(full, None)
+            self._intent_slots.pop(full, None)
+            self._intent_slot_blacklists.pop(full, None)
+        _calc_padatious_intent.cache_clear()
+        if self.config.get("instant_train", False):
+            self.train(message)
+
+    def handle_deregister_entity_spec(self, message):
+        """Consume ``ovos.entity.deregister`` (OVOS-INTENT-4 §8.3)."""
+        skill_id, entity_name, full = self._spec_identity(message, "entity_name")
+        if full is None:
+            return
+        for lang in self.containers:
+            try:
+                self.containers[lang].remove_entity(full)
+            except Exception as e:
+                LOG.debug(f"entity {full} not present in {lang}: {e}")
+        self.registered_entities = [e for e in self.registered_entities
+                                    if e.get("name") != full]
+        _calc_padatious_intent.cache_clear()
+        if self.config.get("instant_train", False):
+            self.train(message)
+
+    def handle_deregister_skill_spec(self, message):
+        """Consume ``ovos.skill.deregister`` (OVOS-INTENT-4 §8.4).
+
+        Removes every intent and entity owned by the skill.
+        """
+        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        if not skill_id:
+            LOG.warning(f"[{SpecMessage.SKILL_DEREGISTER}] rejected: missing skill_id")
+            return
+        for full in list(self._skill2intent.get(skill_id, [])):
+            self.__detach_intent(full)
+            self._disabled_intents.pop(full, None)
+            self._intent_context_gates.pop(full, None)
+            self._intent_slots.pop(full, None)
+            self._intent_slot_blacklists.pop(full, None)
+        # drop the skill's entities too
+        prefix = f"{skill_id}:"
+        for lang in self.containers:
+            for ent in [e.get("name") for e in self.registered_entities
+                        if str(e.get("name", "")).startswith(prefix)]:
+                try:
+                    self.containers[lang].remove_entity(ent)
+                except Exception as e:
+                    LOG.debug(f"entity {ent} not present in {lang}: {e}")
+        self.registered_entities = [e for e in self.registered_entities
+                                    if not str(e.get("name", "")).startswith(prefix)]
+        _calc_padatious_intent.cache_clear()
+        if self.config.get("instant_train", False):
+            self.train(message)
+
+    def handle_disable_intent_spec(self, message):
+        """Consume ``ovos.intent.disable`` (OVOS-INTENT-4 §8.5).
+
+        Padatious has no native suppression flag; disabling detaches the
+        intent from the container while retaining its definition so a later
+        enable can re-train it.
+        """
+        for full in self._spec_intent_names(message):
+            if full in self._disabled_intents:
+                continue  # already disabled, no-op
+            definition = self._intent_definitions.get(full)
+            if definition is None:
+                LOG.warning(f"[{SpecMessage.INTENT_DISABLE}] no registered "
+                            f"definition for {full}; nothing to disable")
+                continue
+            self._disabled_intents[full] = definition
+            self.__detach_intent(full)
+        _calc_padatious_intent.cache_clear()
+        if self.config.get("instant_train", False):
+            self.train(message)
+
+    def handle_enable_intent_spec(self, message):
+        """Consume ``ovos.intent.enable`` (OVOS-INTENT-4 §8.5).
+
+        Re-registers a previously disabled intent from its retained
+        definition.
+        """
+        for full in self._spec_intent_names(message):
+            definition = self._disabled_intents.pop(full, None)
+            if definition is None:
+                continue  # already enabled / never disabled -> no-op
+            self.register_intent(definition)
 
     def calc_intent(self, utterances: Union[str, List[str]], lang: Optional[str] = None,
                     message: Optional[Message] = None) -> Optional[PadatiousIntent]:
@@ -484,25 +1099,98 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             return None
 
         sess = SessionManager.get(message)
+        # Session is unhashable under ovos-bus-client 2.x, so it cannot be an
+        # lru_cache key; pass the blacklists it carries as frozensets instead.
+        # OVOS-INTENT-4 Sec8.5: a disabled intent must stop matching THE INSTANT
+        # it is disabled, not once some future background compile happens to
+        # drop it from padaos' compiled state - disable/enable are runtime
+        # gates, not compile products. Folding ``_disabled_intents`` into the
+        # blacklist here is a pure name-membership check, independent of
+        # whether the underlying container has recompiled yet.
+        blacklisted_intents = frozenset(sess.blacklisted_intents or []) | frozenset(self._disabled_intents)
+        blacklisted_skills = frozenset(sess.blacklisted_skills or [])
 
         intent_container = self.containers.get(lang)
-        intents = [_calc_padatious_intent(utt, intent_container, sess)
+        # See _calc_padatious_intent's compiled_generation param: a query
+        # answered before this container ever compiled must not keep
+        # returning that cached "no match" forever once a (background)
+        # pass actually lands.
+        compiled_generation = getattr(intent_container, "compiled_generation", 0)
+        intents = [_calc_padatious_intent(utt, intent_container, compiled_generation,
+                                          blacklisted_intents, blacklisted_skills)
                    for utt in utterances]
         intents = [i for i in intents if i is not None]
+        # OVOS-CONTEXT-1 §6/§6.1: drop any candidate whose requires/excludes
+        # gating is not satisfied against the session's intent_context. The
+        # shared helper handles liveness/scope/decay; owner_id is the intent's
+        # skill_id (the private-scope default owner). Ungated intents pass.
+        if intents and self._intent_context_gates:
+            intent_context = getattr(sess, "intent_context", None) or {}
+            kept = []
+            for i in intents:
+                gate = self._intent_context_gates.get(i.name)
+                if gate is not None:
+                    requires, excludes = gate
+                    owner_id = i.name.split(":")[0]
+                    if not gate_satisfied(intent_context, requires, excludes,
+                                          owner_id=owner_id):
+                        LOG.debug(f"Padatious intent '{i.name}' dropped: "
+                                  f"OVOS-CONTEXT-1 gating not satisfied")
+                        continue
+                kept.append(i)
+            intents = kept
         # select best
         if intents:
-            return max(intents, key=lambda k: k.conf)
+            best = max(intents, key=lambda k: k.conf)
+            self._fill_context_slots(best, sess)
+            return best
+
+    def _fill_context_slots(self, intent: PadatiousIntent, sess: Session) -> None:
+        """OVOS-CONTEXT-1 §7 — uniform context slot fill.
+
+        For EVERY declared template slot of the matched intent, if a live
+        non-null ``session.intent_context`` entry exists (private
+        ``<skill_id>:name`` precedence over shared bare ``name``), fill the
+        slot when the utterance left it unresolved. This is independent of
+        requires_context, which gates only the presence flags.
+
+        INTENT-2 §4.3: before the fill, a slot the utterance bound to a value
+        listed in that slot's blacklist (e.g. an anaphoric pronoun) is dropped
+        so it counts as unresolved and the context candidate takes over.
+        """
+        slot_names = self._intent_slots.get(intent.name)
+        if not slot_names:
+            return
+        matches = dict(intent.matches or {})
+
+        # INTENT-2 §4.3: unresolve blacklisted slot values. The blacklist
+        # matches by WHOLE-VALUE equality (normalized): a bare anaphoric
+        # "it" is dropped, but a multi-word value that merely contains a
+        # blacklisted word ("the it crowd", "her majesty") is a legitimate
+        # binding and must survive.
+        for slot, values in self._intent_slot_blacklists.get(intent.name, {}).items():
+            bound = matches.get(slot)
+            if bound is not None and any(
+                    v.lower().split() == bound.lower().split() for v in values):
+                LOG.debug(f"Padatious slot '{slot}'='{bound}' blacklisted "
+                          f"(INTENT-2 §4.3): treating as unresolved")
+                matches.pop(slot, None)
+
+        intent_context = getattr(sess, "intent_context", None) or {}
+        owner_id = intent.name.split(":")[0]
+        candidates = context_slot_candidates(intent_context, list(slot_names),
+                                             owner_id)
+        for slot, value in candidates.items():
+            # a value the utterance itself produced wins over the candidate
+            if not matches.get(slot):
+                LOG.debug(f"Padatious slot '{slot}' filled from context "
+                          f"(OVOS-CONTEXT-1 §7): '{value}'")
+                matches[slot] = value
+        intent.matches = matches
 
     def _get_closest_lang(self, lang: str) -> Optional[str]:
         if self.containers:
-            lang = standardize_lang_tag(lang)
-            closest, score = closest_match(lang, list(self.containers.keys()))
-            # https://langcodes-hickford.readthedocs.io/en/sphinx/index.html#distance-values
-            # 0 -> These codes represent the same language, possibly after filling in values and normalizing.
-            # 1- 3 -> These codes indicate a minor regional difference.
-            # 4 - 10 -> These codes indicate a significant but unproblematic regional difference.
-            if score < 10:
-                return closest
+            return closest_lang(standardize_lang(lang), list(self.containers.keys()))
         return None
 
     def shutdown(self):
@@ -513,6 +1201,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.remove('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
         self.bus.remove('detach_intent', self.handle_detach_intent)
         self.bus.remove('detach_skill', self.handle_detach_skill)
+        self.bus.remove(SpecMessage.INTENT_REGISTER_TEMPLATE, self.handle_register_template)
+        self.bus.remove(SpecMessage.ENTITY_REGISTER, self.handle_register_entity_spec)
+        self.bus.remove(SpecMessage.INTENT_DEREGISTER, self.handle_deregister_intent_spec)
+        self.bus.remove(SpecMessage.ENTITY_DEREGISTER, self.handle_deregister_entity_spec)
+        self.bus.remove(SpecMessage.SKILL_DEREGISTER, self.handle_deregister_skill_spec)
+        self.bus.remove(SpecMessage.INTENT_ENABLE, self.handle_enable_intent_spec)
+        self.bus.remove(SpecMessage.INTENT_DISABLE, self.handle_disable_intent_spec)
 
     def handle_get_padatious(self, message):
         """messagebus handler for perfoming padatious parsing.
@@ -549,20 +1244,123 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             {"entities": self.registered_entities}))
 
 
+def _dealias_intent_name(name: Optional[str]) -> Optional[str]:
+    """Fold the legacy ``<skill_id>:<file>.intent`` id onto the OVOS-INTENT-4
+    canonical ``<skill_id>:<file>`` id.
+
+    ovos-workshop >= 9.3 dual-registers one skill capability under both wire
+    forms during the INTENT-4 migration (the legacy ``padatious:register_intent``
+    contract and the spec ``ovos.intent.register.template`` contract, whose
+    ``intent_name`` already has the ``.intent`` suffix stripped). This plugin
+    folds that onto one canonical engine entry at REGISTRATION time (see
+    ``PadatiousPipeline.register_intent`` / ``__detach_intent``), so engine
+    matches (``m.name``) are canonical by construction.
+
+    This helper is also used to canonicalize session ``blacklisted_intents``
+    entries, since old sessions/configs may still carry the legacy
+    ``.intent``-suffixed id (ovos-core#831; OVOS-PIPELINE-1 §5.4).
+    """
+    if name and name.endswith(".intent"):
+        return name[:-len(".intent")]
+    return name
+
+
+# ovos-workshop's ``register_entity_file`` builds the entity name as
+# ``<skill_id>:<basename>_<md5(entity_file)>``. That hash is emitter-internal
+# bookkeeping, never part of the wire contract: the ``<skill_id>:`` prefix
+# already namespaces the entity, and the hash is taken over the file name that
+# is already in the key, so it adds no disambiguation at all.
+_ENTITY_HASH_SUFFIX = re.compile(r"_[0-9a-f]{32}$")
+
+
+def _dealias_entity_name(name: Optional[str]) -> Optional[str]:
+    """Fold the legacy munged entity id onto the canonical
+    ``<skill_id>:<entity>`` id.
+
+    Slot lookup (:meth:`ovos_padatious.entity_manager.EntityManager.find`)
+    builds its candidate key from the matching intent's skill_id plus the RAW
+    slot token written in the template, so a hash-suffixed (or ``.entity``
+    suffixed) registration can never be found and the slot degrades to an
+    unconstrained wildcard.
+
+    Collapsing at REGISTRATION time - where this plugin owns its own lookup
+    contract - repairs every emitter vintage, including deployed ovos-workshop
+    releases that will keep emitting the munged name. It also makes the legacy
+    twin of an ovos-workshop >= 9.3 dual-emit land on the same canonical name
+    as its OVOS-INTENT-4 ``ovos.entity.register`` twin.
+    """
+    if not name:
+        return name
+    if name.endswith(".entity"):
+        name = name[:-len(".entity")]
+    return _ENTITY_HASH_SUFFIX.sub("", name)
+
+
+# Legacy `.intent`-suffixed blacklist entries are deprecated compat, not a
+# stable contract. Warn once per distinct offending entry (not per utterance)
+# so stale mycroft.conf/session config gets flagged without spamming the log.
+_warned_legacy_blacklist_entries = set()
+
+
+def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
+    """Canonicalize legacy `.intent`-suffixed session blacklist entries.
+
+    Sessions/config may still list intents by the legacy
+    ``<skill_id>:<file>.intent`` id. Engine matches are canonical by
+    construction (registration-time alias collapse), so the blacklist must be
+    normalized to compare correctly. Logs a one-time deprecation warning per
+    distinct legacy entry pointing at the canonical replacement.
+    """
+    canonical = set()
+    for b in blacklisted_intents:
+        c = _dealias_intent_name(b)
+        canonical.add(c)
+        if c != b and b not in _warned_legacy_blacklist_entries:
+            _warned_legacy_blacklist_entries.add(b)
+            LOG.warning(
+                f"Session blacklisted_intents entry '{b}' uses the deprecated "
+                f"legacy '.intent'-suffixed id; support for this alias will "
+                f"be removed. Update mycroft.conf / session config to use the "
+                f"canonical id '{c}' instead.")
+    return frozenset(canonical)
+
+
 @lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
 def _calc_padatious_intent(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
-                           sess: Session) -> Optional[PadatiousIntent]:
+                           compiled_generation: int = 0,
+                           blacklisted_intents: frozenset = frozenset(),
+                           blacklisted_skills: frozenset = frozenset()) -> Optional[PadatiousIntent]:
     """
     Try to match an utterance to an intent in an intent_container
     @param utt: str - text to match intent against
+    @param compiled_generation: the container's own compile-pass counter
+        (``IntentContainer.compiled_generation``/
+        ``DomainIntentContainer.compiled_generation``) at call time, folded
+        into the cache key purely so it changes across a compile. A query
+        answered before a container had ever compiled anything (served by
+        the neural tier's own cache-hit state, or with no match at all -
+        see ``IntentContainer._train_in_background``) is training triggered
+        via ``calc_intents`` itself, off any bus-thread ``train()`` call
+        this module's own explicit ``.cache_clear()`` calls would ever see;
+        without this, that lru_cache entry never expires and the SAME
+        utterance keeps returning the pre-compile answer forever, until
+        three unrelated utterances happen to evict it (maxsize=3).
 
+    The session blacklists are passed as hashable frozensets so this stays
+    ``lru_cache``-able (Session is unhashable under ovos-bus-client>=2.4.0a1).
     @return: matched PadatiousIntent
     """
     try:
-        matches = [m for m in intent_container.calc_intents(utt)
-                   if m.name not in sess.blacklisted_intents
-                   and m.name.split(":")[0] not in sess.blacklisted_skills]
+        blacklisted_intents = _canonicalize_blacklist(blacklisted_intents)
+        # OVOS-INTENT-1 §2: match against the lowercase-normalized input so slot
+        # values are case-insensitive, but report the original utterance as `sent`.
+        # Matches are canonical by construction (registration-time alias
+        # collapse, see PadatiousPipeline.register_intent), so only the
+        # blacklist needs canonicalizing here.
+        matches = [m for m in intent_container.calc_intents(utt.lower())
+                   if m.name not in blacklisted_intents
+                   and m.name.split(":")[0] not in blacklisted_skills]
         if len(matches) == 0:
             return None
         best_match = max(matches, key=lambda x: x.conf)

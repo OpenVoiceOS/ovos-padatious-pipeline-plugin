@@ -1,0 +1,19 @@
+name: Code Coverage
+
+on:
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+jobs:
+  coverage:
+    uses: OpenVoiceOS/gh-automations/.github/workflows/coverage.yml@dev
+    with:
+      python_version: '3.11'
+      coverage_source: 'ovos_padatious'
+      test_path: 'tests/'
+      # coverage.yml passes install_extras as raw pip args, unlike build-tests
+      # which only accepts the bare extras name. Use the '.[…]' form here.
+      install_extras: '.[test]'
+      system_deps: 'swig libfann-dev'
+      min_coverage: 0

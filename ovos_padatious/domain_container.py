@@ -1,3 +1,4 @@
+import threading
 from collections import defaultdict
 from typing import Dict, List, Optional
 from ovos_utils.log import LOG
@@ -28,6 +29,66 @@ class DomainIntentContainer:
         self.training_data: Dict[str, List[str]] = defaultdict(list)
         self.instantiate_from_disk()
         self.must_train = True
+        # never train on the calling (query) thread - mirrors
+        # IntentContainer._train_in_background, see _train_in_background
+        # below.
+        self._spawn_lock = threading.Lock()
+        self._background_trainer: Optional[threading.Thread] = None
+        # see IntentContainer.compiled_generation
+        self.compiled_generation = 0
+
+    @property
+    def needs_compile(self) -> bool:
+        """True if this container's own registration bookkeeping is dirty,
+        OR either the cross-domain ``domain_engine`` or any per-domain
+        sub-container is dirty. A domain/sub-intent registration replay
+        that is a pure hash-cache hit never sets ``must_train`` here (see
+        ``add_domain_intent``, which always sets it unconditionally
+        anyway) but the same padaos-only-dirty scenario
+        ``IntentContainer.needs_compile`` guards against can still occur
+        one layer down, in ``domain_engine`` or a per-domain container -
+        aggregating all three is what lets ``_train_in_background`` (and
+        ``PadatiousPipeline.train``'s own gates, which check this
+        property) notice that."""
+        return (self.must_train
+                or self.domain_engine.needs_compile
+                or any(d.needs_compile for d in self.domains.values()))
+
+    def _train_in_background(self) -> None:
+        """Ensures training NEVER happens on the calling (query) thread.
+
+        Mirrors ``IntentContainer._train_in_background`` exactly, including
+        for the very-first-pass case: a ``DomainIntentContainer`` that has
+        never trained is served empty (no domain/intent match) until the
+        background worker's pass actually swaps in compiled state, rather
+        than compiling ``domain_engine`` plus every per-domain container
+        inline on the bus/query thread.
+        """
+        if not self.needs_compile:
+            return
+        with self._spawn_lock:
+            if self._background_trainer is not None and self._background_trainer.is_alive():
+                return
+            self._background_trainer = threading.Thread(target=self.train, daemon=True)
+            self._background_trainer.start()
+
+    def _wait_for_quiet(self) -> None:
+        """Delegates quiescence to ``domain_engine`` and every dirty
+        per-domain sub-container - unlike ``IntentContainer``, this class
+        has no debounce timer of its own; each underlying container
+        already implements the correct wait-for-quiet/max-defer algorithm
+        (see ``IntentContainer._wait_for_quiet``). Without this method,
+        ``opm.py``'s ``_train_worker`` calling ``engine._wait_for_quiet()``
+        on a ``DomainIntentContainer`` raised ``AttributeError`` and
+        silently killed the background worker thread - so under
+        ``domain_engine: true``, ``mycroft.skills.trained`` was never
+        emitted and nothing ever trained outside of a query forcing it.
+        """
+        if self.domain_engine.needs_compile:
+            self.domain_engine._wait_for_quiet()
+        for engine in list(self.domains.values()):
+            if engine.needs_compile:
+                engine._wait_for_quiet()
 
     def instantiate_from_disk(self) -> None:
         """
@@ -118,8 +179,7 @@ class DomainIntentContainer:
         Returns:
             List[MatchData]: A list of MatchData objects representing matching domains.
         """
-        if self.must_train:
-            self.train()
+        self._train_in_background()
 
         return self.domain_engine.calc_intents(query)
 
@@ -133,8 +193,7 @@ class DomainIntentContainer:
         Returns:
             MatchData: The best matching domain.
         """
-        if self.must_train:
-            self.train()
+        self._train_in_background()
         return self.domain_engine.calc_intent(query)
 
     def calc_intent(self, query: str, domain: Optional[str] = None) -> MatchData:
@@ -148,8 +207,7 @@ class DomainIntentContainer:
         Returns:
             MatchData: The best matching intent.
         """
-        if self.must_train:
-            self.train()
+        self._train_in_background()
         domain: str = domain or self.domain_engine.calc_intent(query).name
         if domain in self.domains:
             return self.domains[domain].calc_intent(query)
@@ -167,8 +225,7 @@ class DomainIntentContainer:
         Returns:
             List[MatchData]: A list of MatchData objects representing matching intents, sorted by confidence.
         """
-        if self.must_train:
-            self.train()
+        self._train_in_background()
         if domain:
             return self.domains[domain].calc_intents(query)
         matches = []
@@ -187,3 +244,4 @@ class DomainIntentContainer:
             LOG.debug(f"Training domain sub-intents: {domain}")
             self.domains[domain].train()
         self.must_train = False
+        self.compiled_generation += 1

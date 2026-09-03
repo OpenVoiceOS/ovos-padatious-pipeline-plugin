@@ -43,6 +43,14 @@ class TestIntentServiceApi(TestCase):
     def setUp(self):
         self.intent_service = PadatiousPipeline(mock.Mock())
         self.setup_simple_padatious_intent()
+        # the padatious getters (handle_get_padatious et al) run on the bus
+        # thread and must NEVER block waiting for a compile - a registration
+        # is served empty until the background pass actually lands (see
+        # IntentContainer._train_in_background). Tests that immediately
+        # query right after registering need a deterministic sync point
+        # instead; wait_until_trained joins that background pass without
+        # training on the calling thread itself.
+        self.assertTrue(self.intent_service.wait_until_trained(timeout=30))
 
     def setup_simple_padatious_intent(self,
                                       msg=create_intent_msg('testIntent', 'test'),
