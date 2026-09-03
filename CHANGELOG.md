@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.17a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.17a1) (2026-09-03)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.16a1...2.0.17a1)
+
+**Merged pull requests:**
+
+- fix: mycroft.skills.trained must not fire while a container is still dirty [\#130](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/130) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.16a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.16a1) (2026-09-02)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.15a1...2.0.16a1)
