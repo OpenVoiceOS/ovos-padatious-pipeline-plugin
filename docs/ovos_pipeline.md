@@ -26,7 +26,8 @@ Place configuration under `"intent_boxes"` → `"ovos-padatious-pipeline-plugin"
       "intent_cache": "~/.local/share/mycroft/intent_cache",
       "disable_padaos": false,
       "cast_to_ascii": false,
-      "stem": false
+      "stem": false,
+      "blacklisted_labels": []
     }
   }
 }
@@ -45,6 +46,7 @@ Place configuration under `"intent_boxes"` → `"ovos-padatious-pipeline-plugin"
 | `disable_padaos` | `bool` | `false` | Disable the fast regex exact-match layer (padaos). Only the neural network is used. |
 | `cast_to_ascii` | `bool` | `false` | Strip accented characters and punctuation from utterances before matching. |
 | `stem` | `bool` | `false` | Apply Snowball stemming to utterances and training samples. Improves recall for inflected languages. |
+| `blacklisted_labels` | `list[str]` | `[]` | Intent labels excluded from training and matching. Each entry is either an exact `<skill_id>:<intent_name>` id or an fnmatch glob (e.g. `some-skill.openvoiceos:*` blacklists a whole skill). Applied both at registration, where a matching intent is never trained, and again at match emission, where a result whose label matches is filtered out. |
 
 ### Cache directory suffixes
 

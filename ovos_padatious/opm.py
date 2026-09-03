@@ -13,6 +13,7 @@
 # limitations under the License.
 #
 """Intent service wrapping padatious."""
+import fnmatch
 import re
 import string
 import time
@@ -252,6 +253,21 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._compile_backoff_until: Dict[str, float] = {}
         self._compile_giveup: set = set()
 
+        # ``blacklisted_labels``: intent labels this plugin must never train
+        # or match, e.g. so a neural (m2v) tier can front the default skills'
+        # label set and padatious only handles user-installed skills it owns.
+        # Entries are matched against the SAME canonical ``<skill_id>:<name>``
+        # form registration collapses onto (see ``_dealias_intent_name``), and
+        # may be an exact id or an fnmatch glob (``<skill_id>:*`` blacklists
+        # a whole skill). Defaults to empty: shipped behaviour is unchanged.
+        # Routed through the same canonicalization as session
+        # blacklisted_intents so a legacy ``.intent``-suffixed entry (or a
+        # glob ending in ``.intent``) still matches the canonical
+        # registration instead of silently matching nothing.
+        self._label_blacklist = tuple(_canonicalize_blacklist(
+            frozenset(self.config.get("blacklisted_labels") or []),
+            context="blacklisted_labels config"))
+
         self.registered_intents = []
         self.registered_entities = []
         self._skill2intent = defaultdict(list)
@@ -321,6 +337,12 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     def padatious_config(self, val):
         log_deprecation("self.padatious_config is deprecated, access self.config directly instead", "2.0.0")
         self.config = val
+
+    def _is_blacklisted_label(self, name: str) -> bool:
+        """Check a canonical ``<skill_id>:<name>`` label against the
+        ``blacklisted_labels`` config (exact ids and fnmatch globs, e.g.
+        ``some-skill.openvoiceos:*`` blacklists a whole skill)."""
+        return any(fnmatch.fnmatchcase(name, pattern) for pattern in self._label_blacklist)
 
     def _match_level(self, utterances, limit, lang=None, message: Optional[Message] = None) -> Optional[
         IntentHandlerMatch]:
@@ -794,6 +816,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # duplicates (ovos-core#831). This plugin owns its own back-compat.
         message.data['name'] = _dealias_intent_name(message.data['name'])
 
+        if self._is_blacklisted_label(message.data['name']):
+            LOG.debug(f"Padatious intent '{message.data['name']}' matches "
+                      f"'blacklisted_labels' config; registration ignored")
+            return
+
         if message.data['name'] not in self._skill2intent[skill_id]:
             self._skill2intent[skill_id].append(message.data['name'])
         # retain the registration so an INTENT-4 enable (§8.5) can re-train
@@ -1119,6 +1146,27 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         intents = [_calc_padatious_intent(utt, intent_container, compiled_generation,
                                           blacklisted_intents, blacklisted_skills)
                    for utt in utterances]
+        # blacklisted_labels is applied here, AFTER the cached call, rather
+        # than as part of _calc_padatious_intent's lru_cache key (see that
+        # function's docstring for why). A blacklisted label only ever
+        # surfaces as the cached best match when a container trained it
+        # before it was blacklisted (registration already refuses to train
+        # one - see _is_blacklisted_label), so this only runs on that rare
+        # hit, not on every query: it calls the SAME selection code via
+        # ``.__wrapped__`` (lru_cache's cache-bypassing raw function),
+        # widening blacklisted_intents with every blacklisted label seen so
+        # far until the next-best surviving candidate comes back.
+        if self._label_blacklist:
+            widened = []
+            for utt, i in zip(utterances, intents):
+                seen = set()
+                while i is not None and self._is_blacklisted_label(i.name):
+                    seen.add(i.name)
+                    i = _calc_padatious_intent.__wrapped__(
+                        utt, intent_container, compiled_generation,
+                        blacklisted_intents | frozenset(seen), blacklisted_skills)
+                widened.append(i)
+            intents = widened
         intents = [i for i in intents if i is not None]
         # OVOS-CONTEXT-1 §6/§6.1: drop any candidate whose requires/excludes
         # gating is not satisfied against the session's intent_context. The
@@ -1302,14 +1350,18 @@ def _dealias_entity_name(name: Optional[str]) -> Optional[str]:
 _warned_legacy_blacklist_entries = set()
 
 
-def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
-    """Canonicalize legacy `.intent`-suffixed session blacklist entries.
+def _canonicalize_blacklist(blacklisted_intents: frozenset,
+                             context: str = "Session blacklisted_intents") -> frozenset:
+    """Canonicalize legacy `.intent`-suffixed blacklist entries.
 
-    Sessions/config may still list intents by the legacy
-    ``<skill_id>:<file>.intent`` id. Engine matches are canonical by
-    construction (registration-time alias collapse), so the blacklist must be
-    normalized to compare correctly. Logs a one-time deprecation warning per
-    distinct legacy entry pointing at the canonical replacement.
+    Sessions/config may still list intents (or, for ``blacklisted_labels``,
+    fnmatch glob patterns) by the legacy ``<skill_id>:<file>.intent`` id.
+    Engine matches are canonical by construction (registration-time alias
+    collapse), so the blacklist must be normalized to compare correctly - a
+    glob like ``some-skill:*.intent`` just loses its trailing suffix, same
+    as an exact id, since ``_dealias_intent_name`` only strips a literal
+    ``.intent`` tail. Logs a one-time deprecation warning per distinct
+    legacy entry pointing at the canonical replacement.
     """
     canonical = set()
     for b in blacklisted_intents:
@@ -1318,7 +1370,7 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset) -> frozenset:
         if c != b and b not in _warned_legacy_blacklist_entries:
             _warned_legacy_blacklist_entries.add(b)
             LOG.warning(
-                f"Session blacklisted_intents entry '{b}' uses the deprecated "
+                f"{context} entry '{b}' uses the deprecated "
                 f"legacy '.intent'-suffixed id; support for this alias will "
                 f"be removed. Update mycroft.conf / session config to use the "
                 f"canonical id '{c}' instead.")
@@ -1349,6 +1401,15 @@ def _calc_padatious_intent(utt: str,
 
     The session blacklists are passed as hashable frozensets so this stays
     ``lru_cache``-able (Session is unhashable under ovos-bus-client>=2.4.0a1).
+    ``blacklisted_labels`` (the ``blacklisted_labels`` config, exact ids and
+    fnmatch globs) is deliberately NOT a parameter here: this function is
+    cached on a MODULE-GLOBAL, maxsize=3 ``lru_cache`` shared by every
+    ``PadatiousPipeline`` instance in the process, while ``blacklisted_labels``
+    is a per-instance config value - folding it into the key would let one
+    instance's blacklist evict or shadow another instance's cached answer for
+    the same utterance/container/generation. See
+    ``PadatiousPipeline.calc_intent`` for where that check is applied instead,
+    against this function's already-cached result.
     @return: matched PadatiousIntent
     """
     try:
