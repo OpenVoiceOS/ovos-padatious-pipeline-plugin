@@ -257,13 +257,16 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._skill2intent = defaultdict(list)
         self.max_words = 50  # if an utterance contains more words than this, don't attempt to match
 
-        # OVOS-INTENT-4 §8.5 enable/disable: padatious has no native
-        # suppression flag, so disable detaches the intent and enable
-        # re-registers it. _intent_definitions retains the register Message
-        # of every registered intent (full name -> Message); _disabled_intents
-        # holds the subset currently suppressed.
+        # OVOS-INTENT-4 §8.5 enable/disable: disable is session-scoped
+        # (§11.3) and never touches the shared padatious container, which
+        # has no per-session notion of registration. _intent_definitions
+        # retains the register Message of every registered intent (full
+        # name -> Message), used to answer §8 introspection queries.
+        # _disabled_intents holds the runtime gate as a set of
+        # (session_id, full_intent_name) pairs; calc_intent folds in only
+        # the pairs matching the requesting message's session.
         self._intent_definitions = {}
-        self._disabled_intents = {}
+        self._disabled_intents = set()
 
         # OVOS-CONTEXT-1 §6/§6.1 requires_context / excludes_context gating.
         # Registration MAY carry these declarations; they are stored per
@@ -988,7 +991,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         """Consume ``ovos.intent.deregister`` (OVOS-INTENT-4 §8.2)."""
         for full in self._spec_intent_names(message):
             self.__detach_intent(full)
-            self._disabled_intents.pop(full, None)
+            self._disabled_intents = {p for p in self._disabled_intents if p[1] != full}
             self._intent_context_gates.pop(full, None)
             self._intent_slots.pop(full, None)
             self._intent_slot_blacklists.pop(full, None)
@@ -1023,7 +1026,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             return
         for full in list(self._skill2intent.get(skill_id, [])):
             self.__detach_intent(full)
-            self._disabled_intents.pop(full, None)
+            self._disabled_intents = {p for p in self._disabled_intents if p[1] != full}
             self._intent_context_gates.pop(full, None)
             self._intent_slots.pop(full, None)
             self._intent_slot_blacklists.pop(full, None)
@@ -1045,35 +1048,31 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     def handle_disable_intent_spec(self, message):
         """Consume ``ovos.intent.disable`` (OVOS-INTENT-4 §8.5).
 
-        Padatious has no native suppression flag; disabling detaches the
-        intent from the container while retaining its definition so a later
-        enable can re-train it.
+        Disable is session-scoped (§11.3): it never touches the shared
+        padatious container, only records ``(session_id, full_name)`` so
+        ``calc_intent`` excludes the intent from match candidacy for that
+        session only. The registration itself is untouched, so other
+        sessions keep matching it.
         """
+        session_id = SessionManager.get(message).session_id
         for full in self._spec_intent_names(message):
-            if full in self._disabled_intents:
-                continue  # already disabled, no-op
-            definition = self._intent_definitions.get(full)
-            if definition is None:
+            if full not in self._intent_definitions:
                 LOG.warning(f"[{SpecMessage.INTENT_DISABLE}] no registered "
                             f"definition for {full}; nothing to disable")
                 continue
-            self._disabled_intents[full] = definition
-            self.__detach_intent(full)
+            self._disabled_intents.add((session_id, full))  # no-op if already disabled
         _calc_padatious_intent.cache_clear()
-        if self.config.get("instant_train", False):
-            self.train(message)
 
     def handle_enable_intent_spec(self, message):
         """Consume ``ovos.intent.enable`` (OVOS-INTENT-4 §8.5).
 
-        Re-registers a previously disabled intent from its retained
-        definition.
+        Discards the session's disable gate for the intent; the
+        registration was never removed so there is nothing to re-register.
         """
+        session_id = SessionManager.get(message).session_id
         for full in self._spec_intent_names(message):
-            definition = self._disabled_intents.pop(full, None)
-            if definition is None:
-                continue  # already enabled / never disabled -> no-op
-            self.register_intent(definition)
+            self._disabled_intents.discard((session_id, full))  # no-op if not disabled
+        _calc_padatious_intent.cache_clear()
 
     def calc_intent(self, utterances: Union[str, List[str]], lang: Optional[str] = None,
                     message: Optional[Message] = None) -> Optional[PadatiousIntent]:
@@ -1101,13 +1100,14 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         sess = SessionManager.get(message)
         # Session is unhashable under ovos-bus-client 2.x, so it cannot be an
         # lru_cache key; pass the blacklists it carries as frozensets instead.
-        # OVOS-INTENT-4 Sec8.5: a disabled intent must stop matching THE INSTANT
-        # it is disabled, not once some future background compile happens to
-        # drop it from padaos' compiled state - disable/enable are runtime
-        # gates, not compile products. Folding ``_disabled_intents`` into the
-        # blacklist here is a pure name-membership check, independent of
-        # whether the underlying container has recompiled yet.
-        blacklisted_intents = frozenset(sess.blacklisted_intents or []) | frozenset(self._disabled_intents)
+        # OVOS-INTENT-4 §8.5/§11.3: disable is session-scoped and must stop
+        # matching THE INSTANT it is disabled, without touching the shared
+        # padatious container - disable/enable are pure runtime gates keyed
+        # by (session_id, full_name), not compile products. Only the pairs
+        # matching this message's session are folded into the blacklist.
+        disabled_here = frozenset(full for (sid, full) in self._disabled_intents
+                                   if sid == sess.session_id)
+        blacklisted_intents = frozenset(sess.blacklisted_intents or []) | disabled_here
         blacklisted_skills = frozenset(sess.blacklisted_skills or [])
 
         intent_container = self.containers.get(lang)
