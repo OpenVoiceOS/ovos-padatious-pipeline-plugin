@@ -1381,10 +1381,9 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset,
     return frozenset(canonical)
 
 
-#: Confidence tiers retry the same utterance, and concurrent sessions
-#: interleave several different ones. maxsize=3 evicted a still-live result
-#: after three unrelated keys, so the "repeat calls under different conf
-#: levels wont re-run code" intent below only held for a single speaker.
+#: Must exceed the number of distinct (utterance, session) keys interleaved
+#: across concurrent sessions, or a still-live result gets evicted before it
+#: is reused.
 _INTENT_CACHE_SIZE = 128
 
 

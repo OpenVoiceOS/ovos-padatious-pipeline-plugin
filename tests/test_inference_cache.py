@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from ovos_padatious.match_data import MatchData
-from ovos_padatious.opm import _calc_padatious_intent
+from ovos_padatious.opm import _calc_padatious_intent, _INTENT_CACHE_SIZE
 
 
 def test_confidence_retry_cache_keeps_interleaved_utterances():
@@ -46,10 +46,9 @@ def test_confidence_retry_cache_keeps_interleaved_utterances():
     finally:
         _calc_padatious_intent.cache_clear()
 
-    # the second pass is served entirely from the cache; maxsize=3 would have
-    # evicted every one of these before it came back around
+    # the second pass is served entirely from the cache
     assert container.calls == len(utterances)
-    assert _calc_padatious_intent.cache_info().maxsize == 128
+    assert _calc_padatious_intent.cache_info().maxsize == _INTENT_CACHE_SIZE
 
 
 def test_exact_tier_answers_without_neural_inference():
@@ -135,4 +134,4 @@ def test_cached_match_is_not_shared_between_callers():
 def test_cache_controls_stay_on_the_public_name():
     """Callers manage the cache through _calc_padatious_intent."""
     assert hasattr(_calc_padatious_intent, "cache_clear")
-    assert _calc_padatious_intent.cache_info().maxsize == 128
+    assert _calc_padatious_intent.cache_info().maxsize == _INTENT_CACHE_SIZE

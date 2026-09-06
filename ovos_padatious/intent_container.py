@@ -61,6 +61,10 @@ class IntentContainer:
         inference_workers (int): Maximum reusable neural inference workers.
     """
 
+    #: how long shutdown() waits for an in-flight training pass to finish
+    #: before closing the managers underneath it.
+    SHUTDOWN_TRAIN_JOIN_S = 10.0
+
     def __init__(self, cache_dir: Optional[str] = None,
                  disable_padaos: bool = False,
                  inference_workers: Optional[int] = None) -> None:
@@ -192,10 +196,6 @@ class IntentContainer:
             if trainer.is_alive():
                 LOG.warning("padatious background trainer did not stop in time")
 
-    #: how long shutdown() waits for an in-flight training pass to finish
-    #: before closing the managers underneath it.
-    SHUTDOWN_TRAIN_JOIN_S = 10.0
-
     def shutdown(self, wait: bool = True) -> None:
         """Retire the container: stop training, then release the workers.
 
@@ -207,15 +207,7 @@ class IntentContainer:
         want to block on the executor still must not be handed a container
         with a live writer inside it.
         """
-        self._shutdown.set()
-        with self._spawn_lock:
-            trainer = self._background_trainer
-        if trainer is not None and trainer.is_alive():
-            trainer.join(timeout=self.SHUTDOWN_TRAIN_JOIN_S)
-            if trainer.is_alive():
-                LOG.warning(
-                    "padatious background trainer still running at shutdown; "
-                    "releasing inference workers anyway")
+        self._stop_background_trainer()
         self.intents.shutdown(wait=wait)
 
     def instantiate_from_disk(self) -> None:
