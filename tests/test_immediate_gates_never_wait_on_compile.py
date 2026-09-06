@@ -76,46 +76,28 @@ class _PipelineCase(unittest.TestCase):
 
 
 class TestDisableSuppressesImmediately(_PipelineCase):
-    def test_disable_blocks_the_very_next_query_before_any_recompile_starts(self):
-        """Suppression is a pure name-membership check independent of
-        compile state - proven here by disabling and querying BEFORE the
-        instant_train retrain triggered by disable has even run, via a
-        blocked ``_compile``."""
+    def test_disable_blocks_the_very_next_query_with_no_compile_involved(self):
+        """Disable (OVOS-INTENT-4 §8.5) never touches the padatious
+        container - it only records the requesting session in
+        ``_disabled_intents`` - so suppression is visible to the very next
+        query with no compile of any kind in between."""
         self._register(f"{SKILL_ID}:hello", ["hello", "hi there"])
         self.assertIsNotNone(self.pipeline.calc_intent(["hello"], self.lang))
 
-        from threading import Event
-        started = Event()
-        release = Event()
         real_compile = padaos.IntentContainer._compile
+        calls = []
 
-        def blocking_compile(self):
-            started.set()
-            release.wait(timeout=5.0)
-            return real_compile(self)
+        def counting_compile(self, *a, **kw):
+            calls.append(1)
+            return real_compile(self, *a, **kw)
 
-        with mock.patch.object(padaos.IntentContainer, "_compile", blocking_compile):
-            from threading import Thread
-            t = Thread(
-                target=self.pipeline.handle_disable_intent_spec,
-                args=(Message(INTENT_DISABLE, {
-                    "skill_id": SKILL_ID, "intent_name": "hello",
-                }),),
-                daemon=True,
-            )
-            t.start()
-            self.assertTrue(started.wait(timeout=5.0),
-                             "disable's instant_train retrain never started")
-            try:
-                # the retrain triggered by disable is stuck mid-compile
-                # RIGHT NOW; suppression must already be in effect
-                match = self.pipeline.calc_intent(["hello"], self.lang)
-                self.assertIsNone(
-                    match, "a disabled intent must stop matching immediately, "
-                           "before its own retrain even finishes")
-            finally:
-                release.set()
-                t.join(timeout=5.0)
+        with mock.patch.object(padaos.IntentContainer, "_compile", counting_compile):
+            self.pipeline.handle_disable_intent_spec(Message(INTENT_DISABLE, {
+                "skill_id": SKILL_ID, "intent_name": "hello",
+            }))
+            match = self.pipeline.calc_intent(["hello"], self.lang)
+        self.assertIsNone(match, "a disabled intent must stop matching immediately")
+        self.assertEqual(calls, [], "disable must not require a recompile")
 
     def test_disable_suppresses_via_blacklist_even_if_removal_is_a_noop(self):
         """Isolates the NAME-BASED suppression path
@@ -152,10 +134,8 @@ class TestDisableSuppressesImmediately(_PipelineCase):
         self.pipeline.handle_enable_intent_spec(Message(INTENT_ENABLE, {
             "skill_id": SKILL_ID, "intent_name": "hello",
         }))
-        # enable is effectively an ADDITION (re-registers from the retained
-        # definition) - it is fine, and expected, for this to need the
-        # deterministic sync helper rather than being instantaneous
-        self.assertTrue(self.pipeline.wait_until_trained(timeout=10.0))
+        # enable only discards the disable gate - the registration was
+        # never removed, so the intent matches again immediately
         match = self.pipeline.calc_intent(["hello"], self.lang)
         self.assertIsNotNone(match)
         self.assertEqual(match.name, f"{SKILL_ID}:hello")

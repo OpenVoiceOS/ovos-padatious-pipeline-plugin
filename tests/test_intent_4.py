@@ -23,9 +23,18 @@ verify the spec payloads land in the same internal container.
 from unittest import TestCase, mock
 
 from ovos_bus_client.message import Message
+from ovos_bus_client.session import Session
 from ovos_spec_tools import SpecMessage
 
 from ovos_padatious.opm import PadatiousPipeline
+
+
+def session_ctx(session_id, skill_id=None):
+    """Build a message context carrying an explicit session (INTENT-4 §11.3)."""
+    ctx = {"session": Session(session_id).serialize()}
+    if skill_id is not None:
+        ctx["skill_id"] = skill_id
+    return ctx
 
 
 def template_msg(skill_id, intent_name, samples, blacklist=None, lang="en-US"):
@@ -127,27 +136,137 @@ class TestIntent4Registration(TestCase):
         self.assertEqual(self.pipeline.registered_entities, [])
 
     def test_disable_then_enable(self):
+        """Disable (OVOS-INTENT-4 §8.5) is a session-scoped match-time gate:
+        it neither removes the registration nor mutates the container."""
         self.pipeline.handle_register_template(
             template_msg("music.skill", "play_music", ["play {query}"]))
         disable = Message(SpecMessage.INTENT_DISABLE,
                           {"skill_id": "music.skill",
                            "intent_name": "play_music", "lang": "en-US"},
-                          {"skill_id": "music.skill"})
+                          session_ctx("sat-1", "music.skill"))
         self.pipeline.handle_disable_intent_spec(disable)
-        self.assertNotIn("music.skill:play_music",
-                         self.pipeline.registered_intents)
         self.assertIn("music.skill:play_music",
+                      self.pipeline.registered_intents)
+        self.assertIn(("sat-1", "music.skill:play_music"),
                       self.pipeline._disabled_intents)
 
         enable = Message(SpecMessage.INTENT_ENABLE,
                          {"skill_id": "music.skill",
                           "intent_name": "play_music", "lang": "en-US"},
-                         {"skill_id": "music.skill"})
+                         session_ctx("sat-1", "music.skill"))
         self.pipeline.handle_enable_intent_spec(enable)
         self.assertIn("music.skill:play_music",
                       self.pipeline.registered_intents)
-        self.assertNotIn("music.skill:play_music",
+        self.assertNotIn(("sat-1", "music.skill:play_music"),
                          self.pipeline._disabled_intents)
+
+    def test_disable_is_session_scoped_other_sessions_unaffected(self):
+        """OVOS-INTENT-4 §8.5: disable affects only the session that issued
+        it. Default session and an unrelated satellite must keep matching."""
+        pipeline = PadatiousPipeline(mock.Mock(), config={"instant_train": True})
+        pipeline.first_train.set()
+        pipeline.handle_register_template(
+            template_msg("music.skill", "play_music", ["play music"]))
+        pipeline.wait_until_trained(timeout=10.0)
+
+        pipeline.handle_disable_intent_spec(Message(
+            SpecMessage.INTENT_DISABLE,
+            {"skill_id": "music.skill", "intent_name": "play_music", "lang": "en-US"},
+            session_ctx("sat-1", "music.skill")))
+
+        msg_sat1 = Message("recognizer_loop:utterance", {}, session_ctx("sat-1"))
+        msg_sat2 = Message("recognizer_loop:utterance", {}, session_ctx("sat-2"))
+        msg_default = Message("recognizer_loop:utterance", {}, {})
+
+        self.assertIsNone(pipeline.calc_intent(["play music"], "en-US", msg_sat1))
+        self.assertIsNotNone(pipeline.calc_intent(["play music"], "en-US", msg_sat2))
+        self.assertIsNotNone(pipeline.calc_intent(["play music"], "en-US", msg_default))
+
+        pipeline.handle_enable_intent_spec(Message(
+            SpecMessage.INTENT_ENABLE,
+            {"skill_id": "music.skill", "intent_name": "play_music", "lang": "en-US"},
+            session_ctx("sat-1", "music.skill")))
+        self.assertIsNotNone(pipeline.calc_intent(["play music"], "en-US", msg_sat1))
+        pipeline.shutdown()
+
+    def test_disable_on_default_session_suppresses_only_default(self):
+        """A disable issued with no explicit session context (default
+        session) must not suppress a named satellite session."""
+        pipeline = PadatiousPipeline(mock.Mock(), config={"instant_train": True})
+        pipeline.first_train.set()
+        pipeline.handle_register_template(
+            template_msg("music.skill", "play_music", ["play music"]))
+        pipeline.wait_until_trained(timeout=10.0)
+
+        pipeline.handle_disable_intent_spec(Message(
+            SpecMessage.INTENT_DISABLE,
+            {"skill_id": "music.skill", "intent_name": "play_music", "lang": "en-US"},
+            {"skill_id": "music.skill"}))
+
+        msg_default = Message("recognizer_loop:utterance", {}, {})
+        msg_sat1 = Message("recognizer_loop:utterance", {}, session_ctx("sat-1"))
+
+        self.assertIsNone(pipeline.calc_intent(["play music"], "en-US", msg_default))
+        self.assertIsNotNone(pipeline.calc_intent(["play music"], "en-US", msg_sat1))
+        pipeline.shutdown()
+
+    def test_disable_noop_for_unregistered_and_idempotent(self):
+        """Disabling a never-registered name is a no-op (nothing is added
+        to the gate); disabling/enabling twice is also a no-op."""
+        disable_unknown = Message(SpecMessage.INTENT_DISABLE,
+                                  {"skill_id": "music.skill",
+                                   "intent_name": "no_such_intent", "lang": "en-US"},
+                                  session_ctx("sat-1", "music.skill"))
+        self.pipeline.handle_disable_intent_spec(disable_unknown)
+        self.assertEqual(self.pipeline._disabled_intents, set())
+
+        self.pipeline.handle_register_template(
+            template_msg("music.skill", "play_music", ["play {query}"]))
+        disable = Message(SpecMessage.INTENT_DISABLE,
+                          {"skill_id": "music.skill",
+                           "intent_name": "play_music", "lang": "en-US"},
+                          session_ctx("sat-1", "music.skill"))
+        self.pipeline.handle_disable_intent_spec(disable)
+        self.pipeline.handle_disable_intent_spec(disable)  # twice-disable is a no-op
+        self.assertEqual(self.pipeline._disabled_intents,
+                         {("sat-1", "music.skill:play_music")})
+
+        enable = Message(SpecMessage.INTENT_ENABLE,
+                         {"skill_id": "music.skill",
+                          "intent_name": "play_music", "lang": "en-US"},
+                         session_ctx("sat-1", "music.skill"))
+        self.pipeline.handle_enable_intent_spec(enable)
+        self.pipeline.handle_enable_intent_spec(enable)  # twice-enable is a no-op
+        self.assertEqual(self.pipeline._disabled_intents, set())
+
+    def test_deregister_after_disable_leaves_no_stale_pair(self):
+        """Deregistering a disabled intent must drop its gate entries too,
+        so a later enable cannot resurrect a definition that is gone."""
+        self.pipeline.handle_register_template(
+            template_msg("music.skill", "play_music", ["play {query}"]))
+        disable = Message(SpecMessage.INTENT_DISABLE,
+                          {"skill_id": "music.skill",
+                           "intent_name": "play_music", "lang": "en-US"},
+                          session_ctx("sat-1", "music.skill"))
+        self.pipeline.handle_disable_intent_spec(disable)
+        self.assertIn(("sat-1", "music.skill:play_music"),
+                      self.pipeline._disabled_intents)
+
+        self.pipeline.handle_deregister_intent_spec(
+            Message(SpecMessage.INTENT_DEREGISTER,
+                    {"skill_id": "music.skill", "intent_name": "play_music",
+                     "lang": "en-US"}, {"skill_id": "music.skill"}))
+        self.assertEqual(self.pipeline._disabled_intents, set())
+        self.assertNotIn("music.skill:play_music",
+                         self.pipeline.registered_intents)
+
+        enable = Message(SpecMessage.INTENT_ENABLE,
+                         {"skill_id": "music.skill",
+                          "intent_name": "play_music", "lang": "en-US"},
+                         session_ctx("sat-1", "music.skill"))
+        self.pipeline.handle_enable_intent_spec(enable)
+        self.assertNotIn("music.skill:play_music",
+                         self.pipeline.registered_intents)
 
     # ---- match ------------------------------------------------------- #
 
