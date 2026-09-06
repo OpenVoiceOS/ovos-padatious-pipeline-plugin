@@ -24,6 +24,7 @@ Place configuration under `"intent_boxes"` → `"ovos-padatious-pipeline-plugin"
       "domain_engine": false,
       "instant_train": false,
       "intent_cache": "~/.local/share/mycroft/intent_cache",
+      "inference_workers": 4,
       "disable_padaos": false,
       "cast_to_ascii": false,
       "stem": false,
@@ -43,10 +44,16 @@ Place configuration under `"intent_boxes"` → `"ovos-padatious-pipeline-plugin"
 | `domain_engine` | `bool` | `false` | Use `DomainIntentContainer` instead of `IntentContainer`. Groups intents by skill for faster disambiguation. |
 | `instant_train` | `bool` | `false` | Trigger training immediately after each intent registration instead of waiting for the `mycroft.skills.train` bus event. |
 | `intent_cache` | `str` | XDG data home | Override the directory where trained models are cached. |
+| `inference_workers` | positive `int` | Python default | Maximum reusable worker threads **per `IntentContainer`** — not per language. Must be a positive integer (zero, negatives and booleans are rejected). With `domain_engine` enabled one language owns a domain-classifier container plus one container per domain, and each gets its own pool of this size, so the per-language ceiling is `inference_workers x (1 + domains)`. |
 | `disable_padaos` | `bool` | `false` | Disable the fast regex exact-match layer (padaos). Only the neural network is used. |
 | `cast_to_ascii` | `bool` | `false` | Strip accented characters and punctuation from utterances before matching. |
 | `stem` | `bool` | `false` | Apply Snowball stemming to utterances and training samples. Improves recall for inflected languages. |
 | `blacklisted_labels` | `list[str]` | `[]` | Intent labels excluded from training and matching. Each entry is either an exact `<skill_id>:<intent_name>` id or an fnmatch glob (e.g. `some-skill.openvoiceos:*` blacklists a whole skill). Applied both at registration, where a matching intent is never trained, and again at match emission, where a result whose label matches is filtered out. |
+
+The pipeline resolves deterministic Padaos matches before scheduling neural
+inference. Neural matching still runs when there is no allowed exact match, and
+the public `calc_intents()` API continues to return both neural and exact
+candidates.
 
 ### Cache directory suffixes
 

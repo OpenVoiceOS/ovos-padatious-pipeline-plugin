@@ -57,14 +57,24 @@ class IntentContainer:
 
     Args:
         cache_dir (str): Directory for caching the neural network models and intent/entity files.
+        disable_padaos (bool): Disable exact-pattern matching when true.
+        inference_workers (int): Maximum reusable neural inference workers.
     """
 
-    def __init__(self, cache_dir: Optional[str] = None, disable_padaos: bool = False) -> None:
+    #: how long shutdown() waits for an in-flight training pass to finish
+    #: before closing the managers underneath it.
+    SHUTDOWN_TRAIN_JOIN_S = 10.0
+
+    def __init__(self, cache_dir: Optional[str] = None,
+                 disable_padaos: bool = False,
+                 inference_workers: Optional[int] = None) -> None:
         cache_dir = cache_dir or f"{xdg_data_home()}/{get_xdg_base()}/intent_cache"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir: str = cache_dir
         self.must_train: bool = False
-        self.intents: IntentManager = IntentManager(cache_dir)
+        self.inference_workers = inference_workers
+        self.intents: IntentManager = IntentManager(
+            cache_dir, max_workers=inference_workers)
         self.entities: EntityManager = EntityManager(cache_dir)
         self.disable_padaos = disable_padaos
         if self.disable_padaos:
@@ -87,6 +97,12 @@ class IntentContainer:
         self._train_lock = threading.Lock()
         self._spawn_lock = threading.Lock()
         self._background_trainer: Optional[threading.Thread] = None
+        # Set by shutdown(). The background trainer reads and publishes
+        # self.intents/self.entities/self.padaos, so once the container is
+        # retired no further pass may start: otherwise the worker trains
+        # into, and writes cache files for, a manager whose executor
+        # shutdown() has already closed.
+        self._shutdown = threading.Event()
         self._ever_trained = False
         # Set once a training pass has published compiled state. Until then
         # this container has nothing to answer with, so calc_intents waits
@@ -147,7 +163,16 @@ class IntentContainer:
         """
         os.makedirs(self.cache_dir, exist_ok=True)
         self.must_train = False
-        self.intents = IntentManager(self.cache_dir)
+        # A pass in flight reads self.intents/self.entities/self.padaos and
+        # sets _first_compile_done when it lands. Left running across the
+        # swap it would compile the OLD state and then mark the REPLACEMENT
+        # container ready, so a query could skip its first-compile wait and
+        # match against nothing. Stop and join it before replacing anything.
+        self._stop_background_trainer()
+        old_intents = self.intents
+        self.intents = IntentManager(
+            self.cache_dir, max_workers=self.inference_workers)
+        old_intents.shutdown(wait=False)
         self.entities = EntityManager(self.cache_dir)
         if self.disable_padaos:
             self.padaos = None
@@ -158,6 +183,32 @@ class IntentContainer:
         self._first_compile_done.clear()
         self._background_trainer = None
         self._train_generation = 0
+        # clear() resets the container for reuse, unlike shutdown()
+        self._shutdown.clear()
+
+    def _stop_background_trainer(self) -> None:
+        """Stop the background trainer and wait for it to leave train()."""
+        self._shutdown.set()
+        with self._spawn_lock:
+            trainer = self._background_trainer
+        if trainer is not None and trainer.is_alive():
+            trainer.join(timeout=self.SHUTDOWN_TRAIN_JOIN_S)
+            if trainer.is_alive():
+                LOG.warning("padatious background trainer did not stop in time")
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Retire the container: stop training, then release the workers.
+
+        The background trainer mutates self.intents and writes cache files,
+        so it has to be stopped and joined BEFORE the manager it is training
+        into is closed -- otherwise a pass in flight keeps compiling into a
+        retired container and can publish state after shutdown returned. The
+        join is bounded and applies to wait=False too: a caller that does not
+        want to block on the executor still must not be handed a container
+        with a live writer inside it.
+        """
+        self._stop_background_trainer()
+        self.intents.shutdown(wait=wait)
 
     def instantiate_from_disk(self) -> None:
         """
@@ -415,7 +466,11 @@ class IntentContainer:
         """
         if not self.needs_compile:
             return
+        if self._shutdown.is_set():
+            return
         with self._spawn_lock:
+            if self._shutdown.is_set():
+                return
             if self._background_trainer is not None and self._background_trainer.is_alive():
                 return
             self._background_trainer = threading.Thread(
@@ -451,15 +506,21 @@ class IntentContainer:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
-            time.sleep(min(self._TRAIN_DEBOUNCE_S, remaining))
+            # wait on the shutdown flag rather than sleeping blindly, so a
+            # retiring container does not hold shutdown() for a whole
+            # debounce interval before the worker notices
+            if self._shutdown.wait(min(self._TRAIN_DEBOUNCE_S, remaining)):
+                return
             if self._last_dirty_at == snapshot:
                 return
 
     def _background_train_loop(self) -> None:
         # a single worker keeps retraining until a pass completes without
         # must_train being re-armed by a registration that arrived mid-pass
-        while self.needs_compile:
+        while self.needs_compile and not self._shutdown.is_set():
             self._wait_for_quiet()
+            if self._shutdown.is_set():
+                return
             self.train()
 
     def calc_intents(self, query: str) -> List[MatchData]:
@@ -492,35 +553,54 @@ class IntentContainer:
             # last published state.
             self._first_compile_done.wait(self.FIRST_COMPILE_WAIT_S)
 
-        def suppressed(intent_name: str) -> bool:
-            # blacklisted words match at word boundaries: "install" suppresses
-            # "install firefox" but not "what is an installment loan"
-            q = query.lower()
-            return any(re.search(rf"\b{re.escape(k.lower())}\b", q)
-                       for k in self.blacklisted_words[intent_name])
-
         # post-processing: discard any matches that contain blacklisted words
         intents = {i.name: i
                    for i in self.intents.calc_intents(query, self.entities)
-                   if not suppressed(i.name)}
-        sent = tokenize(query)
+                   if not self._suppressed(i.name, query)}
 
-        if self.padaos is not None:
-            # exact template matches honor the same suppression - a perfect
-            # match must not bypass the blacklist the neural tier enforces
-            for perfect_match in self.padaos.calc_intents(query):
-                name = perfect_match['name']
-                if suppressed(name):
-                    continue
-                if not self._padaos_entities_verified(name, perfect_match['entities']):
-                    # a slot backed by an over-cap entity matched through
-                    # the unverified wildcard fallback (see
-                    # padaos.PADAOS_ENTITY_INLINE_CAP); padaos conf=1.0
-                    # would grant in-list exactness never actually checked,
-                    # so let the neural tier's own scoring stand instead
-                    continue
-                intents[name] = MatchData(name, sent, matches=perfect_match['entities'], conf=1.0)
+        for perfect_match in self._calc_exact_intents(query):
+            intents[perfect_match.name] = perfect_match
         return list(intents.values())
+
+    def _suppressed(self, intent_name: str, query: str) -> bool:
+        # blacklisted words match at word boundaries: "install" suppresses
+        # "install firefox" but not "what is an installment loan"
+        q = query.lower()
+        return any(re.search(rf"\b{re.escape(k.lower())}\b", q)
+                   for k in self.blacklisted_words[intent_name])
+
+    def calc_exact_intents(self, query: str) -> List[MatchData]:
+        """Return the deterministic padaos matches, skipping neural inference.
+
+        Same result as the exact tier inside :meth:`calc_intents`, but
+        without paying for the neural pass a caller does not need when an
+        exact template already answers with conf=1.0.
+        """
+        self._train_in_background()
+        return self._calc_exact_intents(query)
+
+    def _calc_exact_intents(self, query: str) -> List[MatchData]:
+        """The exact tier itself, with no training side effects."""
+        if self.padaos is None:
+            return []
+        sent = tokenize(query)
+        matches = []
+        # exact template matches honor the same suppression - a perfect
+        # match must not bypass the blacklist the neural tier enforces
+        for perfect_match in self.padaos.calc_intents(query):
+            name = perfect_match['name']
+            if self._suppressed(name, query):
+                continue
+            if not self._padaos_entities_verified(name, perfect_match['entities']):
+                # a slot backed by an over-cap entity matched through
+                # the unverified wildcard fallback (see
+                # padaos.PADAOS_ENTITY_INLINE_CAP); padaos conf=1.0
+                # would grant in-list exactness never actually checked,
+                # so let the neural tier's own scoring stand instead
+                continue
+            matches.append(MatchData(name, sent,
+                                     matches=perfect_match['entities'], conf=1.0))
+        return matches
 
     def _padaos_entities_verified(self, intent_name: str, matched_entities: Dict[str, str]) -> bool:
         """

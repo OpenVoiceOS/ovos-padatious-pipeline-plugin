@@ -18,6 +18,7 @@ import re
 import string
 import time
 from collections import defaultdict
+from copy import deepcopy
 from functools import lru_cache
 from os.path import expanduser, isfile
 from threading import Event, RLock, Thread, current_thread
@@ -224,7 +225,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if self.remove_punct:
             intent_cache += "_normalized"
         self.containers = {lang: self.engine_class(cache_dir=f"{intent_cache}/{lang}",
-                                                   disable_padaos=self.config.get("disable_padaos", False))
+                                                   disable_padaos=self.config.get("disable_padaos", False),
+                                                   inference_workers=self.config.get("inference_workers"))
                            for lang in langs}
 
         # pre-load any cached intents
@@ -1242,6 +1244,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         return None
 
     def shutdown(self):
+        for container in self.containers.values():
+            container.shutdown(wait=False)
         self.bus.remove('padatious:register_intent', self.register_intent)
         self.bus.remove('padatious:register_entity', self.register_entity)
         self.bus.remove('intent.service.padatious.get', self.handle_get_padatious)
@@ -1377,8 +1381,14 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset,
     return frozenset(canonical)
 
 
-@lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
-def _calc_padatious_intent(utt: str,
+#: Must exceed the number of distinct (utterance, session) keys interleaved
+#: across concurrent sessions, or a still-live result gets evicted before it
+#: is reused.
+_INTENT_CACHE_SIZE = 128
+
+
+@lru_cache(maxsize=_INTENT_CACHE_SIZE)
+def _calc_padatious_intent_cached(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
                            compiled_generation: int = 0,
                            blacklisted_intents: frozenset = frozenset(),
@@ -1419,9 +1429,19 @@ def _calc_padatious_intent(utt: str,
         # Matches are canonical by construction (registration-time alias
         # collapse, see PadatiousPipeline.register_intent), so only the
         # blacklist needs canonicalizing here.
-        matches = [m for m in intent_container.calc_intents(utt.lower())
-                   if m.name not in blacklisted_intents
-                   and m.name.split(":")[0] not in blacklisted_skills]
+        def allowed(candidates):
+            return [m for m in candidates
+                    if m.name not in blacklisted_intents
+                    and m.name.split(":")[0] not in blacklisted_skills]
+
+        # Padaos exact matches carry authoritative conf=1.0, so resolving them
+        # first lets a deterministic utterance skip the CPU-heavy neural pass
+        # entirely. If every exact match is blacklisted the neural tier still
+        # runs, so behavior is unchanged for anything the exact tier cannot
+        # answer.
+        matches = allowed(intent_container.calc_exact_intents(utt.lower()))
+        if not matches:
+            matches = allowed(intent_container.calc_intents(utt.lower()))
         if len(matches) == 0:
             return None
         best_match = max(matches, key=lambda x: x.conf)
@@ -1432,3 +1452,35 @@ def _calc_padatious_intent(utt: str,
         return intent
     except Exception as e:
         LOG.error(e)
+
+
+def _calc_padatious_intent(utt: str,
+                           intent_container: Union[IntentContainer, DomainIntentContainer],
+                           compiled_generation: int = 0,
+                           blacklisted_intents: frozenset = frozenset(),
+                           blacklisted_skills: frozenset = frozenset()) -> Optional[PadatiousIntent]:
+    """Cached match, handed to the caller as its own copy.
+
+    The cached MatchData is shared by every caller that asks the same
+    question, and the caller mutates it: ``PadatiousPipeline.calc_intent``
+    fills declared slots from the session's intent_context
+    (``_fill_context_slots``). Returning the cached object directly means a
+    slot one session filled is still filled when the next session matches
+    the same utterance, so a context value leaks across sessions -- and two
+    concurrent requests race on the same dict. The cache stores the match;
+    each caller gets a copy of it.
+    """
+    cached = _calc_padatious_intent_cached(
+        utt, intent_container, compiled_generation,
+        blacklisted_intents, blacklisted_skills)
+    return deepcopy(cached) if cached is not None else None
+
+
+#: the lru_cache lives on the inner function; callers that manage the cache
+#: (registration, deregistration, enable, disable, train) reach it through
+#: the public name.
+_calc_padatious_intent.cache_clear = _calc_padatious_intent_cached.cache_clear
+_calc_padatious_intent.cache_info = _calc_padatious_intent_cached.cache_info
+# the blacklist fall-through above re-runs selection uncached and needs the
+# raw function; no deepcopy needed there, the value is freshly computed.
+_calc_padatious_intent.__wrapped__ = _calc_padatious_intent_cached.__wrapped__

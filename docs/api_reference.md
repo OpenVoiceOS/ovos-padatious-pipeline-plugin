@@ -11,13 +11,15 @@ from ovos_padatious import IntentContainer
 ### Constructor
 
 ```python
-IntentContainer(cache_dir: str = None, disable_padaos: bool = False)
+IntentContainer(cache_dir: str = None, disable_padaos: bool = False,
+                inference_workers: int = None)
 ```
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `cache_dir` | `str` | XDG data home | Directory used to cache trained neural network models and hash files. Created automatically if it does not exist. |
 | `disable_padaos` | `bool` | `False` | Disable the fast regex-based exact matcher (padaos). Useful when only the neural network matcher is desired. |
+| `inference_workers` | `int` | Python default | Maximum reusable worker threads for neural intent matching. Must be positive when provided. |
 
 ### Methods
 
