@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0a3](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.0a3) (2026-09-06)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.0a2...2.1.0a3)
+
+**Merged pull requests:**
+
+- perf: prefilter and folded match loop in padaos query path [\#142](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/142) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.1.0a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.0a2) (2026-09-06)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.0a1...2.1.0a2)
@@ -439,17 +447,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.1...1.3.2a1)
 
-**Merged pull requests:**
-
-- fix:improve cache [\#40](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/40) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.3.1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.1) (2025-01-25)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.1a1...1.3.1)
-
-**Merged pull requests:**
-
-- Release 1.3.1a1 [\#39](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/39) ([github-actions[bot]](https://github.com/apps/github-actions))
 
 ## [1.3.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.1a1) (2025-01-25)
 
