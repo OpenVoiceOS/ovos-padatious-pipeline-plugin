@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 """Regression coverage for a production benchmarking report (7 intents
-affected): a single-branch group like ``"cansad(e)"`` makes
+affected): an unbalanced group like ``"cansad(e"`` makes
 ``ovos_spec_tools.expansion.expand`` raise ``MalformedTemplate``. That
 strictness is deliberate spec-side behaviour and must NOT be relaxed - but a
 single malformed training line in one intent/entity must not abort
@@ -41,13 +41,13 @@ LANG = "en-US"
 
 MIXED_LINES = [
     "estou (feliz|triste)",
-    "estou cansad(e)",
+    "estou cansad(e",
     "sinto-me (bem|mal)",
 ]
 
 ALL_MALFORMED_LINES = [
-    "estou cansad(e)",
-    "sinto-me triste(e)",
+    "estou cansad(e",
+    "sinto-me triste(e",
 ]
 
 
@@ -69,14 +69,14 @@ class TestExpandOrSkip(TestCase):
         )
 
     def test_expand_or_skip_returns_empty_list_for_malformed_line(self):
-        self.assertEqual(expand_or_skip("estou cansad(e)"), [])
+        self.assertEqual(expand_or_skip("estou cansad(e"), [])
 
     def test_expand_or_skip_logs_warning_naming_the_line(self):
         with mock.patch("ovos_padatious.util.LOG") as fake_log:
-            expand_or_skip("estou cansad(e)", context="intent 'mood.skill:mood'")
+            expand_or_skip("estou cansad(e", context="intent 'mood.skill:mood'")
         fake_log.warning.assert_called_once()
         logged = " ".join(str(a) for a in fake_log.warning.call_args[0])
-        self.assertIn("estou cansad(e)", logged)
+        self.assertIn("estou cansad(e", logged)
         self.assertIn("mood.skill:mood", logged)
 
 
@@ -103,7 +103,6 @@ class TestMalformedTemplateToleranceIntent(TestCase):
         self.assertIn("sinto-me mal", samples)
         # the malformed line must not survive, literally or otherwise
         self.assertNotIn("estou cansad(e", samples)
-        self.assertNotIn("estou cansad(e)", samples)
         self.assertFalse(any("cansad" in s for s in samples))
 
     def test_malformed_line_contributes_no_training_data(self):
@@ -148,14 +147,14 @@ class TestMalformedTemplateToleranceEntity(TestCase):
         self.pipeline = PadatiousPipeline(mock.Mock())
 
     def test_register_entity_does_not_raise_on_malformed_line(self):
-        entity_lines = ["feliz", "triste", "cansad(e)"]
+        entity_lines = ["feliz", "triste", "cansad(e"]
         try:
             self.pipeline.register_entity(register_entity_msg("mood_word", entity_lines))
         except Exception as e:  # pragma: no cover
             self.fail(f"register_entity raised on malformed template line: {e!r}")
 
     def test_entity_unpack_skips_malformed_line(self):
-        entity_lines = ["feliz", "triste", "cansad(e)"]
+        entity_lines = ["feliz", "triste", "cansad(e"]
         lang, skill_id, name, samples, _ = self.pipeline._unpack_object(
             register_entity_msg("mood_word", entity_lines))
         self.assertIn("feliz", samples)
@@ -215,7 +214,7 @@ class TestAllMalformedIntentNotRegistered(TestCase):
         self.assertEqual(match.name, other_name)
 
     def test_all_malformed_entity_is_not_registered(self):
-        entity_lines = ["cansad(e)", "triste(e)"]
+        entity_lines = ["cansad(e", "triste(e"]
         with mock.patch("ovos_padatious.opm.LOG") as fake_log:
             self.pipeline.register_entity(register_entity_msg("mood_word", entity_lines))
             fake_log.error.assert_called()
