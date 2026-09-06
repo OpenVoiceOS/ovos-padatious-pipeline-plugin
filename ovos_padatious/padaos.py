@@ -33,6 +33,22 @@ class _LineAlternationCapExceeded(Exception):
                           f"PADAOS_ENTITY_INLINE_CAP ({PADAOS_ENTITY_INLINE_CAP})")
 
 
+class _IntentRegexes(list):
+    """The list of an intent's compiled line regexes, carrying a single
+    ``prefilter`` regex (the alternation of them all) used as a fast reject
+    on the query path.
+
+    It is a plain ``list`` in every observable way - indexing, ``len``,
+    equality to ``[]`` - so it is a drop-in for the bare list
+    ``self.intents[name]`` used to hold, while binding the prefilter to the
+    regexes it was built from. Because the two travel together in one
+    object, a single ``self.intents`` swap publishes both atomically: a
+    lock-free reader in ``calc_intents`` can never pair one compile's
+    regexes with another compile's prefilter.
+    """
+    __slots__ = ('prefilter',)
+
+
 class IntentContainer:
     def __init__(self):
         self.intent_lines, self.entity_lines = {}, {}
@@ -237,6 +253,30 @@ class IntentContainer:
         # Filter out all regexes that fails
         return [r for r in regexes if r is not None]
 
+    @staticmethod
+    def _with_prefilter(regexes):
+        """Wrap an intent's line regexes in an ``_IntentRegexes`` carrying a
+        prefilter: one regex that is the alternation of them all, or None
+        when the intent has no lines (or just one, which is its own
+        prefilter).
+
+        Each line pattern is already ``^body$`` and every capture group
+        name is globally unique (the shared counter in
+        ``_create_intent_pattern``), so ``(?:^b1$)|(?:^b2$)|...`` compiles
+        without a duplicate-group clash and matches iff at least one line
+        matches. The prefilter is a membership test only; the caller re-runs
+        the per-line scan to pick the winning line.
+        """
+        wrapped = _IntentRegexes(regexes)
+        if not regexes:
+            wrapped.prefilter = None
+        elif len(regexes) == 1:
+            wrapped.prefilter = regexes[0]
+        else:
+            source = '|'.join('(?:{})'.format(r.pattern) for r in regexes)
+            wrapped.prefilter = re.compile(source, re.IGNORECASE)
+        return wrapped
+
     def compile(self):
         """Compile the container. Callers must serialize compiles among
         themselves: two overlapping passes each publish their own entity
@@ -278,8 +318,11 @@ class IntentContainer:
                 self._create_pattern(line) for line in values
             ))
         counter = count()
+        # each intent's regexes travel with their prefilter in one object,
+        # both built off-lock like the regexes themselves.
         intents = {
-            intent_name: self.create_regexes(lines, intent_name, entities, counter)
+            intent_name: self._with_prefilter(
+                self.create_regexes(lines, intent_name, entities, counter))
             for intent_name, lines in intent_lines.items()
         }
         duration = time.monotonic() - start
@@ -320,14 +363,33 @@ class IntentContainer:
                     f"{' (capped, not inlined)' if capped else ''}"
                 )
 
-    def _calc_entities(self, query, regexes):
+    @staticmethod
+    def _match_entities(regexes, query):
+        """Return the least-greedy entity dict among an intent's line
+        regexes, or None if none match.
+
+        Least-greedy is the same rule ``min(..., key=sum-of-value-lengths)``
+        applied before, kept here to skip allocating a per-intent list of
+        every matching line's groupdict (most intents match zero lines, so
+        the list and the generator frame were pure overhead on the hot
+        query path). A strict ``<`` keeps the first line at a tie, matching
+        ``min``'s first-wins behaviour exactly.
+        """
+        best, best_len = None, 0
         for regex in regexes:
             match = regex.match(query)
-            if match:
-                yield {
-                    k.rsplit('__', 1)[0].replace('__colon__', ':'): v.strip()
-                    for k, v in match.groupdict().items() if v
-                }
+            if match is None:
+                continue
+            groups = {
+                k.rsplit('__', 1)[0].replace('__colon__', ':'): v.strip()
+                for k, v in match.groupdict().items() if v
+            }
+            total = 0
+            for v in groups.values():
+                total += len(v)
+            if best is None or total < best_len:
+                best, best_len = groups, total
+        return best
 
     def calc_intents(self, query):
         query = ' ' + query + ' '
@@ -349,12 +411,15 @@ class IntentContainer:
         else:
             self._warned_pending_compile = False
         for intent_name, regexes in self.intents.items():
-            entities = list(self._calc_entities(query, regexes))
-            if entities:
-                yield {
-                    'name': intent_name,
-                    'entities': min(entities, key=lambda x: sum(map(len, x.values())))
-                }
+            prefilter = getattr(regexes, 'prefilter', None)
+            if prefilter is not None and prefilter.match(query) is None:
+                # one C-level match rules the whole intent out; the vast
+                # majority of intents are rejected here without touching the
+                # per-line Python loop. A missing prefilter never skips.
+                continue
+            entities = self._match_entities(regexes, query)
+            if entities is not None:
+                yield {'name': intent_name, 'entities': entities}
 
     def calc_intent(self, query):
         return min(
