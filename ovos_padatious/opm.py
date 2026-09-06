@@ -1481,3 +1481,6 @@ def _calc_padatious_intent(utt: str,
 #: the public name.
 _calc_padatious_intent.cache_clear = _calc_padatious_intent_cached.cache_clear
 _calc_padatious_intent.cache_info = _calc_padatious_intent_cached.cache_info
+# the blacklist fall-through above re-runs selection uncached and needs the
+# raw function; no deepcopy needed there, the value is freshly computed.
+_calc_padatious_intent.__wrapped__ = _calc_padatious_intent_cached.__wrapped__
