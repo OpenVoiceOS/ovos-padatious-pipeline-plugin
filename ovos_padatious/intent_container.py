@@ -57,14 +57,20 @@ class IntentContainer:
 
     Args:
         cache_dir (str): Directory for caching the neural network models and intent/entity files.
+        disable_padaos (bool): Disable exact-pattern matching when true.
+        inference_workers (int): Maximum reusable neural inference workers.
     """
 
-    def __init__(self, cache_dir: Optional[str] = None, disable_padaos: bool = False) -> None:
+    def __init__(self, cache_dir: Optional[str] = None,
+                 disable_padaos: bool = False,
+                 inference_workers: Optional[int] = None) -> None:
         cache_dir = cache_dir or f"{xdg_data_home()}/{get_xdg_base()}/intent_cache"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir: str = cache_dir
         self.must_train: bool = False
-        self.intents: IntentManager = IntentManager(cache_dir)
+        self.inference_workers = inference_workers
+        self.intents: IntentManager = IntentManager(
+            cache_dir, max_workers=inference_workers)
         self.entities: EntityManager = EntityManager(cache_dir)
         self.disable_padaos = disable_padaos
         if self.disable_padaos:
@@ -147,7 +153,10 @@ class IntentContainer:
         """
         os.makedirs(self.cache_dir, exist_ok=True)
         self.must_train = False
-        self.intents = IntentManager(self.cache_dir)
+        old_intents = self.intents
+        self.intents = IntentManager(
+            self.cache_dir, max_workers=self.inference_workers)
+        old_intents.shutdown(wait=False)
         self.entities = EntityManager(self.cache_dir)
         if self.disable_padaos:
             self.padaos = None
@@ -158,6 +167,10 @@ class IntentContainer:
         self._first_compile_done.clear()
         self._background_trainer = None
         self._train_generation = 0
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Release the inference workers owned by this container."""
+        self.intents.shutdown(wait=wait)
 
     def instantiate_from_disk(self) -> None:
         """
@@ -492,35 +505,54 @@ class IntentContainer:
             # last published state.
             self._first_compile_done.wait(self.FIRST_COMPILE_WAIT_S)
 
-        def suppressed(intent_name: str) -> bool:
-            # blacklisted words match at word boundaries: "install" suppresses
-            # "install firefox" but not "what is an installment loan"
-            q = query.lower()
-            return any(re.search(rf"\b{re.escape(k.lower())}\b", q)
-                       for k in self.blacklisted_words[intent_name])
-
         # post-processing: discard any matches that contain blacklisted words
         intents = {i.name: i
                    for i in self.intents.calc_intents(query, self.entities)
-                   if not suppressed(i.name)}
-        sent = tokenize(query)
+                   if not self._suppressed(i.name, query)}
 
-        if self.padaos is not None:
-            # exact template matches honor the same suppression - a perfect
-            # match must not bypass the blacklist the neural tier enforces
-            for perfect_match in self.padaos.calc_intents(query):
-                name = perfect_match['name']
-                if suppressed(name):
-                    continue
-                if not self._padaos_entities_verified(name, perfect_match['entities']):
-                    # a slot backed by an over-cap entity matched through
-                    # the unverified wildcard fallback (see
-                    # padaos.PADAOS_ENTITY_INLINE_CAP); padaos conf=1.0
-                    # would grant in-list exactness never actually checked,
-                    # so let the neural tier's own scoring stand instead
-                    continue
-                intents[name] = MatchData(name, sent, matches=perfect_match['entities'], conf=1.0)
+        for perfect_match in self._calc_exact_intents(query):
+            intents[perfect_match.name] = perfect_match
         return list(intents.values())
+
+    def _suppressed(self, intent_name: str, query: str) -> bool:
+        # blacklisted words match at word boundaries: "install" suppresses
+        # "install firefox" but not "what is an installment loan"
+        q = query.lower()
+        return any(re.search(rf"\b{re.escape(k.lower())}\b", q)
+                   for k in self.blacklisted_words[intent_name])
+
+    def calc_exact_intents(self, query: str) -> List[MatchData]:
+        """Return the deterministic padaos matches, skipping neural inference.
+
+        Same result as the exact tier inside :meth:`calc_intents`, but
+        without paying for the neural pass a caller does not need when an
+        exact template already answers with conf=1.0.
+        """
+        self._train_in_background()
+        return self._calc_exact_intents(query)
+
+    def _calc_exact_intents(self, query: str) -> List[MatchData]:
+        """The exact tier itself, with no training side effects."""
+        if self.padaos is None:
+            return []
+        sent = tokenize(query)
+        matches = []
+        # exact template matches honor the same suppression - a perfect
+        # match must not bypass the blacklist the neural tier enforces
+        for perfect_match in self.padaos.calc_intents(query):
+            name = perfect_match['name']
+            if self._suppressed(name, query):
+                continue
+            if not self._padaos_entities_verified(name, perfect_match['entities']):
+                # a slot backed by an over-cap entity matched through
+                # the unverified wildcard fallback (see
+                # padaos.PADAOS_ENTITY_INLINE_CAP); padaos conf=1.0
+                # would grant in-list exactness never actually checked,
+                # so let the neural tier's own scoring stand instead
+                continue
+            matches.append(MatchData(name, sent,
+                                     matches=perfect_match['entities'], conf=1.0))
+        return matches
 
     def _padaos_entities_verified(self, intent_name: str, matched_entities: Dict[str, str]) -> bool:
         """

@@ -14,6 +14,7 @@
 import os
 import random
 import unittest
+from unittest.mock import MagicMock
 from os.path import join
 from time import monotonic
 
@@ -120,6 +121,35 @@ class TestIntentContainer(unittest.TestCase):
 
         test(False, False)
         test(True, True)
+
+    def test_calc_exact_intents_skips_neural_inference(self):
+        cont = IntentContainer('/tmp/cache-exact-tier')
+        cont.add_intent('hello', ['hello there'])
+        cont.train(debug=False)
+        cont.intents.calc_intents = MagicMock(
+            side_effect=AssertionError('neural tier must not run'))
+
+        matches = cont.calc_exact_intents('hello there')
+
+        self.assertEqual([m.name for m in matches], ['hello'])
+        self.assertEqual(matches[0].conf, 1.0)
+        cont.shutdown()
+
+    def test_calc_exact_intents_is_empty_without_padaos(self):
+        cont = IntentContainer('/tmp/cache-exact-no-padaos', disable_padaos=True)
+        cont.add_intent('hello', ['hello there'])
+        cont.train(debug=False)
+
+        self.assertEqual(cont.calc_exact_intents('hello there'), [])
+        cont.shutdown()
+
+    def test_shutdown_releases_inference_workers(self):
+        cont = IntentContainer('/tmp/cache-shutdown')
+        cont.intents.shutdown = MagicMock()
+
+        cont.shutdown(wait=False)
+
+        cont.intents.shutdown.assert_called_once_with(wait=False)
 
     def _create_large_intent(self, depth):
         if depth == 0:

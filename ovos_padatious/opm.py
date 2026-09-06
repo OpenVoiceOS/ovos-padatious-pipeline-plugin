@@ -31,6 +31,7 @@ from ovos_bus_client.client import MessageBusClient
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
 from ovos_padatious import IntentContainer
+from ovos_padatious._metrics import EXACT_MATCH, NEURAL_MATCH
 from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_padatious.util import expand_or_skip
@@ -224,7 +225,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if self.remove_punct:
             intent_cache += "_normalized"
         self.containers = {lang: self.engine_class(cache_dir=f"{intent_cache}/{lang}",
-                                                   disable_padaos=self.config.get("disable_padaos", False))
+                                                   disable_padaos=self.config.get("disable_padaos", False),
+                                                   inference_workers=self.config.get("inference_workers"))
                            for lang in langs}
 
         # pre-load any cached intents
@@ -1242,6 +1244,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         return None
 
     def shutdown(self):
+        for container in self.containers.values():
+            container.shutdown(wait=False)
         self.bus.remove('padatious:register_intent', self.register_intent)
         self.bus.remove('padatious:register_entity', self.register_entity)
         self.bus.remove('intent.service.padatious.get', self.handle_get_padatious)
@@ -1377,7 +1381,14 @@ def _canonicalize_blacklist(blacklisted_intents: frozenset,
     return frozenset(canonical)
 
 
-@lru_cache(maxsize=3)  # repeat calls under different conf levels wont re-run code
+#: Confidence tiers retry the same utterance, and concurrent sessions
+#: interleave several different ones. maxsize=3 evicted a still-live result
+#: after three unrelated keys, so the "repeat calls under different conf
+#: levels wont re-run code" intent below only held for a single speaker.
+_INTENT_CACHE_SIZE = 128
+
+
+@lru_cache(maxsize=_INTENT_CACHE_SIZE)
 def _calc_padatious_intent(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
                            compiled_generation: int = 0,
@@ -1419,11 +1430,25 @@ def _calc_padatious_intent(utt: str,
         # Matches are canonical by construction (registration-time alias
         # collapse, see PadatiousPipeline.register_intent), so only the
         # blacklist needs canonicalizing here.
-        matches = [m for m in intent_container.calc_intents(utt.lower())
-                   if m.name not in blacklisted_intents
-                   and m.name.split(":")[0] not in blacklisted_skills]
+        def allowed(candidates):
+            return [m for m in candidates
+                    if m.name not in blacklisted_intents
+                    and m.name.split(":")[0] not in blacklisted_skills]
+
+        # Padaos exact matches carry authoritative conf=1.0, so resolving them
+        # first lets a deterministic utterance skip the CPU-heavy neural pass
+        # entirely. If every exact match is blacklisted the neural tier still
+        # runs, so behavior is unchanged for anything the exact tier cannot
+        # answer.
+        matches = allowed(intent_container.calc_exact_intents(utt.lower()))
+        exact = bool(matches)
+        if not matches:
+            matches = allowed(intent_container.calc_intents(utt.lower()))
         if len(matches) == 0:
             return None
+        # Name the tier that actually produced the returned match; a query
+        # nothing answered counts against neither.
+        (EXACT_MATCH if exact else NEURAL_MATCH).increment()
         best_match = max(matches, key=lambda x: x.conf)
         best_matches = (
             match for match in matches if match.conf == best_match.conf)
