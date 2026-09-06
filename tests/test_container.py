@@ -14,6 +14,7 @@
 import os
 import random
 import threading
+import time
 import unittest
 from unittest.mock import MagicMock
 from os.path import join
@@ -258,31 +259,54 @@ class TestIntentContainer(unittest.TestCase):
 
 
 class TestContainerLifecycle(unittest.TestCase):
-    """shutdown()/clear() must not leave a trainer inside a retired container."""
+    """shutdown()/clear() must not leave a trainer inside a retired container.
 
-    def test_shutdown_stops_and_joins_the_background_trainer(self):
-        cont = IntentContainer('/tmp/cache-shutdown-trainer', disable_padaos=True)
+    Each test drives the lifecycle call from another thread and asserts it
+    is still blocked while the trainer holds, so releasing the trainer
+    first cannot make the test pass by accident.
+    """
+
+    @staticmethod
+    def _gated_trainer(cont, release, observed=None):
+        """Install a train() that parks until *release*, and start it."""
         in_train = threading.Event()
-        release = threading.Event()
-        finished = threading.Event()
 
         def slow_train(*args, **kwargs):
             in_train.set()
-            release.wait(5)
-            finished.set()
+            release.wait(10)
+            if observed is not None:
+                observed.append(cont.intents)
             return True
 
         cont.train = slow_train
         cont.must_train = True
         cont._train_in_background()
         assert in_train.wait(5), "trainer never started"
+        return in_train
+
+    def test_shutdown_waits_for_the_active_trainer(self):
+        cont = IntentContainer('/tmp/cache-shutdown-trainer', disable_padaos=True)
+        release = threading.Event()
+        self._gated_trainer(cont, release)
+
+        done = threading.Event()
+        threading.Thread(
+            target=lambda: (cont.shutdown(wait=False), done.set()),
+            daemon=True).start()
+
+        # shutdown signalled the trainer...
+        deadline = time.monotonic() + 5
+        while not cont._shutdown.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(cont._shutdown.is_set())
+        # ...and is still waiting for it, rather than closing underneath it
+        self.assertFalse(done.wait(0.3),
+                         "shutdown() returned while the trainer was running")
 
         release.set()
-        cont.shutdown(wait=False)
-
-        assert finished.is_set()
+        self.assertTrue(done.wait(10), "shutdown() never completed")
         trainer = cont._background_trainer
-        assert trainer is None or not trainer.is_alive()
+        self.assertTrue(trainer is None or not trainer.is_alive())
 
     def test_shutdown_refuses_to_start_a_new_pass(self):
         cont = IntentContainer('/tmp/cache-shutdown-refuse', disable_padaos=True)
@@ -291,33 +315,36 @@ class TestContainerLifecycle(unittest.TestCase):
 
         cont._train_in_background()
 
-        assert cont._background_trainer is None
+        self.assertIsNone(cont._background_trainer)
 
-    def test_clear_stops_the_trainer_before_swapping_state(self):
+    def test_clear_waits_before_swapping_state(self):
         cont = IntentContainer('/tmp/cache-clear-trainer', disable_padaos=True)
-        in_train = threading.Event()
         release = threading.Event()
-        swapped_during_train = []
-
-        def slow_train(*args, **kwargs):
-            in_train.set()
-            release.wait(5)
-            swapped_during_train.append(cont.intents)
-            return True
-
-        cont.train = slow_train
-        cont.must_train = True
+        observed = []
         original_manager = cont.intents
-        cont._train_in_background()
-        assert in_train.wait(5)
+        self._gated_trainer(cont, release, observed)
+
+        done = threading.Event()
+        threading.Thread(
+            target=lambda: (cont.clear(), done.set()), daemon=True).start()
+
+        deadline = time.monotonic() + 5
+        while not cont._shutdown.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(cont._shutdown.is_set())
+        # clear() must not have swapped the manager while the pass runs
+        self.assertFalse(done.wait(0.3),
+                         "clear() returned while the trainer was running")
+        self.assertIs(cont.intents, original_manager,
+                      "state was swapped underneath the active trainer")
 
         release.set()
-        cont.clear()
+        self.assertTrue(done.wait(10), "clear() never completed")
 
-        # the pass finished against the ORIGINAL manager, never the one
-        # clear() installed
-        assert swapped_during_train == [original_manager]
-        assert cont.intents is not original_manager
+        # the pass finished against the ORIGINAL manager, never the new one
+        self.assertEqual(observed, [original_manager])
+        self.assertIsNot(cont.intents, original_manager)
         # and the container is reusable afterwards
-        assert not cont._shutdown.is_set()
+        self.assertFalse(cont._shutdown.is_set())
         cont.shutdown(wait=False)
+
