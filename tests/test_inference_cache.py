@@ -11,17 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from ovos_padatious._metrics import (
-    EXACT_MATCH,
-    NEURAL_MATCH,
-    performance_metrics,
-)
 from ovos_padatious.match_data import MatchData
 from ovos_padatious.opm import _calc_padatious_intent
-
-
-def _value(counter):
-    return counter.snapshot()["value"]
 
 
 def test_confidence_retry_cache_keeps_interleaved_utterances():
@@ -97,47 +88,6 @@ def test_exact_tier_answers_without_neural_inference():
         assert container.neural_calls == 1
     finally:
         _calc_padatious_intent.cache_clear()
-
-
-def test_match_path_counters_name_the_resolving_tier():
-    class Container:
-        @staticmethod
-        def calc_exact_intents(utterance):
-            if utterance == "exact":
-                return [MatchData(
-                    name="test-skill:exact",
-                    sent=utterance,
-                    matches={},
-                    conf=1.0,
-                )]
-            return []
-
-        @staticmethod
-        def calc_intents(utterance):
-            if utterance == "nothing":
-                return []
-            return [MatchData(
-                name="test-skill:neural",
-                sent=utterance,
-                matches={},
-                conf=0.9,
-            )]
-
-    container = Container()
-    before = {"exact": _value(EXACT_MATCH), "neural": _value(NEURAL_MATCH)}
-    _calc_padatious_intent.cache_clear()
-    try:
-        _calc_padatious_intent("exact", container)
-        _calc_padatious_intent("fuzzy", container)
-        _calc_padatious_intent("nothing", container)
-    finally:
-        _calc_padatious_intent.cache_clear()
-
-    assert _value(EXACT_MATCH) - before["exact"] == 1
-    assert _value(NEURAL_MATCH) - before["neural"] == 1
-    snapshots = performance_metrics()
-    assert snapshots["ovos_padatious_exact_match_total"]["type"] == "counter"
-    assert snapshots["ovos_padatious_neural_match_total"]["type"] == "counter"
 
 
 def test_cached_match_is_not_shared_between_callers():

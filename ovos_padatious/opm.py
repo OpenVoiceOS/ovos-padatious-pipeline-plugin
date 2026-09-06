@@ -32,7 +32,6 @@ from ovos_bus_client.client import MessageBusClient
 from ovos_bus_client.message import Message
 from ovos_bus_client.session import SessionManager, Session
 from ovos_padatious import IntentContainer
-from ovos_padatious._metrics import EXACT_MATCH, NEURAL_MATCH
 from ovos_padatious.domain_container import DomainIntentContainer
 from ovos_padatious.match_data import MatchData as PadatiousIntent
 from ovos_padatious.util import expand_or_skip
@@ -1442,14 +1441,10 @@ def _calc_padatious_intent_cached(utt: str,
         # runs, so behavior is unchanged for anything the exact tier cannot
         # answer.
         matches = allowed(intent_container.calc_exact_intents(utt.lower()))
-        exact = bool(matches)
         if not matches:
             matches = allowed(intent_container.calc_intents(utt.lower()))
         if len(matches) == 0:
             return None
-        # Name the tier that actually produced the returned match; a query
-        # nothing answered counts against neither.
-        (EXACT_MATCH if exact else NEURAL_MATCH).increment()
         best_match = max(matches, key=lambda x: x.conf)
         best_matches = (
             match for match in matches if match.conf == best_match.conf)
