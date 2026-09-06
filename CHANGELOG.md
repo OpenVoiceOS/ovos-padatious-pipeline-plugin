@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.18a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.18a2) (2026-09-06)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.18a1...2.0.18a2)
+
+**Merged pull requests:**
+
+- docs: mark padatious as legacy, maintenance mode [\#137](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/137) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.18a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.18a1) (2026-09-06)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.17a2...2.0.18a1)
@@ -467,17 +475,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.1.1a1...1.1.1)
 
-**Merged pull requests:**
-
-- Release 1.1.1a1 [\#33](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/33) ([github-actions[bot]](https://github.com/apps/github-actions))
-
 ## [1.1.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.1.1a1) (2024-12-11)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.1.0...1.1.1a1)
-
-**Merged pull requests:**
-
-- performance: paralelize inference [\#32](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/32) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.1.0](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.1.0) (2024-12-09)
 
