@@ -4,6 +4,12 @@
 
 Padatious is a neural network intent parser, implemented in pure numpy with a [FANN](https://github.com/libfann/fann)-compatible model format. This repository packages it as an [OpenVoiceOS](https://openvoiceos.org/) (OVOS) pipeline plugin and bundles a maintained fork of the original [padatious](https://github.com/MycroftAI/padatious) from Mycroft AI.
 
+## Status
+
+This plugin is legacy and maintained in a limited capacity; it is not recommended for new deployments. The underlying engine memorizes its training sentences instead of generalizing from them, so it needs many worded variations of each intent to catch paraphrases a classifier would generalize to on its own. Compile time and memory grow with the number of training sentences, and the engine becomes unusable once it is asked to train on the full OVOS skill corpus rather than a handful of intents.
+
+For new deployments, use [ovos-m2v-pipeline](https://github.com/OpenVoiceOS/ovos-m2v-pipeline), a classifier-based intent engine that generalizes from training sentences, or [nebulento](https://github.com/OpenVoiceOS/nebulento), a fuzzy-matching intent engine, instead.
+
 ## Features
 
 - Intents are easy to create from a handful of example sentences.
