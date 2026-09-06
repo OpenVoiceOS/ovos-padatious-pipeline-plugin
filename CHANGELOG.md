@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.18a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.18a1) (2026-09-06)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.17a2...2.0.18a1)
+
+**Merged pull requests:**
+
+- fix: scope ovos.intent.disable to the message session \(OVOS-INTENT-4 §8.5\) [\#133](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/133) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.17a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.17a2) (2026-09-06)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.17a1...2.0.17a2)
@@ -439,10 +447,6 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.2.0...1.3.0a1)
 
-**Merged pull requests:**
-
-- feat/domain\_engine [\#31](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/31) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.2.0](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.2.0) (2025-01-24)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.2.0a1...1.2.0)
@@ -479,25 +483,13 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.1.0a1...1.1.0)
 
-**Merged pull requests:**
-
-- Release 1.1.0a1 [\#30](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/30) ([github-actions[bot]](https://github.com/apps/github-actions))
-
 ## [1.1.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.1.0a1) (2024-12-09)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.0.5...1.1.0a1)
 
-**Merged pull requests:**
-
-- feat:delayed\_padatious\_training [\#29](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/29) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.0.5](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.0.5) (2024-12-06)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.0.5a1...1.0.5)
-
-**Merged pull requests:**
-
-- Release 1.0.5a1 [\#27](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/27) ([github-actions[bot]](https://github.com/apps/github-actions))
 
 ## [1.0.5a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.0.5a1) (2024-12-06)
 
