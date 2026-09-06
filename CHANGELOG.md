@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.0a1) (2026-09-06)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.18a2...2.1.0a1)
+
+**Merged pull requests:**
+
+- feat: blacklisted\_labels config to exclude intents from training and matching [\#131](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/131) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.0.18a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.18a2) (2026-09-06)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.18a1...2.0.18a2)
@@ -459,17 +467,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.2.0a1...1.2.0)
 
-**Merged pull requests:**
-
-- Release 1.2.0a1 [\#36](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/36) ([github-actions[bot]](https://github.com/apps/github-actions))
-
 ## [1.2.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.2.0a1) (2025-01-24)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.1.1...1.2.0a1)
-
-**Merged pull requests:**
-
-- feat: stemmer [\#35](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/35) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.1.1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.1.1) (2024-12-12)
 
