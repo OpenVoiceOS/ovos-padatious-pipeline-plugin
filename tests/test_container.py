@@ -13,6 +13,7 @@
 # limitations under the License.
 import os
 import random
+import threading
 import unittest
 from unittest.mock import MagicMock
 from os.path import join
@@ -254,3 +255,69 @@ class TestIntentContainer(unittest.TestCase):
         intent = self.cont.calc_intent('make a timer for 3 minute')
         assert intent.name == 'timer'
         assert intent.matches == {'time': '3'}
+
+
+class TestContainerLifecycle(unittest.TestCase):
+    """shutdown()/clear() must not leave a trainer inside a retired container."""
+
+    def test_shutdown_stops_and_joins_the_background_trainer(self):
+        cont = IntentContainer('/tmp/cache-shutdown-trainer', disable_padaos=True)
+        in_train = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        def slow_train(*args, **kwargs):
+            in_train.set()
+            release.wait(5)
+            finished.set()
+            return True
+
+        cont.train = slow_train
+        cont.must_train = True
+        cont._train_in_background()
+        assert in_train.wait(5), "trainer never started"
+
+        release.set()
+        cont.shutdown(wait=False)
+
+        assert finished.is_set()
+        trainer = cont._background_trainer
+        assert trainer is None or not trainer.is_alive()
+
+    def test_shutdown_refuses_to_start_a_new_pass(self):
+        cont = IntentContainer('/tmp/cache-shutdown-refuse', disable_padaos=True)
+        cont.shutdown(wait=False)
+        cont.must_train = True
+
+        cont._train_in_background()
+
+        assert cont._background_trainer is None
+
+    def test_clear_stops_the_trainer_before_swapping_state(self):
+        cont = IntentContainer('/tmp/cache-clear-trainer', disable_padaos=True)
+        in_train = threading.Event()
+        release = threading.Event()
+        swapped_during_train = []
+
+        def slow_train(*args, **kwargs):
+            in_train.set()
+            release.wait(5)
+            swapped_during_train.append(cont.intents)
+            return True
+
+        cont.train = slow_train
+        cont.must_train = True
+        original_manager = cont.intents
+        cont._train_in_background()
+        assert in_train.wait(5)
+
+        release.set()
+        cont.clear()
+
+        # the pass finished against the ORIGINAL manager, never the one
+        # clear() installed
+        assert swapped_during_train == [original_manager]
+        assert cont.intents is not original_manager
+        # and the container is reusable afterwards
+        assert not cont._shutdown.is_set()
+        cont.shutdown(wait=False)

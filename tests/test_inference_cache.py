@@ -138,3 +138,51 @@ def test_match_path_counters_name_the_resolving_tier():
     snapshots = performance_metrics()
     assert snapshots["ovos_padatious_exact_match_total"]["type"] == "counter"
     assert snapshots["ovos_padatious_neural_match_total"]["type"] == "counter"
+
+
+def test_cached_match_is_not_shared_between_callers():
+    """A caller mutates the match; the next one must not see that.
+
+    PadatiousPipeline.calc_intent fills declared slots from the session's
+    intent_context (_fill_context_slots). Handing out the cached object
+    means a value one session filled is still filled when the next session
+    matches the same utterance.
+    """
+
+    class Container:
+        def __init__(self):
+            self.calls = 0
+
+        @staticmethod
+        def calc_exact_intents(_utterance):
+            return []
+
+        def calc_intents(self, utterance):
+            self.calls += 1
+            return [MatchData(
+                name="test-skill:call",
+                sent=utterance,
+                matches={"who": ""},
+                conf=0.9,
+            )]
+
+    container = Container()
+    _calc_padatious_intent.cache_clear()
+    try:
+        first = _calc_padatious_intent("call them", container)
+        first.matches["who"] = "alice"          # session 1 fills its slot
+
+        second = _calc_padatious_intent("call them", container)
+
+        assert second is not first
+        assert second.matches == {"who": ""}, "context leaked across sessions"
+        # still a cache hit: the container was only consulted once
+        assert container.calls == 1
+    finally:
+        _calc_padatious_intent.cache_clear()
+
+
+def test_cache_controls_stay_on_the_public_name():
+    """Callers manage the cache through _calc_padatious_intent."""
+    assert hasattr(_calc_padatious_intent, "cache_clear")
+    assert _calc_padatious_intent.cache_info().maxsize == 128

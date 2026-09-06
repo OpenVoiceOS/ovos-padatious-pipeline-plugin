@@ -18,6 +18,7 @@ import re
 import string
 import time
 from collections import defaultdict
+from copy import deepcopy
 from functools import lru_cache
 from os.path import expanduser, isfile
 from threading import Event, RLock, Thread, current_thread
@@ -1389,7 +1390,7 @@ _INTENT_CACHE_SIZE = 128
 
 
 @lru_cache(maxsize=_INTENT_CACHE_SIZE)
-def _calc_padatious_intent(utt: str,
+def _calc_padatious_intent_cached(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
                            compiled_generation: int = 0,
                            blacklisted_intents: frozenset = frozenset(),
@@ -1457,3 +1458,32 @@ def _calc_padatious_intent(utt: str,
         return intent
     except Exception as e:
         LOG.error(e)
+
+
+def _calc_padatious_intent(utt: str,
+                           intent_container: Union[IntentContainer, DomainIntentContainer],
+                           compiled_generation: int = 0,
+                           blacklisted_intents: frozenset = frozenset(),
+                           blacklisted_skills: frozenset = frozenset()) -> Optional[PadatiousIntent]:
+    """Cached match, handed to the caller as its own copy.
+
+    The cached MatchData is shared by every caller that asks the same
+    question, and the caller mutates it: ``PadatiousPipeline.calc_intent``
+    fills declared slots from the session's intent_context
+    (``_fill_context_slots``). Returning the cached object directly means a
+    slot one session filled is still filled when the next session matches
+    the same utterance, so a context value leaks across sessions -- and two
+    concurrent requests race on the same dict. The cache stores the match;
+    each caller gets a copy of it.
+    """
+    cached = _calc_padatious_intent_cached(
+        utt, intent_container, compiled_generation,
+        blacklisted_intents, blacklisted_skills)
+    return deepcopy(cached) if cached is not None else None
+
+
+#: the lru_cache lives on the inner function; callers that manage the cache
+#: (registration, deregistration, enable, disable, train) reach it through
+#: the public name.
+_calc_padatious_intent.cache_clear = _calc_padatious_intent_cached.cache_clear
+_calc_padatious_intent.cache_info = _calc_padatious_intent_cached.cache_info
