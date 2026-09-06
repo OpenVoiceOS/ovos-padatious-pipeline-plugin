@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.0a2) (2026-09-06)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.0a1...2.1.0a2)
+
+**Merged pull requests:**
+
+- perf: bound Padatious inference and reuse match results [\#93](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/93) ([goldyfruit](https://github.com/goldyfruit))
+
 ## [2.1.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.0a1) (2026-09-06)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.0.18a2...2.1.0a1)
@@ -447,17 +455,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.0...1.3.1a1)
 
-**Merged pull requests:**
-
-- fix: normalization + disable new feats by default [\#38](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/38) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.3.0](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.0) (2025-01-24)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.0a1...1.3.0)
-
-**Merged pull requests:**
-
-- Release 1.3.0a1 [\#37](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/37) ([github-actions[bot]](https://github.com/apps/github-actions))
 
 ## [1.3.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.0a1) (2025-01-24)
 
