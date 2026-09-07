@@ -203,7 +203,7 @@ class TestMycroftSkillsTrainNeverBlocksCallerThread(unittest.TestCase):
             pipeline.register_intent(Message("padatious:register_intent", {
                 "name": "s:hello", "samples": ["hello", "hi there"],
                 "lang": lang, "skill_id": "s",
-            }))
+            }, {"skill_id": "s"}))
             self.assertFalse(pipeline.first_train.is_set(),
                               "test precondition: this must be the very "
                               "first training pass")
@@ -248,7 +248,7 @@ class TestMycroftSkillsTrainNeverBlocksCallerThread(unittest.TestCase):
             pipeline.register_intent(Message("padatious:register_intent", {
                 "name": "s:hello", "samples": ["hello", "hi there"],
                 "lang": lang, "skill_id": "s",
-            }))
+            }, {"skill_id": "s"}))
             match = pipeline.calc_intent(["hello"], lang)
             self.assertIsNotNone(match)
             self.assertEqual(match.name, "s:hello")

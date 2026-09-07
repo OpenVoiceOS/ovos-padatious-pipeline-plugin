@@ -39,7 +39,8 @@ class TestRegistrationArmsTheCompile(unittest.TestCase):
         try:
             pipeline.register_intent(Message("padatious:register_intent", {
                 "name": "skill:speak", "lang": "en-US", "skill_id": "skill",
-                "samples": ["say {words}", "repeat {words}"]}))
+                "samples": ["say {words}", "repeat {words}"]},
+                {"skill_id": "skill"}))
 
             self.assertFalse(pipeline.first_train.is_set(),
                              "boot registration must not have trained inline")
@@ -69,7 +70,8 @@ class TestRegistrationArmsTheCompile(unittest.TestCase):
             for i in range(8):
                 pipeline.register_intent(Message("padatious:register_intent", {
                     "name": f"skill:intent{i}", "lang": "en-US",
-                    "skill_id": "skill", "samples": [f"do thing {i}"]}))
+                    "skill_id": "skill", "samples": [f"do thing {i}"]},
+                    {"skill_id": "skill"}))
                 time.sleep(0.1)
 
             deadline = time.monotonic() + 30
@@ -212,7 +214,7 @@ class TestWorkerRetirementIsAtomic(unittest.TestCase):
         try:
             pipeline.register_intent(Message("padatious:register_intent", {
                 "name": "skill:one", "lang": "en-US", "skill_id": "skill",
-                "samples": ["say one"]}))
+                "samples": ["say one"]}, {"skill_id": "skill"}))
             container = pipeline.containers["en-US"]
             deadline = time.monotonic() + 30
             while container.needs_compile and time.monotonic() < deadline:
@@ -236,14 +238,14 @@ class TestWorkerRetirementIsAtomic(unittest.TestCase):
             container = pipeline.containers["en-US"]
             pipeline.register_intent(Message("padatious:register_intent", {
                 "name": "skill:one", "lang": "en-US", "skill_id": "skill",
-                "samples": ["say one"]}))
+                "samples": ["say one"]}, {"skill_id": "skill"}))
             deadline = time.monotonic() + 30
             while container.needs_compile and time.monotonic() < deadline:
                 time.sleep(0.05)
 
             pipeline.register_intent(Message("padatious:register_intent", {
                 "name": "skill:two", "lang": "en-US", "skill_id": "skill",
-                "samples": ["say two"]}))
+                "samples": ["say two"]}, {"skill_id": "skill"}))
             deadline = time.monotonic() + 30
             while container.needs_compile and time.monotonic() < deadline:
                 time.sleep(0.05)

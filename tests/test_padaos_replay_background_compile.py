@@ -47,7 +47,7 @@ SKILL_ID = "replay.skill"
 def _register_msg(name, samples, lang):
     return Message("padatious:register_intent", {
         "name": name, "samples": samples, "lang": lang, "skill_id": SKILL_ID,
-    })
+    }, {"skill_id": SKILL_ID})
 
 
 class _XdgIsolated(unittest.TestCase):

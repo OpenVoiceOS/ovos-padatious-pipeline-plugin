@@ -22,9 +22,7 @@ from ovos_bus_client.message import Message  # noqa: E402
 from ovoscope import (  # noqa: E402
     E2EPipelineHarness,
     detach_intent,
-    detach_skill,
     make_session,
-    register_padatious_entity,
 )
 
 from ovos_padatious.intent_container import IntentContainer  # noqa: E402
@@ -51,6 +49,16 @@ class _PadatiousHarness(E2EPipelineHarness):
 
     pipeline: PadatiousPipeline  # type: ignore[assignment]
 
+    def setUp(self) -> None:
+        # ovoscope.E2EPipelineHarness.setUp() emits its per-test isolation
+        # "detach_skill" with no message.context["skill_id"], which
+        # OVOS-INTENT-4 §3.2 requires as the authoritative attribution;
+        # redo it here with the context set so isolation between tests in
+        # this TestCase still works. Temporary until ovoscope#185 releases
+        # a fixed harness.
+        self.bus.emit(Message("detach_skill", {"skill_id": self.SKILL_ID},
+                              {"skill_id": self.SKILL_ID}))
+
     def _register_intent(self, name, samples, lang="en-US"):
         # Padatious tracks intent -> skill_id in an internal _skill2intent
         # map populated at register time; without it, detach_skill cannot
@@ -60,7 +68,7 @@ class _PadatiousHarness(E2EPipelineHarness):
         self.bus.emit(Message("padatious:register_intent", {
             "name": name, "samples": samples, "lang": lang,
             "skill_id": skill_id,
-        }))
+        }, {"skill_id": skill_id}))
         # A registration is only visible for matching once its (possibly
         # background/debounced) compile pass has actually run - see
         # PadatiousPipeline.wait_until_trained. This is a test-only sync
@@ -68,7 +76,22 @@ class _PadatiousHarness(E2EPipelineHarness):
         self.pipeline.wait_until_trained(timeout=10.0)
 
     def _register_entity(self, name, samples):
-        register_padatious_entity(self.bus, name, samples)
+        # ovoscope.register_padatious_entity() does not set
+        # message.context["skill_id"] (OVOS-INTENT-4 §3.2), so it is
+        # bypassed here in favour of a direct emit that does. Temporary
+        # until ovoscope#185 releases a fixed harness.
+        self.bus.emit(Message("padatious:register_entity", {
+            "name": name, "samples": samples, "lang": "en-US",
+            "skill_id": self.SKILL_ID,
+        }, {"skill_id": self.SKILL_ID}))
+
+    def _detach_skill(self, skill_id):
+        # ovoscope.detach_skill() does not set message.context["skill_id"]
+        # (OVOS-INTENT-4 §3.2), so it is bypassed here in favour of a
+        # direct emit that does. Temporary until ovoscope#185 releases a
+        # fixed harness.
+        self.bus.emit(Message("detach_skill", {"skill_id": skill_id},
+                              {"skill_id": skill_id}))
 
 
 class TestRegisteredIntentMatch(_PadatiousHarness):
@@ -128,7 +151,7 @@ class TestDetach(_PadatiousHarness):
         self._register_intent(f"{self.SKILL_ID}:bye", _BYE_SAMPLES)
         self._register_intent("skill_b_padatious:lights_on", _LIGHTS_ON_SAMPLES)
 
-        detach_skill(self.bus, self.SKILL_ID)
+        self._detach_skill(self.SKILL_ID)
 
         self.expect_no_match("hello")
         self.expect_no_match("goodbye")
@@ -138,7 +161,7 @@ class TestDetach(_PadatiousHarness):
             timeout=10.0,
         )
         self.assertIsNotNone(msg, "skill_b intent should survive skill_a detach")
-        detach_skill(self.bus, "skill_b_padatious")
+        self._detach_skill("skill_b_padatious")
 
 
 class TestSessionBlacklist(_PadatiousHarness):
@@ -268,7 +291,7 @@ class TestWaitUntilTrainedGenuinelyGatesTheQuery(_NonInstantHarness):
             self.bus.emit(Message("padatious:register_intent", {
                 "name": f"{self.SKILL_ID}:hello", "samples": _HELLO_SAMPLES,
                 "lang": "en-US", "skill_id": self.SKILL_ID,
-            }))
+            }, {"skill_id": self.SKILL_ID}))
             # register/query race window: a genuinely fresh, never-compiled
             # registration must not be matchable before its background pass
             # has run

@@ -60,6 +60,16 @@ class TestIntent4Consume(E2EPipelineHarness):
 
     pipeline: PadatiousPipeline  # type: ignore[assignment]
 
+    def setUp(self) -> None:
+        # ovoscope.E2EPipelineHarness.setUp() emits its per-test isolation
+        # "detach_skill" with no message.context["skill_id"], which
+        # OVOS-INTENT-4 §3.2 requires as the authoritative attribution;
+        # redo it here with the context set so isolation between tests in
+        # this TestCase still works. Temporary until ovoscope#185 releases
+        # a fixed harness.
+        self.bus.emit(Message("detach_skill", {"skill_id": self.SKILL_ID},
+                              {"skill_id": self.SKILL_ID}))
+
     # -- helpers --------------------------------------------------------
 
     def _register_template(self, intent_name, samples, *, blacklist=None,

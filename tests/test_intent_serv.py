@@ -109,7 +109,8 @@ class TestIntentServiceApi(TestCase):
         """Check that a removed skill's intent doesn't match."""
         # Check that no intent is matched
         msg = Message('detach_intent',
-                      data={'skill_id': 'skill'})
+                      data={'skill_id': 'skill'},
+                      context={'skill_id': 'skill'})
         self.intent_service.handle_detach_skill(msg)
         msg = Message('intent.service.padatious.get', data={'utterance': 'test'})
         self.intent_service.handle_get_padatious(msg)

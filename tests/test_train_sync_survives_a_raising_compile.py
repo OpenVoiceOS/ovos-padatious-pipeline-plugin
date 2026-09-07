@@ -39,7 +39,7 @@ class TestTrainSyncSurvivesARaisingCompile(unittest.TestCase):
                 pipeline.register_intent(Message("padatious:register_intent", {
                     "name": f"{SKILL_ID}:hello", "samples": ["hello", "hi there"],
                     "lang": lang, "skill_id": SKILL_ID,
-                }))
+                }, {"skill_id": SKILL_ID}))
                 ok = pipeline.wait_until_trained(timeout=15.0)
 
             self.assertGreaterEqual(

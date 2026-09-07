@@ -72,7 +72,7 @@ class TestCalcIntentCacheInvalidatesAfterBackgroundCompile(unittest.TestCase):
         self.pipeline.register_intent(Message("padatious:register_intent", {
             "name": f"{SKILL_ID}:hello", "samples": ["hello", "hi there"],
             "lang": self.lang, "skill_id": SKILL_ID,
-        }))
+        }, {"skill_id": SKILL_ID}))
         self.assertFalse(self.pipeline.first_train.is_set(),
                           "test precondition: register_intent must not have "
                           "triggered PadatiousPipeline.train() itself")

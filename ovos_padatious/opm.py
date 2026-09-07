@@ -181,6 +181,29 @@ def _cached_stem_sentence(stemmer, sentence: str) -> str:
     return " ".join(stems)
 
 
+def _skill_id_from_context(message: Message, handler: str) -> Optional[str]:
+    """Resolve the producing skill id per OVOS-INTENT-4 §3.2.
+
+    ``message.context["skill_id"]`` is the authoritative attribution of the
+    producing component. A payload ``skill_id`` that differs from it is
+    logged and ignored; it is never used to override the context.
+
+    Args:
+        message: the incoming bus message
+        handler: name of the calling handler, for the warning message
+
+    Returns:
+        The skill id from the context, or ``None`` if it is missing.
+    """
+    skill_id = message.context.get("skill_id")
+    payload_skill_id = message.data.get("skill_id")
+    if payload_skill_id and skill_id and payload_skill_id != skill_id:
+        LOG.warning(f"[{handler}] message.data['skill_id']={payload_skill_id!r} "
+                    f"differs from message.context['skill_id']={skill_id!r}; "
+                    f"using the context value per OVOS-INTENT-4 §3.2")
+    return skill_id
+
+
 class PadatiousPipeline(ConfidenceMatcherPipeline):
     """Service class for padatious intent matching."""
 
@@ -740,10 +763,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             message (Message): message triggering action
         """
-        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        skill_id = _skill_id_from_context(message, "handle_detach_skill")
         if not skill_id:
-            LOG.warning("Skill ID is missing. Detaching all anonymous intents")
-            skill_id = "anonymous_skill"
+            LOG.warning("[handle_detach_skill] rejected: missing "
+                        "message.context['skill_id']")
+            return
         for i in self._skill2intent[skill_id]:
             self.__detach_intent(i)
         # Intent roster changed; evict stale cache so next match reflects removal.
@@ -755,10 +779,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
     def _unpack_object(self, message):
         """convert message to training data"""
-        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        skill_id = _skill_id_from_context(message, "_unpack_object")
         if not skill_id:
-            LOG.warning("Skill ID is missing. Registering under 'anonymous_skill'")
-            skill_id = "anonymous_skill"
+            LOG.warning("[_unpack_object] rejected: missing "
+                        "message.context['skill_id']")
+            return
         file_name = message.data.get('file_name')
         samples = message.data.get("samples")
         name = message.data['name']
@@ -804,10 +829,12 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             message (Message): message triggering action
         """
-        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        skill_id = _skill_id_from_context(message, "register_intent")
         if not skill_id:
-            LOG.warning("Skill ID is missing. Registering under 'anonymous_skill'")
-            skill_id = message.data["skill_id"] = "anonymous_skill"
+            LOG.warning("[register_intent] rejected: missing "
+                        "message.context['skill_id']")
+            return
+        message.data["skill_id"] = skill_id
 
         # ovos-workshop >= 9.3 dual-registers one logical intent under both
         # the legacy ``padatious:register_intent`` contract (name suffixed
@@ -946,7 +973,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         ``<skill_id>:<name>`` key padatious uses internally, or
         (None, None, None) when identity is missing.
         """
-        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        skill_id = _skill_id_from_context(message, "_spec_identity")
         name = message.data.get(name_field)
         if not skill_id or not name:
             return None, None, None
@@ -1022,6 +1049,28 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             return []
         return [full]
 
+    def _spec_target_intent_names(self, message):
+        """Resolve the full padatious intent name(s) targeted by
+        ``ovos.intent.enable``/``ovos.intent.disable`` (OVOS-INTENT-4 §8.5).
+
+        Unlike :meth:`_spec_intent_names`, these two topics are control
+        messages, not ownership claims (§3.2): the payload ``skill_id``
+        names the **target** skill whose intent is enabled/disabled, while
+        ``context.skill_id`` names the **source** issuing the control and
+        MAY legitimately differ (cross-skill control). The label is built
+        from the payload's ``skill_id``.
+        """
+        skill_id = message.data.get("skill_id")
+        intent_name = message.data.get("intent_name")
+        if not skill_id or not intent_name:
+            return []
+        source_id = message.context.get("skill_id") if message.context else None
+        if source_id and source_id != skill_id:
+            LOG.debug(f"cross-skill control: source={source_id!r} "
+                      f"target={skill_id!r} (OVOS-INTENT-4 §3.2)")
+        full = intent_name if intent_name.startswith(f"{skill_id}:") else f"{skill_id}:{intent_name}"
+        return [full]
+
     def handle_deregister_intent_spec(self, message):
         """Consume ``ovos.intent.deregister`` (OVOS-INTENT-4 §8.2)."""
         for full in self._spec_intent_names(message):
@@ -1058,9 +1107,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
         Removes every intent and entity owned by the skill.
         """
-        skill_id = message.data.get("skill_id") or message.context.get("skill_id")
+        skill_id = _skill_id_from_context(message, "handle_deregister_skill_spec")
         if not skill_id:
-            LOG.warning(f"[{SpecMessage.SKILL_DEREGISTER}] rejected: missing skill_id")
+            LOG.warning(f"[{SpecMessage.SKILL_DEREGISTER}] rejected: missing "
+                        f"message.context['skill_id']")
             return
         for full in list(self._skill2intent.get(skill_id, [])):
             self.__detach_intent(full)
@@ -1096,7 +1146,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         sessions keep matching it.
         """
         session_id = SessionManager.get(message).session_id
-        for full in self._spec_intent_names(message):
+        for full in self._spec_target_intent_names(message):
             if full not in self._intent_definitions:
                 LOG.warning(f"[{SpecMessage.INTENT_DISABLE}] no registered "
                             f"definition for {full}; nothing to disable")
@@ -1111,7 +1161,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         registration was never removed so there is nothing to re-register.
         """
         session_id = SessionManager.get(message).session_id
-        for full in self._spec_intent_names(message):
+        for full in self._spec_target_intent_names(message):
             self._disabled_intents.discard((session_id, full))  # no-op if not disabled
         _calc_padatious_intent.cache_clear()
 

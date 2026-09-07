@@ -53,7 +53,7 @@ class TestTrainedSignalWaitsOnFullReadiness(unittest.TestCase):
     def _register(self, name, samples):
         self.pipeline.register_intent(Message("padatious:register_intent", {
             "name": name, "samples": samples, "lang": self.lang, "skill_id": SKILL_ID,
-        }))
+        }, {"skill_id": SKILL_ID}))
 
     def test_trained_never_fires_while_container_still_needs_compile(self):
         """Deterministic repro: force ``container.train()`` to land a fresh

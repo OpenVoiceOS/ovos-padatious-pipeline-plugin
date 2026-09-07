@@ -39,7 +39,7 @@ class TestReregisterInvalidatesCacheImmediately(unittest.TestCase):
         self.pipeline.register_intent(Message("padatious:register_intent", {
             "name": f"{SKILL_ID}:light", "samples": samples,
             "lang": self.lang, "skill_id": SKILL_ID,
-        }))
+        }, {"skill_id": SKILL_ID}))
 
     def test_stale_conf_1_answer_does_not_survive_reregistration(self):
         self._register(["turn on the {thing}"])

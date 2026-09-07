@@ -39,7 +39,7 @@ class TestDomainEngineBackgroundWorkerCompletes(unittest.TestCase):
         self.pipeline.register_intent(Message("padatious:register_intent", {
             "name": f"{SKILL_ID}:hello", "samples": ["hello", "hi there"],
             "lang": self.lang, "skill_id": SKILL_ID,
-        }))
+        }, {"skill_id": SKILL_ID}))
 
         self.assertTrue(
             self.pipeline.wait_until_trained(timeout=10.0),
