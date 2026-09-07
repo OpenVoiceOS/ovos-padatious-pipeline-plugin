@@ -837,28 +837,34 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if requires or excludes:
             self._intent_context_gates[message.data['name']] = (requires, excludes)
 
+        lang = message.data.get('lang', self.lang)
+        lang = standardize_lang(lang)
+
         # OVOS-CONTEXT-1 §7: record the declared template slots so an
         # unresolved slot can be filled from context at match time.
+        # Registration is per language (a multi-lang skill's native_langs
+        # loop registers the same intent name once per lang), so this is
+        # keyed by (lang, name) rather than name alone.
         slots = set()
         for sample in message.data.get('samples', []):
             slots.update(_SLOT_RE.findall(sample))
         if slots:
-            self._intent_slots[message.data['name']] = frozenset(slots)
+            self._intent_slots[(lang, message.data['name'])] = frozenset(slots)
 
         # INTENT-2 §4.3: a per-slot value blacklist rides in the payload keyed
         # by slot name. Accept ``slot_blacklist`` or a dict-valued ``blacklist``
         # (a list-valued ``blacklist`` is the template-method suppression
-        # vocabulary and is left untouched).
+        # vocabulary and is left untouched). Keyed by (lang, name): each
+        # language's registration carries its own blacklisted words and must
+        # not clobber another language's entry for the same intent name.
         slot_blacklist = message.data.get('slot_blacklist')
         if slot_blacklist is None and isinstance(message.data.get('blacklist'), dict):
             slot_blacklist = message.data.get('blacklist')
         if slot_blacklist:
-            self._intent_slot_blacklists[message.data['name']] = {
+            self._intent_slot_blacklists[(lang, message.data['name'])] = {
                 slot: [str(v) for v in values]
                 for slot, values in slot_blacklist.items()}
 
-        lang = message.data.get('lang', self.lang)
-        lang = standardize_lang(lang)
         if lang in self.containers:
             if message.data['name'] not in self.registered_intents:
                 self.registered_intents.append(message.data['name'])
@@ -1022,8 +1028,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.__detach_intent(full)
             self._disabled_intents = {p for p in self._disabled_intents if p[1] != full}
             self._intent_context_gates.pop(full, None)
-            self._intent_slots.pop(full, None)
-            self._intent_slot_blacklists.pop(full, None)
+            # deregister targets every configured language, so drop the
+            # (lang, name) keyed entries for each of them
+            for lang in self.containers:
+                self._intent_slots.pop((lang, full), None)
+                self._intent_slot_blacklists.pop((lang, full), None)
         _calc_padatious_intent.cache_clear()
         if self.config.get("instant_train", False):
             self.train(message)
@@ -1057,8 +1066,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.__detach_intent(full)
             self._disabled_intents = {p for p in self._disabled_intents if p[1] != full}
             self._intent_context_gates.pop(full, None)
-            self._intent_slots.pop(full, None)
-            self._intent_slot_blacklists.pop(full, None)
+            # deregister targets every configured language, so drop the
+            # (lang, name) keyed entries for each of them
+            for lang in self.containers:
+                self._intent_slots.pop((lang, full), None)
+                self._intent_slot_blacklists.pop((lang, full), None)
         # drop the skill's entities too
         prefix = f"{skill_id}:"
         for lang in self.containers:
@@ -1192,10 +1204,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # select best
         if intents:
             best = max(intents, key=lambda k: k.conf)
-            self._fill_context_slots(best, sess)
+            self._fill_context_slots(best, sess, lang)
             return best
 
-    def _fill_context_slots(self, intent: PadatiousIntent, sess: Session) -> None:
+    def _fill_context_slots(self, intent: PadatiousIntent, sess: Session, lang: str) -> None:
         """OVOS-CONTEXT-1 §7 — uniform context slot fill.
 
         For EVERY declared template slot of the matched intent, if a live
@@ -1208,7 +1220,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         listed in that slot's blacklist (e.g. an anaphoric pronoun) is dropped
         so it counts as unresolved and the context candidate takes over.
         """
-        slot_names = self._intent_slots.get(intent.name)
+        slot_names = self._intent_slots.get((lang, intent.name))
         if not slot_names:
             return
         matches = dict(intent.matches or {})
@@ -1218,7 +1230,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # "it" is dropped, but a multi-word value that merely contains a
         # blacklisted word ("the it crowd", "her majesty") is a legitimate
         # binding and must survive.
-        for slot, values in self._intent_slot_blacklists.get(intent.name, {}).items():
+        for slot, values in self._intent_slot_blacklists.get((lang, intent.name), {}).items():
             bound = matches.get(slot)
             if bound is not None and any(
                     v.lower().split() == bound.lower().split() for v in values):
