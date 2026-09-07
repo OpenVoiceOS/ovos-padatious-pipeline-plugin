@@ -143,7 +143,7 @@ class TestDetach(_PadatiousHarness):
         )
         self.assertIsNotNone(msg)
 
-        detach_intent(self.bus, f"{self.SKILL_ID}:hello")
+        detach_intent(self.bus, f"{self.SKILL_ID}:hello", skill_id=self.SKILL_ID)
         self.expect_no_match("hello")
 
     def test_detach_skill_removes_all_its_intents(self):
