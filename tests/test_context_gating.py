@@ -172,7 +172,7 @@ class TestContextSlotFill(TestCase):
     def test_slots_stored_on_register(self):
         """Declared template slots are retained for the §7 fill."""
         self.pipeline.handle_register_template(height_msg())
-        self.assertEqual(self.pipeline._intent_slots.get(HEIGHT),
+        self.assertEqual(self.pipeline._intent_slots.get(("en-US", HEIGHT)),
                          frozenset({"person"}))
 
     def test_uniform_fill_without_requires_context(self):
@@ -205,7 +205,7 @@ class TestContextSlotFill(TestCase):
         """A slot bound to a blacklisted value ('he') is refilled from context."""
         self.pipeline.handle_register_template(
             height_msg(slot_blacklist={"person": ["he", "she", "they"]}))
-        self.assertEqual(self.pipeline._intent_slot_blacklists.get(HEIGHT),
+        self.assertEqual(self.pipeline._intent_slot_blacklists.get(("en-US", HEIGHT)),
                          {"person": ["he", "she", "they"]})
         self._stub_match(matches={"person": "he"})
         msg = utter_msg({f"{SKILL}:person": {"value": "Alice"}})
