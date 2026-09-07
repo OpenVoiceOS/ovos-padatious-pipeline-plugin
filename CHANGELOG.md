@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.2a1) (2026-09-07)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.1a1...2.1.2a1)
+
+**Merged pull requests:**
+
+- fix: registration handlers take skill\_id from the message context \(OVOS-INTENT-4 §3.2\) [\#146](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/146) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.1.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.1a1) (2026-09-07)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.0a3...2.1.1a1)
@@ -423,17 +431,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.3...1.3.4a1)
 
-**Merged pull requests:**
-
-- fix:domain engine from config [\#44](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/44) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.3.3](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.3) (2025-01-26)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.3a1...1.3.3)
-
-**Merged pull requests:**
-
-- Release 1.3.3a1 [\#43](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/43) ([github-actions[bot]](https://github.com/apps/github-actions))
 
 ## [1.3.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.3a1) (2025-01-26)
 
