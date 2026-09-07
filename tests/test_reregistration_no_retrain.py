@@ -38,7 +38,7 @@ LANG = "en-US"
 def _register_msg(name, samples):
     return Message("padatious:register_intent", {
         "name": name, "samples": samples, "lang": LANG, "skill_id": SKILL_ID,
-    })
+    }, {"skill_id": SKILL_ID})
 
 
 class TestIdenticalReplayIsANoOp(unittest.TestCase):

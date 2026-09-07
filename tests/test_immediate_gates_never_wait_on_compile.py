@@ -72,7 +72,7 @@ class _PipelineCase(unittest.TestCase):
     def _register(self, name, samples):
         self.pipeline.register_intent(Message("padatious:register_intent", {
             "name": name, "samples": samples, "lang": self.lang, "skill_id": SKILL_ID,
-        }))
+        }, {"skill_id": SKILL_ID}))
 
 
 class TestDisableSuppressesImmediately(_PipelineCase):
@@ -94,7 +94,7 @@ class TestDisableSuppressesImmediately(_PipelineCase):
         with mock.patch.object(padaos.IntentContainer, "_compile", counting_compile):
             self.pipeline.handle_disable_intent_spec(Message(INTENT_DISABLE, {
                 "skill_id": SKILL_ID, "intent_name": "hello",
-            }))
+            }, {"skill_id": SKILL_ID}))
             match = self.pipeline.calc_intent(["hello"], self.lang)
         self.assertIsNone(match, "a disabled intent must stop matching immediately")
         self.assertEqual(calls, [], "disable must not require a recompile")
@@ -118,7 +118,7 @@ class TestDisableSuppressesImmediately(_PipelineCase):
              mock.patch.object(IntentContainer, "remove_intent", lambda self, name: None):
             self.pipeline.handle_disable_intent_spec(Message(INTENT_DISABLE, {
                 "skill_id": SKILL_ID, "intent_name": "hello",
-            }))
+            }, {"skill_id": SKILL_ID}))
             match = self.pipeline.calc_intent(["hello"], self.lang)
         self.assertIsNone(
             match, "disable must suppress via the blacklist even when the "
@@ -128,12 +128,12 @@ class TestDisableSuppressesImmediately(_PipelineCase):
         self._register(f"{SKILL_ID}:hello", ["hello", "hi there"])
         self.pipeline.handle_disable_intent_spec(Message(INTENT_DISABLE, {
             "skill_id": SKILL_ID, "intent_name": "hello",
-        }))
+        }, {"skill_id": SKILL_ID}))
         self.assertIsNone(self.pipeline.calc_intent(["hello"], self.lang))
 
         self.pipeline.handle_enable_intent_spec(Message(INTENT_ENABLE, {
             "skill_id": SKILL_ID, "intent_name": "hello",
-        }))
+        }, {"skill_id": SKILL_ID}))
         # enable only discards the disable gate - the registration was
         # never removed, so the intent matches again immediately
         match = self.pipeline.calc_intent(["hello"], self.lang)
@@ -197,7 +197,7 @@ class TestWaitUntilTrainedHonoursTimeoutWhilePassInFlight(unittest.TestCase):
                 self.pipeline.register_intent(Message("padatious:register_intent", {
                     "name": f"{SKILL_ID}:hello", "samples": ["hello", "hi there"],
                     "lang": self.lang, "skill_id": SKILL_ID,
-                }))
+                }, {"skill_id": SKILL_ID}))
                 self.assertTrue(started.wait(timeout=5.0),
                                  "background pass never started")
 

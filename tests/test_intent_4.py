@@ -160,6 +160,33 @@ class TestIntent4Registration(TestCase):
         self.assertNotIn(("sat-1", "music.skill:play_music"),
                          self.pipeline._disabled_intents)
 
+    def test_cross_skill_disable_and_enable(self):
+        """OVOS-INTENT-4 §3.2: enable/disable are control messages, not
+        ownership claims. The payload skill_id names the TARGET intent's
+        skill; context.skill_id names the SOURCE issuing the control, and
+        the two MAY differ (cross-skill control, e.g. an admin UI or a
+        conflict-resolving skill suppressing another skill's intent)."""
+        self.pipeline.handle_register_template(
+            template_msg("music.skill", "play_music", ["play {query}"]))
+
+        disable = Message(SpecMessage.INTENT_DISABLE,
+                          {"skill_id": "music.skill",
+                           "intent_name": "play_music", "lang": "en-US"},
+                          session_ctx("sat-1", "controller.skill"))
+        self.pipeline.handle_disable_intent_spec(disable)
+        self.assertIn("music.skill:play_music",
+                      self.pipeline.registered_intents)
+        self.assertIn(("sat-1", "music.skill:play_music"),
+                      self.pipeline._disabled_intents)
+
+        enable = Message(SpecMessage.INTENT_ENABLE,
+                         {"skill_id": "music.skill",
+                          "intent_name": "play_music", "lang": "en-US"},
+                         session_ctx("sat-1", "controller.skill"))
+        self.pipeline.handle_enable_intent_spec(enable)
+        self.assertNotIn(("sat-1", "music.skill:play_music"),
+                         self.pipeline._disabled_intents)
+
     def test_disable_is_session_scoped_other_sessions_unaffected(self):
         """OVOS-INTENT-4 §8.5: disable affects only the session that issued
         it. Default session and an unrelated satellite must keep matching."""

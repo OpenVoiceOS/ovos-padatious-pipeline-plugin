@@ -21,10 +21,14 @@ class UtteranceIntentMatchingTest(unittest.TestCase):
         rxfilename = "/tmp/test2.intent"
         with open(rxfilename, "w") as f:
             f.write("tell me about {thing}\nwhat is {thing}")
-        data = {'file_name': filename, 'lang': 'en-US', 'name': 'test'}
-        intent_service.register_intent(Message("padatious:register_intent", data))
-        data = {'file_name': rxfilename, 'lang': 'en-US', 'name': 'test2'}
-        intent_service.register_intent(Message("padatious:register_intent", data))
+        data = {'file_name': filename, 'lang': 'en-US', 'name': 'test',
+                'skill_id': 'test_skill'}
+        intent_service.register_intent(
+            Message("padatious:register_intent", data, {"skill_id": "test_skill"}))
+        data = {'file_name': rxfilename, 'lang': 'en-US', 'name': 'test2',
+                'skill_id': 'test_skill'}
+        intent_service.register_intent(
+            Message("padatious:register_intent", data, {"skill_id": "test_skill"}))
         intent_service.train()
         # train() never trains on the calling thread anymore, including
         # the very first pass (see docs/ovos_pipeline.md); join the

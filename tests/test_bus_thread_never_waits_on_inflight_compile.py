@@ -76,7 +76,8 @@ class TestBusThreadNeverWaitsOnInflightCompile(unittest.TestCase):
     def _register(self, name, samples):
         self.bus.emit(Message("padatious:register_intent",
                               {"lang": LANG, "name": f"{SKILL_ID}:{name}",
-                               "samples": samples}))
+                               "samples": samples},
+                              {"skill_id": SKILL_ID}))
 
     def _start_held_compile(self, held):
         """Dirty the container and let a background pass reach the held
@@ -155,7 +156,8 @@ class TestServedStateDuringARecompileWindow(unittest.TestCase):
         with _HeldCompile() as held:
             self.bus.emit(Message("padatious:register_intent",
                                   {"lang": LANG, "name": f"{SKILL_ID}:music",
-                                   "samples": ["play a song now"]}))
+                                   "samples": ["play a song now"]},
+                                  {"skill_id": SKILL_ID}))
             worker = Thread(target=self.container.train, daemon=True)
             worker.start()
             self.assertTrue(held.entered.wait(10), "compile never started")

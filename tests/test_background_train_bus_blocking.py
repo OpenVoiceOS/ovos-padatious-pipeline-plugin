@@ -39,7 +39,7 @@ LANG = "en-US"
 def _register_msg(name, samples):
     return Message("padatious:register_intent", {
         "name": name, "samples": samples, "lang": LANG, "skill_id": SKILL_ID,
-    })
+    }, {"skill_id": SKILL_ID})
 
 
 def _slow_train(sleep_seconds):
@@ -107,7 +107,7 @@ class TestRegisterIntentDoesNotBlockBusThread(unittest.TestCase):
             self.pipeline.register_entity(Message("padatious:register_entity", {
                 "name": f"{SKILL_ID}:word", "samples": ["hello"], "lang": LANG,
                 "skill_id": SKILL_ID,
-            }))
+            }, {"skill_id": SKILL_ID}))
 
             deadline = time.monotonic() + 10.0
             while self.pipeline.containers[LANG].must_train and time.monotonic() < deadline:

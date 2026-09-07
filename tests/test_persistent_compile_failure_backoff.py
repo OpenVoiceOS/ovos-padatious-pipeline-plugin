@@ -42,7 +42,7 @@ class TestPersistentCompileFailureBackoff(unittest.TestCase):
                 pipeline.register_intent(Message("padatious:register_intent", {
                     "name": f"{SKILL_ID}:hello", "samples": ["hello", "hi there"],
                     "lang": lang, "skill_id": SKILL_ID,
-                }))
+                }, {"skill_id": SKILL_ID}))
                 pipeline.train()
                 # exponential backoff (2s, 4s, 8s...) bounds this to a
                 # handful of attempts within a short window, never a retry
@@ -63,7 +63,7 @@ class TestPersistentCompileFailureBackoff(unittest.TestCase):
             pipeline.register_intent(Message("padatious:register_intent", {
                 "name": f"{SKILL_ID}:bye", "samples": ["bye", "goodbye"],
                 "lang": lang, "skill_id": SKILL_ID,
-            }))
+            }, {"skill_id": SKILL_ID}))
             self.assertTrue(pipeline.wait_until_trained(timeout=15.0))
             match = pipeline.calc_intent(["hello"], lang)
             self.assertIsNotNone(match)
