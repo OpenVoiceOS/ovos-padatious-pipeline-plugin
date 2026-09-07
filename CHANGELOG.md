@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.1a1) (2026-09-07)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.0a3...2.1.1a1)
+
+**Merged pull requests:**
+
+- fix: key per-slot blacklists by language [\#144](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/144) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.1.0a3](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.0a3) (2026-09-06)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.0a2...2.1.0a3)
@@ -431,17 +439,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.2...1.3.3a1)
 
-**Merged pull requests:**
-
-- Enhance Padatious intent management with state restoration and training improvements [\#42](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/42) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.3.2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.2) (2025-01-25)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.2a1...1.3.2)
-
-**Merged pull requests:**
-
-- Release 1.3.2a1 [\#41](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/41) ([github-actions[bot]](https://github.com/apps/github-actions))
 
 ## [1.3.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.2a1) (2025-01-25)
 
