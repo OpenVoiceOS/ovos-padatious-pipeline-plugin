@@ -181,12 +181,12 @@ def _cached_stem_sentence(stemmer, sentence: str) -> str:
     return " ".join(stems)
 
 
-def _skill_id_from_context(message: Message, handler: str) -> Optional[str]:
-    """Resolve the producing skill id per OVOS-INTENT-4 §3.2.
+def _legacy_skill_id(message: Message, handler: str) -> Optional[str]:
+    """Resolve the skill id of a legacy-wire message.
 
-    ``message.context["skill_id"]`` is the authoritative attribution of the
-    producing component. A payload ``skill_id`` that differs from it is
-    logged and ignored; it is never used to override the context.
+    The legacy topics carry no required payload identity, so
+    ``message.context["skill_id"]`` is the attribution of the producing
+    component.
 
     Args:
         message: the incoming bus message
@@ -200,7 +200,32 @@ def _skill_id_from_context(message: Message, handler: str) -> Optional[str]:
     if payload_skill_id and skill_id and payload_skill_id != skill_id:
         LOG.warning(f"[{handler}] message.data['skill_id']={payload_skill_id!r} "
                     f"differs from message.context['skill_id']={skill_id!r}; "
-                    f"using the context value per OVOS-INTENT-4 §3.2")
+                    f"using the context value on the legacy wire")
+    return skill_id
+
+
+def _spec_skill_id(message: Message, handler: str) -> Optional[str]:
+    """Resolve the skill an OVOS-INTENT-4 §§5-8 message acts on.
+
+    The payload ``skill_id`` names the target: the skill whose registration
+    is created, removed, suppressed or re-armed. ``context.skill_id`` names
+    the source that emitted the message and is provenance only, so it is
+    never substituted for the target. The two differ legitimately when a
+    provisioning tool or a conflict-resolving skill acts on another skill's
+    behalf, and that is never grounds for rejection (§3.2).
+
+    Args:
+        message: the incoming bus message
+        handler: name of the calling handler, for the debug message
+
+    Returns:
+        The skill id from the payload, or ``None`` if it is missing.
+    """
+    skill_id = message.data.get("skill_id")
+    source_id = message.context.get("skill_id")
+    if skill_id and source_id and skill_id != source_id:
+        LOG.debug(f"[{handler}] source={source_id!r} acting on "
+                  f"target={skill_id!r} (OVOS-INTENT-4 §3.2)")
     return skill_id
 
 
@@ -763,7 +788,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             message (Message): message triggering action
         """
-        skill_id = _skill_id_from_context(message, "handle_detach_skill")
+        skill_id = _legacy_skill_id(message, "handle_detach_skill")
         if not skill_id:
             LOG.warning("[handle_detach_skill] rejected: missing "
                         "message.context['skill_id']")
@@ -779,7 +804,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
     def _unpack_object(self, message):
         """convert message to training data"""
-        skill_id = _skill_id_from_context(message, "_unpack_object")
+        skill_id = _legacy_skill_id(message, "_unpack_object")
         if not skill_id:
             LOG.warning("[_unpack_object] rejected: missing "
                         "message.context['skill_id']")
@@ -829,7 +854,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             message (Message): message triggering action
         """
-        skill_id = _skill_id_from_context(message, "register_intent")
+        skill_id = _legacy_skill_id(message, "register_intent")
         if not skill_id:
             LOG.warning("[register_intent] rejected: missing "
                         "message.context['skill_id']")
@@ -973,7 +998,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         ``<skill_id>:<name>`` key padatious uses internally, or
         (None, None, None) when identity is missing.
         """
-        skill_id = _skill_id_from_context(message, "_spec_identity")
+        skill_id = _spec_skill_id(message, "_spec_identity")
         name = message.data.get(name_field)
         if not skill_id or not name:
             return None, None, None
@@ -1107,10 +1132,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
         Removes every intent and entity owned by the skill.
         """
-        skill_id = _skill_id_from_context(message, "handle_deregister_skill_spec")
+        skill_id = _spec_skill_id(message, "handle_deregister_skill_spec")
         if not skill_id:
             LOG.warning(f"[{SpecMessage.SKILL_DEREGISTER}] rejected: missing "
-                        f"message.context['skill_id']")
+                        f"skill_id")
             return
         for full in list(self._skill2intent.get(skill_id, [])):
             self.__detach_intent(full)
