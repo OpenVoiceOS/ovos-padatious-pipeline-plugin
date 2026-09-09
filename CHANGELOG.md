@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.3a1) (2026-09-09)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.2a2...2.1.3a1)
+
+**Merged pull requests:**
+
+- fix: pass required skill\_id to ovoscope.detach\_intent in e2e test [\#149](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/149) ([JarbasAl](https://github.com/JarbasAl))
+
+## [2.1.2a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.2a2) (2026-09-07)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.2a1...2.1.2a2)
+
 ## [2.1.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.2a1) (2026-09-07)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.1a1...2.1.2a1)
@@ -417,7 +429,6 @@
 **Merged pull requests:**
 
 - Release 1.3.5a1 [\#48](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/48) ([github-actions[bot]](https://github.com/apps/github-actions))
-- refactor:shared utils [\#47](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/47) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.3.4](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.4) (2025-01-29)
 
