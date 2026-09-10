@@ -43,6 +43,14 @@ class TestIntentServiceApi(TestCase):
     def setUp(self):
         self.intent_service = PadatiousPipeline(mock.Mock())
         self.setup_simple_padatious_intent()
+        # the padatious getters (handle_get_padatious et al) run on the bus
+        # thread and must NEVER block waiting for a compile - a registration
+        # is served empty until the background pass actually lands (see
+        # IntentContainer._train_in_background). Tests that immediately
+        # query right after registering need a deterministic sync point
+        # instead; wait_until_trained joins that background pass without
+        # training on the calling thread itself.
+        self.assertTrue(self.intent_service.wait_until_trained(timeout=30))
 
     def setup_simple_padatious_intent(self,
                                       msg=create_intent_msg('testIntent', 'test'),
@@ -101,7 +109,8 @@ class TestIntentServiceApi(TestCase):
         """Check that a removed skill's intent doesn't match."""
         # Check that no intent is matched
         msg = Message('detach_intent',
-                      data={'skill_id': 'skill'})
+                      data={'skill_id': 'skill'},
+                      context={'skill_id': 'skill'})
         self.intent_service.handle_detach_skill(msg)
         msg = Message('intent.service.padatious.get', data={'utterance': 'test'})
         self.intent_service.handle_get_padatious(msg)

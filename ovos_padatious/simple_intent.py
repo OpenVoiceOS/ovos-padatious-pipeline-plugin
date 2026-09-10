@@ -14,7 +14,7 @@
 import copy
 import os.path
 
-from fann2 import libfann as fann
+from ovos_padatious import fann
 from ovos_utils.log import LOG
 from ovos_padatious.id_manager import IdManager
 from ovos_padatious.util import resolve_conflicts, StrEnum

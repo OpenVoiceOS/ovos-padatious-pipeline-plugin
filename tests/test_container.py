@@ -13,7 +13,10 @@
 # limitations under the License.
 import os
 import random
+import threading
+import time
 import unittest
+from unittest.mock import MagicMock
 from os.path import join
 from time import monotonic
 
@@ -72,6 +75,12 @@ class TestFromDisk(unittest.TestCase):
         assert len(cont.intents.objects_to_train) == 0
         assert len(cont.intents.objects) == 2
 
+        # a container that has never trained is served empty until a
+        # (background) pass actually compiles it - even one that is a pure
+        # cache hit and would finish trivially fast, see
+        # IntentContainer._train_in_background. An explicit train() call
+        # forces that first pass synchronously.
+        cont.train(False)
         result = cont.calc_intent('something different')
         assert result.matches['other'] == 'different'
 
@@ -114,6 +123,35 @@ class TestIntentContainer(unittest.TestCase):
 
         test(False, False)
         test(True, True)
+
+    def test_calc_exact_intents_skips_neural_inference(self):
+        cont = IntentContainer('/tmp/cache-exact-tier')
+        cont.add_intent('hello', ['hello there'])
+        cont.train(debug=False)
+        cont.intents.calc_intents = MagicMock(
+            side_effect=AssertionError('neural tier must not run'))
+
+        matches = cont.calc_exact_intents('hello there')
+
+        self.assertEqual([m.name for m in matches], ['hello'])
+        self.assertEqual(matches[0].conf, 1.0)
+        cont.shutdown()
+
+    def test_calc_exact_intents_is_empty_without_padaos(self):
+        cont = IntentContainer('/tmp/cache-exact-no-padaos', disable_padaos=True)
+        cont.add_intent('hello', ['hello there'])
+        cont.train(debug=False)
+
+        self.assertEqual(cont.calc_exact_intents('hello there'), [])
+        cont.shutdown()
+
+    def test_shutdown_releases_inference_workers(self):
+        cont = IntentContainer('/tmp/cache-shutdown')
+        cont.intents.shutdown = MagicMock()
+
+        cont.shutdown(wait=False)
+
+        cont.intents.shutdown.assert_called_once_with(wait=False)
 
     def _create_large_intent(self, depth):
         if depth == 0:
@@ -159,9 +197,13 @@ class TestIntentContainer(unittest.TestCase):
         assert data.conf > 0.5
         assert data['ent'] == 'one'
 
+        # a value set is a training hint, not a closed vocabulary
+        # (OVOS-INTENT-1 5.4): an unlisted value scores lower than a listed
+        # one, but it is still captured and still matches.
         data = self.cont.calc_intent('test two')
         assert high_conf > data.conf
-        assert 'ent' not in data
+        assert data.conf > 0.8
+        assert data['ent'] == 'two'
 
     def test_regular_entities(self):
         self._test_entities('')
@@ -174,13 +216,20 @@ class TestIntentContainer(unittest.TestCase):
         self.cont.train(False)
         assert self.cont.calc_intent('This is a test').conf == 1.0
         self.cont.remove_intent('test')
+        # padaos never recompiles on the match path (it would otherwise
+        # block a query on a full container compile); an explicit train()
+        # call is required to observe a removal
+        self.cont.train(False)
         assert self.cont.calc_intent('This is a test').conf < 0.5
         self.cont.add_intent('thing', ['A {thing}'])
         self.cont.add_entity('thing', ['thing'])
         self.cont.train(False)
-        assert self.cont.calc_intent('A dog').conf < 0.5
+        # 'dog' is not in the value set, so it is penalised but still matches
+        assert self.cont.calc_intent('A dog').matches == {'thing': 'dog'}
+        assert 0.8 < self.cont.calc_intent('A dog').conf < 1.0
         assert self.cont.calc_intent('A thing').conf == 1.0
         self.cont.remove_entity('thing')
+        self.cont.train(False)
         assert self.cont.calc_intent('A dog').conf == 1.0
 
     def test_overlap(self):
@@ -207,3 +256,95 @@ class TestIntentContainer(unittest.TestCase):
         intent = self.cont.calc_intent('make a timer for 3 minute')
         assert intent.name == 'timer'
         assert intent.matches == {'time': '3'}
+
+
+class TestContainerLifecycle(unittest.TestCase):
+    """shutdown()/clear() must not leave a trainer inside a retired container.
+
+    Each test drives the lifecycle call from another thread and asserts it
+    is still blocked while the trainer holds, so releasing the trainer
+    first cannot make the test pass by accident.
+    """
+
+    @staticmethod
+    def _gated_trainer(cont, release, observed=None):
+        """Install a train() that parks until *release*, and start it."""
+        in_train = threading.Event()
+
+        def slow_train(*args, **kwargs):
+            in_train.set()
+            release.wait(10)
+            if observed is not None:
+                observed.append(cont.intents)
+            return True
+
+        cont.train = slow_train
+        cont.must_train = True
+        cont._train_in_background()
+        assert in_train.wait(5), "trainer never started"
+        return in_train
+
+    def test_shutdown_waits_for_the_active_trainer(self):
+        cont = IntentContainer('/tmp/cache-shutdown-trainer', disable_padaos=True)
+        release = threading.Event()
+        self._gated_trainer(cont, release)
+
+        done = threading.Event()
+        threading.Thread(
+            target=lambda: (cont.shutdown(wait=False), done.set()),
+            daemon=True).start()
+
+        # shutdown signalled the trainer...
+        deadline = time.monotonic() + 5
+        while not cont._shutdown.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(cont._shutdown.is_set())
+        # ...and is still waiting for it, rather than closing underneath it
+        self.assertFalse(done.wait(0.3),
+                         "shutdown() returned while the trainer was running")
+
+        release.set()
+        self.assertTrue(done.wait(10), "shutdown() never completed")
+        trainer = cont._background_trainer
+        self.assertTrue(trainer is None or not trainer.is_alive())
+
+    def test_shutdown_refuses_to_start_a_new_pass(self):
+        cont = IntentContainer('/tmp/cache-shutdown-refuse', disable_padaos=True)
+        cont.shutdown(wait=False)
+        cont.must_train = True
+
+        cont._train_in_background()
+
+        self.assertIsNone(cont._background_trainer)
+
+    def test_clear_waits_before_swapping_state(self):
+        cont = IntentContainer('/tmp/cache-clear-trainer', disable_padaos=True)
+        release = threading.Event()
+        observed = []
+        original_manager = cont.intents
+        self._gated_trainer(cont, release, observed)
+
+        done = threading.Event()
+        threading.Thread(
+            target=lambda: (cont.clear(), done.set()), daemon=True).start()
+
+        deadline = time.monotonic() + 5
+        while not cont._shutdown.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(cont._shutdown.is_set())
+        # clear() must not have swapped the manager while the pass runs
+        self.assertFalse(done.wait(0.3),
+                         "clear() returned while the trainer was running")
+        self.assertIs(cont.intents, original_manager,
+                      "state was swapped underneath the active trainer")
+
+        release.set()
+        self.assertTrue(done.wait(10), "clear() never completed")
+
+        # the pass finished against the ORIGINAL manager, never the new one
+        self.assertEqual(observed, [original_manager])
+        self.assertIsNot(cont.intents, original_manager)
+        # and the container is reusable afterwards
+        self.assertFalse(cont._shutdown.is_set())
+        cont.shutdown(wait=False)
+

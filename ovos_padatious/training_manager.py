@@ -62,7 +62,7 @@ class TrainingManager:
         self.objects_to_train: List[Trainable] = []
         self.train_data = TrainData()
 
-    def add(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> None:
+    def add(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True) -> bool:
         """
         Adds a new intent or entity for training or loading from cache.
 
@@ -71,17 +71,52 @@ class TrainingManager:
             lines (List[str]): Lines of training data.
             reload_cache (bool): Whether to force reload of cache if it exists.
             must_train (bool): Whether training is required for the new intent/entity.
+
+        Returns:
+            bool: True if this registration actually requires (re)training -
+            new content, a forced reload, or a cache load failure. False if
+            an identical registration is being replayed and the existing
+            cached/trained state already matches, so the caller has no
+            reason to mark the container dirty (ovos-core's periodic skill
+            registration reconciliation re-emits every intent unchanged on
+            a fixed cadence; without this, every replay looked like new
+            training work and the background trainer never went idle).
         """
+        # Drop any previously queued-but-not-yet-trained duplicate for this
+        # name (e.g. the legacy and OVOS-INTENT-4 wire contracts both
+        # landing on the same canonical name, ovos-core#831) and any stale
+        # queued training-data lines. The currently live, already-trained
+        # object for this name (if any) is deliberately left untouched in
+        # ``self.objects`` here - it keeps serving matches for the entire
+        # compile window and is only swapped out atomically in ``train()``
+        # once its freshly trained replacement actually exists. Evicting it
+        # eagerly here (as this used to do via a blanket ``self.remove()``)
+        # made every intent mid-retrain unmatchable for the whole pass, not
+        # just newly registered ones - the "round 6" ser9 finding: a boot
+        # drain of ~128 registrations left the previous, perfectly good
+        # generation of intents unservable for minutes while the batch
+        # compiled.
+        self.objects_to_train = [i for i in self.objects_to_train if i.name != name]
+        self.train_data.remove_lines(name)
+
+        def _replace_live_object(new_obj) -> None:
+            self.objects = [i for i in self.objects if i.name != name]
+            self.objects.append(new_obj)
+
         if not must_train:
             LOG.debug(f"Loading {name} from intent cache")
-            self.objects.append(self.cls.from_file(name=name, folder=self.cache))
+            _replace_live_object(self.cls.from_file(name=name, folder=self.cache))
+            return False
         # general case: load resource (entity or intent) to training queue
         # or if no change occurred to memory data structures
         else:
             hash_fn = join(self.cache, name + '.hash')
             old_hsh = None
             min_ver = splitext(ovos_padatious.__version__)[0]
-            new_hsh = lines_hash([min_ver] + lines)
+            # cache format 2: entities persist their value set in a .samples
+            # sidecar for the exact-match path; salting the hash retrains
+            # pre-sidecar caches once so the sidecar exists everywhere
+            new_hsh = lines_hash([min_ver, "format2"] + lines)
 
             if isfile(hash_fn):
                 with open(hash_fn, 'rb') as g:
@@ -95,7 +130,7 @@ class TrainingManager:
             if not retrain:
                 try:
                     LOG.debug(f"Loading {name} from intent cache")
-                    self.objects.append(self.cls.from_file(name=name, folder=self.cache))
+                    _replace_live_object(self.cls.from_file(name=name, folder=self.cache))
                 except Exception as e:
                     LOG.error(f"Failed to load intent from cache: {name} - {str(e)}")
                     retrain = True
@@ -103,6 +138,7 @@ class TrainingManager:
                 LOG.debug(f"Queuing {name} for training")
                 self.objects_to_train.append(self.cls(name=name, hsh=new_hsh))
             self.train_data.add_lines(name, lines)
+            return retrain
 
     def load(self, name: str, file_name: str, reload_cache: bool = False) -> None:
         """
@@ -142,24 +178,25 @@ class TrainingManager:
         if timeout is not None:
             LOG.warning("'timeout' argument is deprecated and will be ignored")
 
-        train = partial(_train_and_save, cache=self.cache, data=self.train_data, print_updates=debug)
+        train_data = self.train_data.copy()  # copy for thread safety
+        train = partial(_train_and_save, cache=self.cache, data=train_data, print_updates=debug)
 
         objs = list(self.objects_to_train) # make a copy so its thread safe
         fails = []
-        # Train objects sequentially
+        # Train objects sequentially. The previous, already-trained object
+        # for each name (if any) is left serving matches in ``self.objects``
+        # the entire time - each name's swap only happens right below, once
+        # its own replacement is actually ready, one at a time. So a query
+        # arriving mid-pass sees either the old or the new generation of
+        # any given intent/entity, never a gap where it briefly vanishes.
         for obj in objs:
             try:
                 train(obj)
+                new_obj = self.cls.from_file(name=obj.name, folder=self.cache)
+                self.objects = [i for i in self.objects if i.name != obj.name]
+                self.objects.append(new_obj)
             except Exception as e:
                 LOG.error(f"Error training {obj.name}: {e}")
-                fails.append(obj)
-
-        # Load saved objects from disk
-        for obj in objs:
-            try:
-                self.objects.append(self.cls.from_file(name=obj.name, folder=self.cache))
-            except Exception as e:
-                LOG.error(f"Failed to load trained object {obj.name}: {e}")
                 fails.append(obj)
         self.objects_to_train = [o for o in self.objects_to_train
                                  if o not in objs or o in fails]
