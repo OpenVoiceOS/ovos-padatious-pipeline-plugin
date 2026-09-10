@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""OVOS-INTENT-4 §3.2: ``message.context["skill_id"]`` is the authoritative
-attribution of the producing component. Every registration/deregistration
-handler must take the skill id from the context, never from a payload that
-differs from it, and must drop the request when the context carries none.
+"""OVOS-INTENT-4 §3.2: a §§5-8 message acts on its payload ``skill_id``.
+
+The spec handlers take the target from the payload and never substitute
+``context.skill_id`` for it, so a message that names another skill acts on
+that skill. The legacy handlers keep the context, which is the only identity
+the legacy wire carries.
 """
 from unittest import TestCase, mock
 
@@ -100,52 +102,64 @@ class TestDetachSkillTakesSkillIdFromContext(TestCase):
         self.assertTrue(any("missing" in w for w in _warnings(warn)))
 
 
-class TestSpecHandlersTakeSkillIdFromContext(TestCase):
+class TestSpecHandlersTakeSkillIdFromPayload(TestCase):
     def setUp(self):
         self.pipeline = PadatiousPipeline(mock.Mock())
 
-    def test_register_template_differing_payload_uses_context(self):
-        msg = Message(SpecMessage.INTENT_REGISTER_TEMPLATE,
-                      {"skill_id": "attacker.skill", "intent_name": "play_music",
-                       "lang": "en-US", "samples": ["play {query}"]},
-                      {"skill_id": "music.skill"})
-        with mock.patch.object(LOG, "warning") as warn:
-            self.pipeline.handle_register_template(msg)
-        self.assertIn("music.skill:play_music", self.pipeline.registered_intents)
-        self.assertNotIn("attacker.skill:play_music",
-                         self.pipeline.registered_intents)
-        self.assertTrue(any("differs from" in w for w in _warnings(warn)))
+    def _register(self, skill_id, intent_name, sample, sender=None):
+        self.pipeline.handle_register_template(Message(
+            SpecMessage.INTENT_REGISTER_TEMPLATE,
+            {"skill_id": skill_id, "intent_name": intent_name,
+             "lang": "en-US", "samples": [sample]},
+            {"skill_id": sender or skill_id}))
 
-    def test_register_template_missing_context_is_dropped(self):
+    def test_register_template_indexes_under_the_payload_skill(self):
+        # a provisioning tool registering on another skill's behalf
+        self._register("music.skill", "play_music", "play {query}",
+                       sender="admin.skill")
+        self.assertIn("music.skill:play_music", self.pipeline.registered_intents)
+        self.assertNotIn("admin.skill:play_music",
+                         self.pipeline.registered_intents)
+
+    def test_register_template_missing_context_registers(self):
         msg = Message(SpecMessage.INTENT_REGISTER_TEMPLATE,
                       {"skill_id": "music.skill", "intent_name": "play_music",
                        "lang": "en-US", "samples": ["play {query}"]},
                       {})
         self.pipeline.handle_register_template(msg)
-        self.assertNotIn("music.skill:play_music", self.pipeline.registered_intents)
-
-    def test_skill_deregister_differing_payload_uses_context(self):
-        self.pipeline.handle_register_template(Message(
-            SpecMessage.INTENT_REGISTER_TEMPLATE,
-            {"skill_id": "music.skill", "intent_name": "play_music",
-             "lang": "en-US", "samples": ["play {query}"]},
-            {"skill_id": "music.skill"}))
-        msg = Message(SpecMessage.SKILL_DEREGISTER,
-                      {"skill_id": "attacker.skill"},
-                      {"skill_id": "music.skill"})
-        with mock.patch.object(LOG, "warning") as warn:
-            self.pipeline.handle_deregister_skill_spec(msg)
-        self.assertNotIn("music.skill:play_music", self.pipeline.registered_intents)
-        self.assertTrue(any("differs from" in w for w in _warnings(warn)))
-
-    def test_skill_deregister_missing_context_is_dropped(self):
-        self.pipeline.handle_register_template(Message(
-            SpecMessage.INTENT_REGISTER_TEMPLATE,
-            {"skill_id": "music.skill", "intent_name": "play_music",
-             "lang": "en-US", "samples": ["play {query}"]},
-            {"skill_id": "music.skill"}))
-        msg = Message(SpecMessage.SKILL_DEREGISTER, {"skill_id": "music.skill"}, {})
-        with mock.patch.object(LOG, "warning") as warn:
-            self.pipeline.handle_deregister_skill_spec(msg)
         self.assertIn("music.skill:play_music", self.pipeline.registered_intents)
-        self.assertTrue(any("missing" in w for w in _warnings(warn)))
+
+    def test_register_template_missing_payload_is_dropped(self):
+        msg = Message(SpecMessage.INTENT_REGISTER_TEMPLATE,
+                      {"intent_name": "play_music", "lang": "en-US",
+                       "samples": ["play {query}"]},
+                      {"skill_id": "admin.skill"})
+        with mock.patch.object(LOG, "warning") as warn:
+            self.pipeline.handle_register_template(msg)
+        self.assertNotIn("admin.skill:play_music",
+                         self.pipeline.registered_intents)
+        self.assertTrue(any("missing skill_id" in w for w in _warnings(warn)))
+
+    def test_skill_deregister_removes_the_named_skill_not_the_sender(self):
+        self._register("music.skill", "play_music", "play {query}")
+        self._register("admin.skill", "shutdown", "shut down")
+        self.pipeline.handle_deregister_skill_spec(Message(
+            SpecMessage.SKILL_DEREGISTER,
+            {"skill_id": "music.skill"},
+            {"skill_id": "admin.skill"}))
+        self.assertNotIn("music.skill:play_music", self.pipeline.registered_intents)
+        self.assertIn("admin.skill:shutdown", self.pipeline.registered_intents)
+
+    def test_skill_deregister_missing_context_removes_the_payload_skill(self):
+        self._register("music.skill", "play_music", "play {query}")
+        self.pipeline.handle_deregister_skill_spec(Message(
+            SpecMessage.SKILL_DEREGISTER, {"skill_id": "music.skill"}, {}))
+        self.assertNotIn("music.skill:play_music", self.pipeline.registered_intents)
+
+    def test_skill_deregister_missing_payload_is_dropped(self):
+        self._register("music.skill", "play_music", "play {query}")
+        with mock.patch.object(LOG, "warning") as warn:
+            self.pipeline.handle_deregister_skill_spec(Message(
+                SpecMessage.SKILL_DEREGISTER, {}, {"skill_id": "music.skill"}))
+        self.assertIn("music.skill:play_music", self.pipeline.registered_intents)
+        self.assertTrue(any("missing skill_id" in w for w in _warnings(warn)))
