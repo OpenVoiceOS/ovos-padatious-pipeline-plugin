@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.4a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.4a1) (2026-09-10)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.3a1...2.1.4a1)
+
+**Merged pull requests:**
+
+- fix: spec handlers act on the payload skill\_id, not the sender [\#153](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/153) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [2.1.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.3a1) (2026-09-09)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.2a2...2.1.3a1)
@@ -418,17 +426,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.5a1...1.3.6a1)
 
-**Merged pull requests:**
-
-- fix: thread safety, avoid some types of fann2 crashes [\#49](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/49) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.3.5a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.5a1) (2025-02-02)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.3.4...1.3.5a1)
-
-**Merged pull requests:**
-
-- Release 1.3.5a1 [\#48](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/48) ([github-actions[bot]](https://github.com/apps/github-actions))
 
 ## [1.3.4](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.3.4) (2025-01-29)
 
