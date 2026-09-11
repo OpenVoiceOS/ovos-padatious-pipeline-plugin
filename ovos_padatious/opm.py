@@ -773,7 +773,25 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         Args:
             message (Message): message triggering action
         """
-        self.__detach_intent(message.data.get('intent_name'))
+        intent_name = message.data.get('intent_name')
+        context_skill_id = message.context.get("skill_id")
+        # OVOS-INTENT-4 §3.2: the context skill_id is the authoritative
+        # attribution of the producing component. The legacy `intent_name`
+        # payload is "<skill_id>:<name>" built by the producer, so a
+        # mismatched prefix means the request is trying to detach an intent
+        # it does not own; reject it rather than trusting the payload.
+        # When the context carries no skill_id, keep the pre-spec behaviour
+        # for legacy producers that never set it.
+        if context_skill_id and intent_name and ":" in intent_name:
+            payload_skill_id = intent_name.split(":", 1)[0]
+            if payload_skill_id != context_skill_id:
+                LOG.warning(f"[handle_detach_intent] rejected: "
+                            f"intent_name={intent_name!r} skill prefix "
+                            f"{payload_skill_id!r} differs from "
+                            f"message.context['skill_id']={context_skill_id!r} "
+                            f"on topic {message.msg_type!r}")
+                return
+        self.__detach_intent(intent_name)
         # Intent roster changed; evict stale cache so next match reflects removal.
         _calc_padatious_intent.cache_clear()
         # In instant_train mode, retrain immediately so the model also
