@@ -65,14 +65,19 @@ class TestTypedSlotBinding(unittest.TestCase):
                          "the hedge 'about' is not part of the number")
 
     def test_an_absent_map_leaves_the_binding_untouched(self):
-        """§5.6 degrade: no map, and the typed placeholder behaves as {name}."""
+        """§5.6 degrade: no map, and the typed placeholder behaves as {name}.
+
+        The template counts words, so without a typed-slot map to correct it
+        `{number:amount}` covers every word between `for` and `minutes`.
+        """
         pipeline = _pipeline()
         _register(pipeline, self.SAMPLES)
         message = Message("recognizer_loop:utterance",
                           {"utterances": [self.UTTERANCE], "lang": LANG}, {})
         match = pipeline.match_high([self.UTTERANCE], LANG, message)
         self.assertIsNotNone(match)
-        self.assertIn("amount", match.match_data)
+        self.assertEqual(match.match_data.get("amount"), "about twenty",
+                         "without a typed-slot map the slot degrades to {name}")
 
     def test_a_malformed_map_is_ignored_rather_than_raising(self):
         pipeline = _pipeline()
