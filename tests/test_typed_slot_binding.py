@@ -87,6 +87,8 @@ class TestTypedSlotBinding(unittest.TestCase):
                            "typed_slots": {"number": [{"span": [0, 3]}]}}, {})
         match = pipeline.match_high([self.UTTERANCE], LANG, message)
         self.assertIsNotNone(match, "a bad map must not lose the match")
+        self.assertEqual(match.match_data.get("amount"), "about twenty",
+                         "a malformed map leaves the template binding")
 
     def test_an_entry_whose_span_does_not_hold_is_not_applied(self):
         """The invariant is the selector: entries are shared across candidates
@@ -99,7 +101,66 @@ class TestTypedSlotBinding(unittest.TestCase):
                            "typed_slots": typed}, {})
         match = pipeline.match_high([self.UTTERANCE], LANG, message)
         self.assertIsNotNone(match)
-        self.assertNotEqual(match.match_data.get("amount"), "ninety")
+        self.assertEqual(match.match_data.get("amount"), "about twenty",
+                         "an entry failing the invariant leaves the template binding")
+
+    def test_an_entry_that_does_not_overlap_the_bound_is_not_applied(self):
+        """The fallback must go: no listed span overlaps the template guess.
+
+        §5.6: an engine applies an entry only where the invariant holds and
+        SHOULD bind "the entry whose span covers the text it matched". When
+        none covers it, the template binding stays untouched.
+        """
+        pipeline = _pipeline()
+        _register(pipeline, self.SAMPLES)
+        # "set" is a valid entry on this utterance, but it does not overlap
+        # the template-bound "about twenty".
+        typed = {"number": [{"span": [0, 3], "surface": "set", "value": 1}]}
+        message = Message("recognizer_loop:utterance",
+                          {"utterances": [self.UTTERANCE], "lang": LANG,
+                           "typed_slots": typed}, {})
+        match = pipeline.match_high([self.UTTERANCE], LANG, message)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.match_data.get("amount"), "about twenty",
+                         "a non-overlapping entry must not replace the template binding")
+
+    def test_two_slots_of_the_same_type_do_not_collapse(self):
+        """Each entry may be assigned to at most one slot of its type."""
+        pipeline = _pipeline()
+        samples = ["wake me in {number:a} minutes and again in {number:b} minutes"]
+        _register(pipeline, samples)
+        utterance = "wake me in twenty minutes and again in ten minutes"
+        # Only one number is listed in the map; the second slot must keep its
+        # own template binding.
+        start = utterance.index("twenty")
+        typed = _typed(utterance, start, start + len("twenty"), 20)
+        message = Message("recognizer_loop:utterance",
+                          {"utterances": [utterance], "lang": LANG,
+                           "typed_slots": typed}, {})
+        match = pipeline.match_high([utterance], LANG, message)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.match_data.get("a"), "twenty")
+        self.assertEqual(match.match_data.get("b"), "ten",
+                         "the only listed number must not be reused for b")
+
+    def test_capitalized_utterance_uses_typed_span(self):
+        """The invariant is checked on the original utterance, not intent.sent.
+
+        ``intent.sent`` is lowercased, so a map computed on real ASR output
+        must still win for capitalized words.
+        """
+        pipeline = _pipeline()
+        _register(pipeline, self.SAMPLES)
+        utterance = "Set a timer for About Twenty minutes"
+        start = utterance.index("Twenty")
+        typed = _typed(utterance, start, start + len("Twenty"), 20)
+        message = Message("recognizer_loop:utterance",
+                          {"utterances": [utterance], "lang": LANG,
+                           "typed_slots": typed}, {})
+        match = pipeline.match_high([utterance], LANG, message)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.match_data.get("amount"), "Twenty",
+                         "the typed span on capitalized input must win")
 
     def test_the_declared_slot_name_is_the_bare_name(self):
         """INTENT-4 §6.1: `{number:amount}` declares the slot `amount`."""

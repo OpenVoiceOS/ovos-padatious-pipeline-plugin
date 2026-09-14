@@ -233,29 +233,49 @@ def _spec_skill_id(message: Message, handler: str) -> Optional[str]:
     return skill_id
 
 
-def _closest_typed_entry(entries, utterance, bound):
+def _closest_typed_entry(entries, utterance, bound, used=None):
     """The listed entry that best covers what the template bound.
 
     Overlap, not equality: the template's guess and the parser's span usually
     share most of their characters and disagree at an edge, which is the case
-    worth correcting. With nothing bound, or nothing overlapping, the first
-    entry by span is the only defensible choice -- the map states readings in
-    the order they occur and states no preference between them.
+    worth correcting. With nothing bound, or nothing overlapping, no entry
+    applies -- the map states readings in the order they occur and states no
+    preference between them (OVOS-INTENT-1 §5.6).
+
+    Args:
+        entries: candidate entries for the slot's declared type.
+        utterance: the utterance the spans were computed on.
+        bound: the surface text the template already bound.
+        used: optional set of entry ids already assigned to another slot of
+            the same type; those entries are skipped so two slots of one type
+            never collapse onto one entry.
+
+    Returns:
+        The best matching entry, or ``None`` when none applies.
     """
     ordered = sorted(entries, key=lambda e: (e["span"][0], e["span"][1]))
+    used = used or set()
     if not bound:
-        return ordered[0]
+        return None
     best, best_overlap = None, 0
-    start = utterance.find(bound)
+    # The bound surface comes from padatious-normalized text (lowercased,
+    # stripped), but the entries were computed on the original-casing
+    # utterance. Search case-insensitively so capitalized ASR output still
+    # overlaps the right entry.
+    lower = utterance.lower()
+    token = bound.lower()
+    start = lower.find(token)
     while start != -1:
-        end = start + len(bound)
+        end = start + len(token)
         for entry in ordered:
+            if id(entry) in used:
+                continue
             lo, hi = entry["span"]
             overlap = min(end, hi) - max(start, lo)
             if overlap > best_overlap:
                 best, best_overlap = entry, overlap
-        start = utterance.find(bound, start + 1)
-    return best or ordered[0]
+        start = lower.find(token, start + 1)
+    return best
 
 
 class PadatiousPipeline(ConfidenceMatcherPipeline):
@@ -1366,21 +1386,29 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             LOG.warning(f"ignoring a malformed typed_slots map "
                         f"(INTENT-1 5.6): {exc}")
             return
-        utterance = intent.sent or ""
+        # OVOS-INTENT-1 §5.6: the span invariant is checked against the
+        # utterance the spans were computed on. ``intent.sent`` is normalized
+        # (lowercased, stripped, apostrophes handled), so capitalized ASR
+        # output would drop a correct entry and let a leftover spurious entry
+        # bind. The original utterance is recovered from the incoming message.
+        utterance = message.data.get("utterances", [intent.sent or ""])[0]
         matches = dict(intent.matches or {})
+        used_entries: Dict[str, set] = defaultdict(set)
         for slot, type_name in declared.items():
             entries = [e for e in typed.get(type_name, [])
                        if utterance[e["span"][0]:e["span"][1]] == e["surface"]]
             if not entries:
                 continue
             bound = matches.get(slot)
-            chosen = _closest_typed_entry(entries, utterance, bound)
+            chosen = _closest_typed_entry(entries, utterance, bound,
+                                          used=used_entries[type_name])
             if chosen is None or chosen["surface"] == bound:
                 continue
             LOG.debug(f"Padatious slot '{slot}' bound to the {type_name} span "
                       f"{chosen['surface']!r} rather than {bound!r} "
                       f"(INTENT-1 5.6)")
             matches[slot] = chosen["surface"]
+            used_entries[type_name].add(id(chosen))
         intent.matches = matches
 
     def _fill_context_slots(self, intent: PadatiousIntent, sess: Session, lang: str) -> None:
