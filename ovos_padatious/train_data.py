@@ -42,7 +42,8 @@ class TrainData:
             # an empty entry would register a dead intent/entity that can
             # never match (conf 0.0 forever) instead of surfacing the
             # problem, so refuse it outright and drop any stale entry.
-            LOG.error(
+            # OVOS-INTENT-4 §5.3: the rejecting plugin logs at WARN.
+            LOG.warning(
                 "%r has no valid samples after skipping malformed template "
                 "lines - not registering", name,
             )

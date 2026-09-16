@@ -183,7 +183,9 @@ class TestAllMalformedIntentNotRegistered(TestCase):
     """When every line of an intent/entity is malformed, expand_or_skip
     empties the sample list entirely: registering it anyway would create a
     dead intent that can never match (conf 0.0 forever) while only logging
-    a warning. Such a registration must be refused outright, loudly."""
+    a warning. Such a registration must be refused outright, and OVOS-INTENT-4
+    §5.3 fixes the level: "The rejecting plugin MUST log the rejection at
+    WARN"."""
 
     def setUp(self):
         self.pipeline = PadatiousPipeline(mock.Mock())
@@ -191,15 +193,19 @@ class TestAllMalformedIntentNotRegistered(TestCase):
     def test_all_malformed_intent_is_not_registered(self):
         with mock.patch("ovos_padatious.opm.LOG") as fake_log:
             self.pipeline.register_intent(register_intent_msg(ALL_MALFORMED_LINES))
-            fake_log.error.assert_called()
+            # OVOS-INTENT-4 §5.3: "The rejecting plugin MUST log the
+            # rejection at WARN". An operator filtering for that signature
+            # misses a rejection announced at ERROR.
+            fake_log.warning.assert_called()
+            fake_log.error.assert_not_called()
         container = self.pipeline.containers[LANG]
         self.assertNotIn(NAME, container.intents.train_data.sent_lists)
 
     def test_all_malformed_intent_error_logged_names_intent_and_skill(self):
         with mock.patch("ovos_padatious.opm.LOG") as fake_log:
             self.pipeline.register_intent(register_intent_msg(ALL_MALFORMED_LINES))
-        fake_log.error.assert_called()
-        logged = " ".join(str(a) for a in fake_log.error.call_args[0])
+        fake_log.warning.assert_called()
+        logged = " ".join(str(a) for a in fake_log.warning.call_args[0])
         self.assertIn(NAME, logged)
         self.assertIn(SKILL, logged)
 
@@ -218,7 +224,8 @@ class TestAllMalformedIntentNotRegistered(TestCase):
         entity_lines = ["cansad()", "(triste"]
         with mock.patch("ovos_padatious.opm.LOG") as fake_log:
             self.pipeline.register_entity(register_entity_msg("mood_word", entity_lines))
-            fake_log.error.assert_called()
+            fake_log.warning.assert_called()
+            fake_log.error.assert_not_called()
         container = self.pipeline.containers[LANG]
         self.assertNotIn("{mood_word}", container.entities.train_data.sent_lists)
 
@@ -237,7 +244,8 @@ class TestAllMalformedFilePathNotRegistered(TestCase):
     def test_all_malformed_intent_lines_not_added(self):
         with mock.patch("ovos_padatious.train_data.LOG") as fake_log:
             self.container.add_intent("all_bad", ALL_MALFORMED_LINES)
-            fake_log.error.assert_called()
+            fake_log.warning.assert_called()
+            fake_log.error.assert_not_called()
         self.assertNotIn("all_bad", self.container.intents.train_data.sent_lists)
 
     def test_mixed_intent_lines_still_added(self):

@@ -832,7 +832,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             # samples would silently create a dead intent/entity that can
             # never match (conf 0.0 forever) instead of surfacing the
             # problem, so refuse the registration outright.
-            LOG.error(
+            # OVOS-INTENT-4 §5.3: the rejecting plugin logs at WARN.
+            LOG.warning(
                 "intent/entity %r (skill %r) has no valid samples after "
                 "skipping malformed template lines - not registering",
                 name, skill_id,
