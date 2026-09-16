@@ -144,10 +144,10 @@ class TestTypedSlotBinding(unittest.TestCase):
                          "the only listed number must not be reused for b")
 
     def test_capitalized_utterance_uses_typed_span(self):
-        """The invariant is checked on the original utterance, not intent.sent.
+        """The invariant is checked on the original casing of the utterance.
 
-        ``intent.sent`` is lowercased, so a map computed on real ASR output
-        must still win for capitalized words.
+        Padatious matches lowercased text, so a map computed on real ASR
+        output must still win for capitalized words.
         """
         pipeline = _pipeline()
         _register(pipeline, self.SAMPLES)
@@ -162,6 +162,40 @@ class TestTypedSlotBinding(unittest.TestCase):
         self.assertEqual(match.match_data.get("amount"), "Twenty",
                          "the typed span on capitalized input must win")
 
+    def test_an_entry_from_another_candidate_is_not_applied(self):
+        """§5.6: the map is shared by every candidate, and an entry applies
+        only to the candidate the engine matched. Here the entry holds on
+        candidate 0, but candidate 1 wins the match."""
+        pipeline = _pipeline()
+        _register(pipeline, self.SAMPLES)
+        noisy = "um so anyway set a timer for ninety nine minutes or so please"
+        clean = "set a timer for ninety minutes"
+        start = noisy.index("ninety nine")
+        typed = _typed(noisy, start, start + len("ninety nine"), 99)
+        message = Message("recognizer_loop:utterance",
+                          {"utterances": [noisy, clean], "lang": LANG,
+                           "typed_slots": typed}, {})
+        match = pipeline.match_high([noisy, clean], LANG, message)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.utterance, clean,
+                         "control: the clean candidate must win the match")
+        self.assertEqual(match.match_data.get("amount"), "ninety",
+                         "an entry of another candidate must not bind")
+
+    def test_an_empty_candidate_list_in_the_message_degrades(self):
+        """A message with no `utterances` names no candidate, so no entry
+        applies and the template binding stays. It must not raise."""
+        pipeline = _pipeline()
+        _register(pipeline, self.SAMPLES)
+        start = self.UTTERANCE.index("twenty")
+        typed = _typed(self.UTTERANCE, start, start + len("twenty"), 20)
+        message = Message("recognizer_loop:utterance",
+                          {"utterances": [], "lang": LANG,
+                           "typed_slots": typed}, {})
+        match = pipeline.match_high([self.UTTERANCE], LANG, message)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.match_data.get("amount"), "about twenty")
+
     def test_the_declared_slot_name_is_the_bare_name(self):
         """INTENT-4 §6.1: `{number:amount}` declares the slot `amount`."""
         pipeline = _pipeline()
@@ -169,3 +203,22 @@ class TestTypedSlotBinding(unittest.TestCase):
         recorded = pipeline._intent_slots.get((LANG, NAME)) or frozenset()
         self.assertIn("amount", recorded)
         self.assertNotIn("number:amount", recorded)
+
+
+class TestClosestTypedEntry(unittest.TestCase):
+    """Offsets are code points of the original utterance (§5.6 `span`)."""
+
+    def test_a_length_changing_lowercase_keeps_offsets(self):
+        from ovos_padatious.opm import _closest_typed_entry
+        # U+0130 lowercases to two code points, which shifts every offset
+        # after it in the lowered string.
+        utterance = "\u0130\u0130\u0130\u0130\u0130\u0130 ten twenty"
+        self.assertNotEqual(len(utterance), len(utterance.lower()),
+                            "control: the lowercase must change the length")
+        ten = {"span": [7, 10], "surface": "ten", "value": 10}
+        twenty = {"span": [11, 17], "surface": "twenty", "value": 20}
+        self.assertEqual(utterance[7:10], "ten")
+        self.assertEqual(utterance[11:17], "twenty")
+        self.assertIs(_closest_typed_entry([ten, twenty], utterance, "ten"), ten)
+        self.assertIs(_closest_typed_entry([ten, twenty], utterance, "twenty"),
+                      twenty)
