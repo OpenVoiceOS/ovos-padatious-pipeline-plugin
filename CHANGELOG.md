@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.0a1) (2026-09-17)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.5a1...2.2.0a1)
+
+**Merged pull requests:**
+
+- feat: bind a typed placeholder where the typed-slot map allows \(OVOS-INTENT-1 5.6\) [\#158](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/158) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+
 ## [2.1.5a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.1.5a1) (2026-09-16)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.4a1...2.1.5a1)
@@ -401,17 +409,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.1a1...1.4.1)
 
-**Merged pull requests:**
-
-- Release 1.4.1a1 [\#54](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/54) ([github-actions[bot]](https://github.com/apps/github-actions))
-
 ## [1.4.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.1a1) (2025-06-08)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.0a1...1.4.1a1)
-
-**Merged pull requests:**
-
-- fix: compatibility with ovos-workshop 7.X.X and ovos-plugin-manager 1.X.X [\#53](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/53) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.4.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.0a1) (2025-04-03)
 
