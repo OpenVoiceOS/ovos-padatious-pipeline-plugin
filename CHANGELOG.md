@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.4a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.4a1) (2026-09-18)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.3a1...2.2.4a1)
+
+**Merged pull requests:**
+
+- fix: raise the ovos-spec-tools floor to the release this package imports from [\#162](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/162) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+
 ## [2.2.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.3a1) (2026-09-18)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.2a1...2.2.3a1)
@@ -377,17 +385,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.4a2...1.4.5a1)
 
-**Merged pull requests:**
-
-- fix: default config values [\#61](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/61) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.4.4a2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.4a2) (2026-03-03)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.4a1...1.4.4a2)
-
-**Merged pull requests:**
-
-- Docs: Add comprehensive documentation including API reference, architecture, and theory [\#62](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/62) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.4.4a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.4a1) (2025-12-16)
 
