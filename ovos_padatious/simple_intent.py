@@ -139,13 +139,30 @@ class SimpleIntent:
         train_data = fann.training_data()
         train_data.set_train_data(inputs, outputs)
         LOG.debug(f"Training {self.name} with {len(self.ids)} inputs and samples: {n_pos} positive + {n_neg} negative")
+        # Each attempt re-seeds the net and trains up to 1000 epochs. With
+        # libfann one attempt on ~8k rows took about a second, so ten attempts
+        # were cheap. The numpy backend takes 20 to 160 s per attempt on a
+        # large intent, and a net that does not reach bit_fail 0 on the first
+        # attempt does not reach it on the tenth either (weather en-US,
+        # T-1645: 49 to 121 failing rows across ten attempts, no trend). Keep
+        # the best attempt, and stop as soon as an attempt does not improve on
+        # it: the loop used to keep the LAST attempt, which on that run was
+        # the worst of the ten.
+        best_net, best_fail = None, None
         for _ in range(10):
             self.configure_net()
             self.net.train_on_data(train_data, 1000, 0, 0)
             self.net.test_data(train_data)
-            if self.net.get_bit_fail() == 0:
+            fail = self.net.get_bit_fail()
+            if best_fail is None or fail < best_fail:
+                best_net, best_fail = self.net, fail
+                if fail == 0:
+                    break
+            else:
                 break
-        LOG.debug(f"Training {self.name} finished!")
+        self.net = best_net
+        LOG.debug(f"Training {self.name} finished! ({best_fail} of "
+                  f"{len(inputs)} samples outside the bit fail limit)")
 
     def save(self, prefix):
         prefix += '.intent'
