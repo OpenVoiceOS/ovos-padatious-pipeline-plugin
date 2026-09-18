@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.3a1) (2026-09-18)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.2a1...2.2.3a1)
+
+**Merged pull requests:**
+
+- fix: name lang and the rejecting topic in the section 5.3 rejection line [\#167](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/167) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+
 ## [2.2.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.2a1) (2026-09-18)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.1a1...2.2.2a1)
@@ -384,10 +392,6 @@
 ## [1.4.4a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.4a1) (2025-12-16)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.3...1.4.4a1)
-
-**Merged pull requests:**
-
-- fix: thread safety [\#59](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/59) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.4.3](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.3) (2025-11-05)
 
