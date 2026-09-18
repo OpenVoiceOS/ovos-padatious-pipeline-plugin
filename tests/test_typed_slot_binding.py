@@ -222,3 +222,30 @@ class TestClosestTypedEntry(unittest.TestCase):
         self.assertIs(_closest_typed_entry([ten, twenty], utterance, "ten"), ten)
         self.assertIs(_closest_typed_entry([ten, twenty], utterance, "twenty"),
                       twenty)
+
+
+class TestSlotTypesFromTheSpecRegistration(unittest.TestCase):
+    """ovos-workshop strips the type prefix before it registers (INTENT-1
+    §3.4 degrade at the producer) and carries the types in ``slot_types`` on
+    ``ovos.intent.register.template`` (INTENT-4 §6.1). The engine must read
+    the types from that payload: the samples no longer state them."""
+    UTTERANCE = "set the brightness to twenty five please"
+
+    def test_the_typed_span_wins_when_types_arrive_on_the_spec_topic(self):
+        pipeline = _pipeline()
+        pipeline.handle_register_template(Message(
+            "ovos.intent.register.template",
+            {"skill_id": SKILL, "intent_name": "set_brightness", "lang": LANG,
+             "samples": ["set the brightness to {b}"],
+             "slot_types": {"b": "number"}},
+            {"skill_id": SKILL}))
+        pipeline.train(Message("mycroft.skills.train", {}, {}))
+        start = self.UTTERANCE.index("twenty")
+        typed = _typed(self.UTTERANCE, start, start + len("twenty five"), 25)
+        message = Message("recognizer_loop:utterance",
+                          {"utterances": [self.UTTERANCE], "lang": LANG,
+                           "typed_slots": typed}, {})
+        match = pipeline.match_high([self.UTTERANCE], LANG, message)
+        self.assertIsNotNone(match, "the intent must still match")
+        self.assertEqual(match.match_data.get("b"), "twenty five",
+                         "the trailing 'please' is not part of the number")
