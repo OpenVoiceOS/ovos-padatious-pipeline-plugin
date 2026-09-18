@@ -208,6 +208,9 @@ class TestAllMalformedIntentNotRegistered(TestCase):
         logged = " ".join(str(a) for a in fake_log.warning.call_args[0])
         self.assertIn(NAME, logged)
         self.assertIn(SKILL, logged)
+        # OVOS-INTENT-4 §5.3: the rejection names lang and the rejecting topic
+        self.assertIn(LANG, logged)
+        self.assertIn("padatious:register_intent", logged)
 
     def test_all_malformed_intent_never_matches(self):
         self.pipeline.register_intent(register_intent_msg(ALL_MALFORMED_LINES))
