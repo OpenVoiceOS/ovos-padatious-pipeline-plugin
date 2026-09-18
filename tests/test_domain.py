@@ -17,9 +17,40 @@ class TestDomainIntentEngine(unittest.TestCase):
 
     def test_remove_domain(self):
         self.engine.add_domain_intent("domain1", "intent1", ["sample1", "sample2"])
+        container = self.engine.domains["domain1"]
+        container.shutdown = MagicMock()
         self.engine.remove_domain("domain1")
         self.assertNotIn("domain1", self.engine.training_data)
         self.assertNotIn("domain1", self.engine.domains)
+        # the dropped container owned inference workers; leaking them would
+        # accumulate a pool per removed domain for the process lifetime
+        container.shutdown.assert_called_once_with(wait=False)
+
+    def test_calc_exact_intents_uses_exact_domain_path(self):
+        self.engine.train = MagicMock()
+        mock_domain_container = MagicMock()
+        exact = MatchData(name="intent1", sent="query", matches={}, conf=1.0)
+        mock_domain_container.calc_exact_intents.return_value = [exact]
+        self.engine.domains["domain1"] = mock_domain_container
+        self.engine.domain_engine.calc_exact_intents = MagicMock(return_value=[
+            MatchData(name="domain1", sent="query", matches={}, conf=1.0)
+        ])
+
+        result = self.engine.calc_exact_intents("query")
+
+        self.assertEqual(result, [exact])
+        mock_domain_container.calc_exact_intents.assert_called_once_with("query")
+        mock_domain_container.calc_intents.assert_not_called()
+
+    def test_shutdown_releases_every_container(self):
+        self.engine.domain_engine.shutdown = MagicMock()
+        container = MagicMock()
+        self.engine.domains["domain1"] = container
+
+        self.engine.shutdown(wait=False)
+
+        self.engine.domain_engine.shutdown.assert_called_once_with(wait=False)
+        container.shutdown.assert_called_once_with(wait=False)
 
     def test_remove_domain_intent(self):
         self.engine.add_domain_intent("domain1", "intent1", ["sample1", "sample2"])

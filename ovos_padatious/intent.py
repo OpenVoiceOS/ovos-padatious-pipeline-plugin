@@ -34,8 +34,12 @@ class Intent(Trainable):
         possible_matches = [MatchData(self.name, sent)]
         for pi in self.pos_intents:
             entity = entities.find(self.name, pi.token) if entities else None
+            # this intent's own template vocabulary, already trained and
+            # persisted by SimpleIntent - lets PosIntent tell a slot value
+            # apart from template words that leaked into the span
+            literals = self.simple_intent.ids
             for i in list(possible_matches):
-                possible_matches += pi.match(i, entity)
+                possible_matches += pi.match(i, entity, literals)
 
         possible_matches = [i for i in possible_matches if i.conf >= 0.0]
 
