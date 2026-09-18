@@ -891,9 +891,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             # problem, so refuse the registration outright.
             # OVOS-INTENT-4 §5.3: the rejecting plugin logs at WARN.
             LOG.warning(
-                "intent/entity %r (skill %r) has no valid samples after "
-                "skipping malformed template lines - not registering",
-                name, skill_id,
+                "intent/entity %r (skill %r, lang %r, topic %r) has no valid "
+                "samples after skipping malformed template lines - not "
+                "registering",
+                name, skill_id, lang, message.msg_type,
             )
             return
         if lang in self.stemmers:
