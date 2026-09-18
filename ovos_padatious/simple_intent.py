@@ -38,7 +38,24 @@ class SimpleIntent:
         self.net = None  # type: fann.neural_net
 
     def match(self, sent):
+        if sent and not self.has_wildcard and not any(token in self.ids for token in sent):
+            # No word of the utterance is in this intent's vocabulary and no
+            # template of it carries a {slot} that could stand for unknown
+            # words, so no template of this intent can produce the utterance.
+            # The net has no training row for that shape: the ':null:'
+            # pollution rows train to LENIENCE (0.6) on 1-3 unknown tokens,
+            # so an all-unknown utterance lands near 0.6 and the exact value
+            # depends on the trained weights, which differ across numpy
+            # builds. A lone registered intent then claims or drops an
+            # unrelated utterance by float noise. Decide it here instead.
+            return 0.0
         return max(0, self.net.run(self.vectorize(sent))[0])
+
+    @property
+    def has_wildcard(self):
+        """True when a training sample carried a ``{slot}`` placeholder: the
+        intent can then legitimately match words it never saw."""
+        return any(token.startswith('{') for token in self.ids.ids)
 
     def vectorize(self, sent):
         vector = self.ids.vector()
