@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.1a1) (2026-09-18)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.0a1...2.2.1a1)
+
+**Merged pull requests:**
+
+- fix: a lone intent never claims an utterance that shares no word with it [\#163](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/163) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+
 ## [2.2.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.0a1) (2026-09-17)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.1.5a1...2.2.0a1)
@@ -393,17 +401,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.2a1...1.4.2)
 
-**Merged pull requests:**
-
-- Release 1.4.2a1 [\#56](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/56) ([github-actions[bot]](https://github.com/apps/github-actions))
-
 ## [1.4.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.2a1) (2025-06-08)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.1...1.4.2a1)
-
-**Merged pull requests:**
-
-- fix:  deprecated\_code\_import\_error [\#55](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/55) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.4.1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.1) (2025-06-08)
 
