@@ -1113,7 +1113,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                   "requires_context": message.data.get("requires_context"),
                   "excludes_context": message.data.get("excludes_context"),
                   # INTENT-2 §4.3: per-slot value blacklist keyed by slot name.
-                  "slot_blacklist": message.data.get("slot_blacklist")},
+                  "slot_blacklist": message.data.get("slot_blacklist"),
+                  # INTENT-4 §6.1 / INTENT-1 §5.6: the producer strips the
+                  # type prefix from the samples and declares the types here,
+                  # so this is the only place the engine can read them from.
+                  "slot_types": message.data.get("slot_types")},
             context=dict(message.context, skill_id=skill_id))
         self.register_intent(legacy)
 
