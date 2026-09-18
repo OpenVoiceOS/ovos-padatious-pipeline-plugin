@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.2a1) (2026-09-18)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.1a1...2.2.2a1)
+
+**Merged pull requests:**
+
+- fix: keep the best training attempt and stop retrying when one does not improve [\#165](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/165) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+
 ## [2.2.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.1a1) (2026-09-18)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.0a1...2.2.1a1)
@@ -385,17 +393,9 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.3a1...1.4.3)
 
-**Merged pull requests:**
-
-- Release 1.4.3a1 [\#58](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/58) ([github-actions[bot]](https://github.com/apps/github-actions))
-
 ## [1.4.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.3a1) (2025-11-05)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.4.2...1.4.3a1)
-
-**Merged pull requests:**
-
-- Update requirements.txt [\#57](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/57) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.4.2](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.4.2) (2025-06-08)
 
