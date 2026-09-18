@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.5a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.5a1) (2026-09-18)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.4a1...2.2.5a1)
+
+**Merged pull requests:**
+
+- fix: carry slot\_types from the INTENT-4 registration into the engine [\#161](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/161) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+
 ## [2.2.4a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.4a1) (2026-09-18)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.3a1...2.2.4a1)
