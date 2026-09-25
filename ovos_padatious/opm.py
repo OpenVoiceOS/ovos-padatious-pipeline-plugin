@@ -581,6 +581,14 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         """
         try:
             self._train_worker()
+        except Exception:
+            # Same reason as `IntentContainer._background_train_loop`: this
+            # is a thread entry point, so an exception that escapes it is
+            # reported by `threading.excepthook` and by nothing that a
+            # running service reads. The handle is still released by the
+            # `finally` below, so the next registration starts a fresh
+            # worker exactly as before.
+            LOG.exception("padatious background training worker failed")
         finally:
             with self._train_spawn_lock:
                 if self._background_trainer is current_thread():
