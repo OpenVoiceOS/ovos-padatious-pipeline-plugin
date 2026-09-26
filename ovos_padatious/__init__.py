@@ -16,4 +16,10 @@ from .intent_container import IntentContainer
 from .domain_container import DomainIntentContainer
 from .match_data import MatchData
 
-__version__ = '0.4.8'  # Also change in setup.py
+# The single source of truth is version.py, which pyproject.toml also
+# reads for the distribution version. A literal here went stale at
+# 0.4.8 while the package shipped 2.x, and training_manager.py salts
+# every intent-cache hash with the major.minor of this name, so the
+# salt could never move. The comment it carried named a setup.py that
+# no longer exists.
+from .version import __version__
