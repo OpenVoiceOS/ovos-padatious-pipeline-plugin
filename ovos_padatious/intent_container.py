@@ -521,7 +521,20 @@ class IntentContainer:
             self._wait_for_quiet()
             if self._shutdown.is_set():
                 return
-            self.train()
+            try:
+                self.train()
+            except Exception:
+                # The thread boundary is the end of the line: an exception
+                # raised here has nowhere to propagate to. Letting it
+                # escape hands it to `threading.excepthook`, which prints
+                # to stderr and nothing else, so a compile that keeps
+                # failing looks exactly like a compile that never ran and
+                # the matcher silently stops learning. Log it and stop this
+                # worker; `needs_compile` is still set, so the next
+                # `_train_in_background` starts a fresh pass, which is what
+                # the dying thread did before, only visibly.
+                LOG.exception("padatious background training pass failed")
+                return
 
     def calc_intents(self, query: str) -> List[MatchData]:
         """
