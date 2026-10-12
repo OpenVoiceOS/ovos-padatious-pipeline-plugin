@@ -346,6 +346,10 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.stemmers = {}
 
         self.first_train = Event()
+        # Secondary languages hold their padaos compile until the skill load
+        # settles (see _compile_deferred).
+        self._boot_settled = Event()
+        self._init_time = time.monotonic()
         self.finished_training_event = Event()
         self.finished_training_event.set()  # is cleared when training starts
 
@@ -411,6 +415,15 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._intent_slot_blacklists = {}
         self._intent_slot_types = {}
 
+        # The engine content of the last registration applied per
+        # (lang, internal name), so the second copy of a dual-emitted intent
+        # (ovos-workshop sends every intent on the legacy topic and on
+        # OVOS-INTENT-4 with the same samples) is recognised before it is
+        # expanded, normalised, hashed and loaded again. A detach drops the
+        # entry, so a later registration of the same content applies again.
+        self._applied_registrations: Dict[tuple, tuple] = {}
+        self._applied_registrations_lock = RLock()
+
         # legacy registration contract (kept for back-compat)
         self.bus.on('padatious:register_intent', self.register_intent)
         self.bus.on('padatious:register_entity', self.register_entity)
@@ -420,6 +433,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
         self.bus.on('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
         self.bus.on('mycroft.skills.train', self.train)
+        self.bus.on('mycroft.ready', self.handle_ready)
 
         # OVOS-INTENT-4 spec registration contract (in addition to legacy).
         # Padatious is a TEMPLATE engine, so register.template is its primary
@@ -628,6 +642,71 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._compile_giveup.discard(lang)
         self._spawn_background_trainer()
 
+    #: Before the runtime is ready, a secondary language's container whose
+    #: only pending work is a padaos compile waits for ``mycroft.ready``, or
+    #: for the whole plugin to be this quiet (no registration in any
+    #: language) on a runtime that never announces ready. One skill's load
+    #: can register nothing for over 10 s on a slow host, so the window is
+    #: long.
+    #: Skill loading registers every intent in every language over a minute
+    #: or more, and the 60 s defer cap used to force a first full padaos
+    #: compile of each secondary language mid-boot, competing for the GIL
+    #: with the skills still loading. The primary language is never held.
+    _SECONDARY_QUIET_S = 90.0
+    #: ...and never longer than this after the plugin started.
+    _SECONDARY_HOLD_MAX_S = 300.0
+
+    def handle_ready(self, message=None) -> None:
+        """``mycroft.ready``: skill loading is over; compile what was held."""
+        self._settle_boot()
+
+    def _settle_boot(self) -> None:
+        """Release the held secondary languages, once: the trainer compiles
+        them, and the languages already compiled get their prefilters."""
+        with self._train_spawn_lock:
+            if self._boot_settled.is_set():
+                return
+            self._boot_settled.set()
+        clean = [lang for lang, engine in self.containers.items()
+                 if not engine.needs_compile]
+
+        def warm():
+            for lang in clean:
+                self._warm_prefilters(lang)
+
+        Thread(target=warm, name="padatious-prefilter-warm", daemon=True).start()
+        if any(engine.needs_compile for engine in self.containers.values()):
+            self._spawn_background_trainer()
+
+    def _compile_deferred(self, lang: str) -> bool:
+        """Whether ``lang``'s pending work may wait for the boot to settle.
+
+        Only a padaos compile ever waits: an intent that needs its network
+        trained (``must_train``) is not matchable at all until it is, so that
+        work is never held.
+        """
+        settled = getattr(self, "_boot_settled", None)
+        if settled is None or lang == self.lang or settled.is_set():
+            return False
+        now = time.monotonic()
+        last_dirty = max((getattr(c, "_last_dirty_at", 0.0) for c in self.containers.values()),
+                         default=0.0)
+        if (now - last_dirty >= self._SECONDARY_QUIET_S
+                or now - self._init_time >= self._SECONDARY_HOLD_MAX_S):
+            self._settle_boot()
+            return False
+        return not getattr(self.containers[lang], "must_train", False)
+
+    def _warm_prefilters(self, lang: str) -> None:
+        """Build ``lang``'s padaos prefilters now, on this background thread,
+        so the first query in that language does not pay for them."""
+        padaos = getattr(self.containers.get(lang), "padaos", None)
+        intents = getattr(padaos, "intents", None)
+        if not isinstance(intents, dict):
+            return
+        for regexes in list(intents.values()):
+            getattr(regexes, "prefilter", None)
+
     def _train_worker(self) -> None:
         """Background-thread entry point for ``train()``: waits for a quiet
         window (see ``IntentContainer._wait_for_quiet``) before each pass so
@@ -645,8 +724,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         never succeed.
         """
         while True:
-            pending = [lang for lang, engine in self.containers.items()
-                      if engine.needs_compile and lang not in self._compile_giveup]
+            dirty = [lang for lang, engine in self.containers.items()
+                     if engine.needs_compile and lang not in self._compile_giveup]
+            pending = [lang for lang in dirty if not self._compile_deferred(lang)]
+            if dirty and not pending:
+                # only held secondary languages are left: check again shortly
+                self._boot_settled.wait(0.5)
+                continue
             if not pending:
                 # Retiring the worker has to be atomic against
                 # _spawn_background_trainer, which is now the only thing
@@ -660,6 +744,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     if any(engine.needs_compile and lang not in self._compile_giveup
                            for lang, engine in self.containers.items()):
                         continue
+                    settled = getattr(self, "_boot_settled", None)
+                    if (settled is not None and settled.is_set()
+                            and not getattr(self, "_reported_all_compiled", False)):
+                        self._reported_all_compiled = True
+                        LOG.info(f"padatious: every language compiled "
+                                 f"({len(self.containers)}), "
+                                 f"{time.monotonic() - self._init_time:.1f}s after start")
                     self._retire()
                     return
             now = time.monotonic()
@@ -702,6 +793,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 try:
                     #LOG.debug(f"Training padatious for lang '{lang}'")
                     self.containers[lang].train()
+                    settled = getattr(self, "_boot_settled", None)
+                    if lang == self.lang or settled is None or settled.is_set():
+                        self._warm_prefilters(lang)
                 except Exception as e:
                     # a raising _compile()/train() must never leave
                     # finished_training_event cleared - every later
@@ -819,6 +913,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # collapsed onto, so unregistering by either the legacy `.intent`
         # alias or the OVOS-INTENT-4 canonical id works (ovos-core#831).
         intent_name = _dealias_intent_name(intent_name)
+        with self._applied_registrations_lock:
+            for key in [k for k in self._applied_registrations if k[1] == intent_name]:
+                del self._applied_registrations[key]
         if intent_name in self.registered_intents:
             self.registered_intents.remove(intent_name)
             for lang in self.containers:
@@ -1004,17 +1101,34 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if lang in self.containers:
             if message.data['name'] not in self.registered_intents:
                 self.registered_intents.append(message.data['name'])
+            key = (lang, message.data['name'])
+            content = self._registration_content(message)
+            with self._applied_registrations_lock:
+                if content is not None and self._applied_registrations.get(key) == content:
+                    LOG.debug('Padatious intent already registered with the same '
+                              'samples: ' + message.data['name'])
+                    return
+                # claimed before the work, so the copy arriving on the other
+                # wire contract while this one is still being applied is
+                # recognised too (bus handlers run concurrently)
+                if content is not None:
+                    self._applied_registrations[key] = content
             LOG.debug('Registering Padatious intent: ' + message.data['name'])
-            unpacked = self._unpack_object(message)
-            if unpacked is None:
-                return
-            lang, skill_id, name, samples, blacklisted_words = unpacked
-            if self.engine_class == DomainIntentContainer:
-                self.containers[lang].add_domain_intent(skill_id, name, samples,
-                                                        blacklisted_words=blacklisted_words)
-            else:
-                self.containers[lang].add_intent(name, samples,
-                                                 blacklisted_words=blacklisted_words)
+            try:
+                unpacked = self._unpack_object(message)
+                if unpacked is None:
+                    self._forget_registration(key, content)
+                    return
+                lang, skill_id, name, samples, blacklisted_words = unpacked
+                if self.engine_class == DomainIntentContainer:
+                    self.containers[lang].add_domain_intent(skill_id, name, samples,
+                                                            blacklisted_words=blacklisted_words)
+                else:
+                    self.containers[lang].add_intent(name, samples,
+                                                     blacklisted_words=blacklisted_words)
+            except BaseException:
+                self._forget_registration(key, content)
+                raise
             self._rearm_training(lang)
             # A re-registration (e.g. new samples replacing an existing
             # intent's) must retire the old regex/model answer immediately,
@@ -1025,6 +1139,28 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
 
         if self.config.get("instant_train", False) or self.first_train.is_set():
             self.train(message)
+
+    @staticmethod
+    def _registration_content(message) -> Optional[tuple]:
+        """What the engine is given for an intent registration, or None when
+        it cannot be told from the payload alone (samples read from a file).
+
+        Everything else a registration carries (context gates, slot types,
+        slot blacklists, the retained definition) is stored by
+        ``register_intent`` before this is consulted, on every copy.
+        """
+        samples = message.data.get('samples')
+        if not samples:
+            return None
+        return (message.data.get('skill_id'),
+                tuple(samples),
+                tuple(message.data.get('blacklisted_words') or ()))
+
+    def _forget_registration(self, key: tuple, content: Optional[tuple]) -> None:
+        """Release a claim taken in ``register_intent`` that was not applied."""
+        with self._applied_registrations_lock:
+            if content is not None and self._applied_registrations.get(key) == content:
+                del self._applied_registrations[key]
 
     def register_entity(self, message):
         """Messagebus handler for registering entities.
@@ -1507,6 +1643,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
     def shutdown(self):
         for container in self.containers.values():
             container.shutdown(wait=False)
+        self.bus.remove('mycroft.ready', self.handle_ready)
         self.bus.remove('padatious:register_intent', self.register_intent)
         self.bus.remove('padatious:register_entity', self.register_entity)
         self.bus.remove('intent.service.padatious.get', self.handle_get_padatious)

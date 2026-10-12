@@ -107,6 +107,15 @@ class TestReplayWithSidecarsCompilesInBackground(_XdgIsolated):
     def _register(self, name, samples):
         self.pipeline.register_intent(_register_msg(name, samples, self.lang))
 
+    def _restart(self):
+        """A new process over the same intent cache: the .hash sidecars on
+        disk match, so every registration below is a hash-cache hit. (The
+        same pipeline recognises an identical registration before it reaches
+        the container at all, see test_registration_applied_once.py.)"""
+        self.pipeline.shutdown()
+        self.pipeline = PadatiousPipeline(FakeBus(), config={"intent_cache": self.cache})
+        self.pipeline.first_train.set()
+
     def test_background_compile_runs_after_noop_replay_with_no_query(self):
         self._register(f"{SKILL_ID}:hello", ["hello", "hi there"])
         self._register(f"{SKILL_ID}:bye", ["bye", "see you"])
@@ -125,6 +134,7 @@ class TestReplayWithSidecarsCompilesInBackground(_XdgIsolated):
                 compile_calls.append(1)
                 return real_compile(self, *a, **kw)
 
+            self._restart()
             with mock.patch.object(padaos.IntentContainer, "_compile", counting_compile):
                 # identical replay: TrainingManager.add reports changed=False
                 # for both (hash-cache hit), so must_train must never be set -
@@ -160,6 +170,7 @@ class TestReplayWithSidecarsCompilesInBackground(_XdgIsolated):
 
         with mock.patch.object(IntentContainer, "_TRAIN_DEBOUNCE_S", 0.05), \
              mock.patch.object(IntentContainer, "_TRAIN_MAX_DEFER_S", 2.0):
+            self._restart()
             self._register(f"{SKILL_ID}:hello", ["hello", "hi there"])  # no-op replay
 
             # give the background worker its debounce window to compile,
