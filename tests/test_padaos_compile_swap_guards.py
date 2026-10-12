@@ -15,11 +15,14 @@ from ovos_padatious import padaos
 
 
 class _GatedCompile:
-    """Block the first ``create_regexes`` call of a compile until released.
+    """Block the first ``_referenced_entities`` call of a compile until
+    released.
 
     That point is after ``_compile`` snapshots ``intent_lines`` and before it
     publishes, which is exactly the window a mid-compile registration lands
-    in.
+    in. It is reached for every intent on every pass, including one whose
+    regexes the pass reuses from the previous compile instead of rebuilding
+    them with ``create_regexes``.
     """
 
     def __init__(self):
@@ -27,17 +30,18 @@ class _GatedCompile:
         self.release = Event()
 
     def __enter__(self):
-        real = padaos.IntentContainer.create_regexes
+        real = padaos.IntentContainer._referenced_entities
         gate = self
 
-        def gated(container, *args, **kwargs):
+        def gated(*args, **kwargs):
             if not gate.entered.is_set():
                 gate.entered.set()
                 gate.release.wait(10)
-            return real(container, *args, **kwargs)
+            return real(*args, **kwargs)
 
         self._patch = mock.patch.object(padaos.IntentContainer,
-                                        "create_regexes", gated)
+                                        "_referenced_entities",
+                                        staticmethod(gated))
         self._patch.start()
         return self
 
