@@ -231,7 +231,10 @@ class IntentContainer:
             slot = ent_name[len(namespace):] if ent_name.startswith(namespace) else ent_name
             if '{' + slot + '}' in text:
                 referenced.append((ent_name, pattern))
-        return tuple(sorted(referenced))
+        # in the entities' iteration order, not sorted: when both "colour"
+        # and "skill:colour" fill {colour}, the later one in that order wins
+        # the substitution, and the key has to change when the order does
+        return tuple(referenced)
 
     def _create_intent_pattern(self, line, intent_name, entities, counter):
         namespace = intent_name.split(':')[0] + ':'

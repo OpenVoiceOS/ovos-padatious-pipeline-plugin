@@ -119,3 +119,26 @@ class TestIncrementalCompile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEntityOrderInTheKey(unittest.TestCase):
+    def test_reordered_colliding_entities_rebuild_the_intent(self):
+        """Both 'colour' and 'skill:colour' fill {colour} in skill:paint; the
+        one later in the entities' order wins, so re-adding the first one
+        (which moves it last) must rebuild the intent."""
+        c = padaos.IntentContainer()
+        c.add_intent("skill:paint", ["paint it {colour}"])
+        c.add_entity("colour", ["red"])
+        c.add_entity("skill:colour", ["blue"])
+        c.compile()
+        fresh = padaos.IntentContainer()
+        fresh.add_intent("skill:paint", ["paint it {colour}"])
+        fresh.add_entity("skill:colour", ["blue"])
+        fresh.add_entity("colour", ["red"])
+        fresh.compile()
+
+        c.remove_entity("colour")
+        c.add_entity("colour", ["red"])  # now after skill:colour, as in `fresh`
+        c.compile()
+        for query in ("paint it red", "paint it blue"):
+            self.assertEqual(_matches(c, query), _matches(fresh, query), query)
