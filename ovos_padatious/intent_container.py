@@ -80,7 +80,8 @@ class IntentContainer:
         if self.disable_padaos:
             self.padaos = None
         else:
-            self.padaos: padaos.IntentContainer = padaos.IntentContainer()
+            self.padaos: padaos.IntentContainer = padaos.IntentContainer(
+                pattern_cache=os.path.join(self.cache_dir, "padaos-patterns.json"))
         self.train_thread: Optional[Any] = None  # deprecated
         self.serialized_args: List[Dict[str, Any]] = []  # Serialized calls for training intents/entities
         self.blacklisted_words: Dict[str, List[str]] = collections.defaultdict(list)
@@ -177,7 +178,8 @@ class IntentContainer:
         if self.disable_padaos:
             self.padaos = None
         else:
-            self.padaos: padaos.IntentContainer = padaos.IntentContainer()
+            self.padaos: padaos.IntentContainer = padaos.IntentContainer(
+                pattern_cache=os.path.join(self.cache_dir, "padaos-patterns.json"))
         self.serialized_args = []
         self._ever_trained = False
         self._first_compile_done.clear()
@@ -503,7 +505,13 @@ class IntentContainer:
         deadline = time.monotonic() + self._TRAIN_MAX_DEFER_S
         while True:
             snapshot = self._last_dirty_at
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            if now - snapshot >= self._TRAIN_DEBOUNCE_S:
+                # already quiet for a full window: a worker draining several
+                # containers one after another used to sleep a whole window
+                # on each of them anyway (11 languages: over 20 s idle)
+                return
+            remaining = deadline - now
             if remaining <= 0:
                 return
             # wait on the shutdown flag rather than sleeping blindly, so a
