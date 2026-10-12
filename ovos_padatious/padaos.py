@@ -71,6 +71,14 @@ class IntentContainer:
         # one-shot guard so a pending compile logs at most once per
         # dirty->compiled cycle instead of once per query (see calc_intents)
         self._warned_pending_compile = False
+        #: per-name memo of the last compile's output, so a compile only
+        #: rebuilds what a registration actually changed. Each entry is
+        #: ``(key, product)``: an entity's key is its lines, an intent's key
+        #: is its lines plus the inlined patterns of exactly the entities
+        #: its lines can reference. Only ``_compile`` reads or writes these,
+        #: and compiles are serialized by their caller (see ``compile``).
+        self._entity_cache = {}
+        self._intent_cache = {}
 
     def add_intent(self, name, lines):
         with self.compile_lock:
@@ -204,6 +212,30 @@ class IntentContainer:
             return match.group(0)
         return self._RAW_ALTERNATION_RE.sub(repl, line)
 
+    @staticmethod
+    def _referenced_entities(intent_name, lines, entities):
+        """The inlined entity patterns ``_create_intent_pattern`` could
+        substitute into these lines, as a hashable cache key part.
+
+        A substitution only happens where the line holds the literal
+        ``{name}`` (the entity's own name, or its name without this skill's
+        namespace), and ``_create_pattern`` only ever adds characters around
+        braces, so scanning the raw lines for that text can only over-count:
+        an unrelated entity change may invalidate an intent, never the
+        reverse.
+        """
+        namespace = intent_name.split(':')[0] + ':'
+        text = '\n'.join(lines)
+        referenced = []
+        for ent_name, pattern in entities.items():
+            slot = ent_name[len(namespace):] if ent_name.startswith(namespace) else ent_name
+            if '{' + slot + '}' in text:
+                referenced.append((ent_name, pattern))
+        # in the entities' iteration order, not sorted: when both "colour"
+        # and "skill:colour" fill {colour}, the later one in that order wins
+        # the substitution, and the key has to change when the order does
+        return tuple(referenced)
+
     def _create_intent_pattern(self, line, intent_name, entities, counter):
         namespace = intent_name.split(':')[0] + ':'
         line = self._cap_line_alternations(line)
@@ -305,6 +337,7 @@ class IntentContainer:
         start = time.monotonic()
         largest_entity, largest_size = None, 0
         entities, capped_entities = {}, set()
+        entity_cache = {}
         for ent_name, lines in entity_lines.items():
             values = [line for line in lines if line.strip()]
             if len(values) > largest_size:
@@ -314,17 +347,42 @@ class IntentContainer:
                 # too many values to inline: skip so referencing slots fall
                 # back to the plain wildcard capture (see PADAOS_ENTITY_INLINE_CAP)
                 continue
-            entities[ent_name] = r'({})'.format('|'.join(
-                self._create_pattern(line) for line in values
-            ))
-        counter = count()
-        # each intent's regexes travel with their prefilter in one object,
-        # both built off-lock like the regexes themselves.
-        intents = {
-            intent_name: self._with_prefilter(
-                self.create_regexes(lines, intent_name, entities, counter))
-            for intent_name, lines in intent_lines.items()
-        }
+            key = tuple(values)
+            cached = self._entity_cache.get(ent_name)
+            if cached is not None and cached[0] == key:
+                pattern = cached[1]
+            else:
+                pattern = r'({})'.format('|'.join(
+                    self._create_pattern(line) for line in values
+                ))
+            entity_cache[ent_name] = (key, pattern)
+            entities[ent_name] = pattern
+        # Every pass used to rebuild every intent of the container, so a
+        # runtime whose skills register one after another paid for the whole
+        # container again on each of them (quadratic in the skill count, and
+        # once per language). An intent whose lines and referenced entities
+        # are unchanged keeps the regexes the previous pass built for it.
+        intent_cache = {}
+        intents = {}
+        for intent_name, lines in intent_lines.items():
+            key = (tuple(lines),
+                   self._referenced_entities(intent_name, lines, entities))
+            cached = self._intent_cache.get(intent_name)
+            if cached is not None and cached[0] == key:
+                compiled = cached[1]
+            else:
+                # Capture-group names only have to be unique within one
+                # regex (each line regex, and the prefilter joining one
+                # intent's lines), so each intent numbers its own groups and
+                # its regexes do not depend on what else is registered.
+                # each intent's regexes travel with their prefilter in one
+                # object, both built off-lock like the regexes themselves.
+                compiled = self._with_prefilter(
+                    self.create_regexes(lines, intent_name, entities, count()))
+            intent_cache[intent_name] = (key, compiled)
+            intents[intent_name] = compiled
+        self._entity_cache = entity_cache
+        self._intent_cache = intent_cache
         duration = time.monotonic() - start
 
         with self.compile_lock:
