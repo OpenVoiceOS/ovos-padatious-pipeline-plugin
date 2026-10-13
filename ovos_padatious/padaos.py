@@ -49,10 +49,11 @@ class _IntentRegexes(list):
     lock-free reader in ``calc_intents`` can never pair one compile's
     regexes with another compile's prefilter.
 
-    The prefilter is compiled on first use, not with the line regexes:
-    compiling it is a second full regex compile of every line, it only
-    speeds up queries, and a container whose language never sees a query
-    never needs it. At boot that halved the cost of every padaos compile.
+    The prefilter is not compiled with the line regexes: compiling it is a
+    second full regex compile of every line and it only speeds up queries.
+    A background warm builds it after a compile; queries use it once it is
+    there (``built_prefilter``) and scan the lines until then. At boot that
+    halved the cost of every padaos compile.
     Two threads racing on the first use both compile the same pattern and
     store equal regexes, so no lock is needed.
     """
@@ -82,6 +83,16 @@ class _IntentRegexes(list):
     @prefilter.setter
     def prefilter(self, value):
         self._prefilter = value
+
+    @property
+    def built_prefilter(self):
+        """The prefilter if something already built it, else None. The query
+        path reads this one: building it costs a second compile of every
+        line, which a query that just compiled its language (or one asked
+        before the background warm got to it) should not pay; the scan
+        without it gives the same answer."""
+        prefilter = self._prefilter
+        return None if prefilter is self._UNBUILT else prefilter
 
 
 #: Bumped whenever ``_create_pattern``'s rewrite rules change, so a pattern
@@ -568,7 +579,7 @@ class IntentContainer:
         else:
             self._warned_pending_compile = False
         for intent_name, regexes in self.intents.items():
-            prefilter = getattr(regexes, 'prefilter', None)
+            prefilter = regexes.built_prefilter
             if prefilter is not None and prefilter.match(query) is None:
                 # one C-level match rules the whole intent out; the vast
                 # majority of intents are rejected here without touching the

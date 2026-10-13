@@ -1542,6 +1542,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.containers[lang].train()
             LOG.info(f"padatious: {lang} applied and compiled for its first "
                      f"query in {time.monotonic() - started:.2f}s")
+            Thread(target=self._warm_prefilters, args=(lang,),
+                   name="padatious-prefilter-warm", daemon=True).start()
 
         sess = SessionManager.get(message)
         # Session is unhashable under ovos-bus-client 2.x, so it cannot be an

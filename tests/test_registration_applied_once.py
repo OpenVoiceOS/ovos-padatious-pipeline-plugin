@@ -141,15 +141,20 @@ class TestLinesHashIsStable(unittest.TestCase):
         self.assertEqual(lines_hash(lines), x.digest())
 
 
-class TestPrefilterBuiltOnFirstUse(unittest.TestCase):
-    def test_compile_leaves_the_prefilter_for_the_first_query(self):
+class TestPrefilterBuiltInTheBackground(unittest.TestCase):
+    def test_a_query_neither_needs_nor_builds_the_prefilter(self):
         c = padaos.IntentContainer()
         c.add_intent("a", ["turn on the light", "lights on"])
+        c.add_intent("b", ["turn off the light"])
         c.compile()
         self.assertIs(c.intents["a"]._prefilter, padaos._IntentRegexes._UNBUILT)
         self.assertEqual([m["name"] for m in c.calc_intents("lights on")], ["a"])
-        self.assertIsNotNone(c.intents["a"]._prefilter)
+        self.assertIs(c.intents["a"]._prefilter, padaos._IntentRegexes._UNBUILT)
+        # the background warm builds it; the answer stays the same
+        _ = c.intents["a"].prefilter
         self.assertIsNot(c.intents["a"]._prefilter, padaos._IntentRegexes._UNBUILT)
+        self.assertEqual([m["name"] for m in c.calc_intents("lights on")], ["a"])
+        self.assertEqual([m["name"] for m in c.calc_intents("turn off the light")], ["b"])
 
 
 class TestSecondaryLanguagesWaitForTheBoot(unittest.TestCase):
