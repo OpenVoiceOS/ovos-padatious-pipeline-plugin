@@ -22,8 +22,9 @@ was about half of a restart's CPU:
 - `lines_hash` hashes the sorted lines in one call. The digest is unchanged,
   so every existing intent cache stays valid.
 - A padaos intent's prefilter (the alternation of all its line regexes) is
-  no longer compiled with the line regexes. It is built by the background
-  trainer once the runtime is ready, or by the first query that needs it.
+  no longer compiled with the line regexes. It is built by a background warm
+  after a language compiles; a query uses it once it is built and scans the
+  line regexes until then, so a query never pays for building it.
 - While skills load, a secondary language's registrations are held: the
   expansion, the training data and the model loads wait until no
   registration (in any language) has arrived for 10 s, or 5 minutes after
