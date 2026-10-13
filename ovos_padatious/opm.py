@@ -1587,12 +1587,22 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 self._no_query_waiting.clear()
             try:
                 started = time.monotonic()
-                if self._apply_held(lang, rearm=False) or self._never_compiled(lang):
-                    self.containers[lang].train()
+                applied = self._apply_held(lang, rearm=False)
+                container = self.containers[lang]
+                if (isinstance(container, IntentContainer) and not container.must_train
+                        and (applied or self._never_compiled(lang))):
+                    # every network loaded from the cache: what is left is
+                    # the padaos compile, which this query needs anyway
+                    container.train()
                     LOG.info(f"padatious: {lang} applied and compiled for its "
                              f"first query in {time.monotonic() - started:.2f}s")
                     Thread(target=self._warm_prefilters, args=(lang,),
                            name="padatious-prefilter-warm", daemon=True).start()
+                elif applied:
+                    # a network to train (or a domain engine): that stays on
+                    # the pipeline's worker; the container waits for its
+                    # first compile as it always did
+                    self._rearm_training(lang)
             finally:
                 with self._queries_lock:
                     self._queries_waiting -= 1
