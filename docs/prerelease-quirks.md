@@ -38,6 +38,11 @@ was about half of a restart's CPU:
   language never waits, nor does any language listed in the plugin's
   `eager_langs` setting (for example `"eager_langs": ["fr-FR"]` for a
   device whose users switch between English and French all day).
+- A template line of words separated by spaces and plain symbols (no slot,
+  digit, group, `#`, `:`, `\` or `~`) gets no regex: it matches a query
+  exactly when their words, split on non-word characters, are the same,
+  which is what its regex matched. About half of a hub's lines are like
+  that; compiling a language costs half as much, and so does its memory.
 - Each template line's regex source is kept in `padaos-patterns.json` in
   the language's intent cache, so a restart does not rewrite it again.
 - The training worker no longer sleeps a full debounce window on each
