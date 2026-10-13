@@ -116,8 +116,13 @@ _NON_WORD = re.compile(r'\W+')
 
 
 def _words(text):
-    """``text`` lowercased and split on runs of non-word characters."""
-    return tuple(w for w in _NON_WORD.split(text.lower()) if w)
+    """``text`` split on runs of non-word characters, each word lowercased.
+
+    Split before lowercasing: ``str.lower()`` turns a dotted capital I
+    ("İstanbul") into "i" plus a combining dot, and a combining mark is not a
+    word character. The dotted I folds to a plain "i", as the regex's
+    IGNORECASE matching folds it."""
+    return tuple(w.replace('İ', 'i').lower() for w in _NON_WORD.split(text) if w)
 
 
 class _PatternCache:
