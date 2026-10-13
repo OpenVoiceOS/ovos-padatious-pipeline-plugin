@@ -25,23 +25,10 @@ was about half of a restart's CPU:
   no longer compiled with the line regexes. It is built by a background warm
   after a language compiles; a query uses it once it is built and scans the
   line regexes until then, so a query never pays for building it.
-- While skills load, a secondary language's registrations are held: the
-  expansion, the training data and the model loads wait until no
-  registration (in any language) has arrived for 10 s, or 5 minutes after
-  the plugin started. Skill loading registers every intent in every
-  language, and that work only competed for the GIL with the skills still
-  loading. A query in a held language applies that language's registrations
-  first and waits for their first compile. The plugin listens for no
-  outside event (`mycroft.ready` included). Held languages are then applied,
-  compiled and given their prefilters in the background; the log says
-  `padatious: every language compiled` when that is done; that background
-  work pauses while a query applies or compiles a held language. The primary
-  language never waits, nor does any language listed in the plugin's
-  `eager_langs` setting (for example `"eager_langs": ["fr-FR"]` for a
-  device whose users switch between English and French all day). While
-  skills load, those languages compile after each 0.5 s pause in their
-  registrations rather than after the usual 2 s debounce, so they are
-  compiled when the last skill is loaded.
+- Every configured language is registered and compiled the same way, once
+  its registrations have been quiet for the debounce window; the plugin
+  waits for no outside event. Prefilters are then built in the background.
+  The log says `padatious: every language compiled` when that is done.
 - A template line of words separated by spaces and plain symbols (no slot,
   digit, group, `#`, `:`, `\` or `~`) gets no regex: it matches a query
   exactly when their words, split on non-word characters, are the same,
