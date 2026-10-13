@@ -212,3 +212,18 @@ class TestDomainIntentEngineWithLiveData(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDomainPatternCacheFiles(unittest.TestCase):
+    def test_each_container_keeps_its_own_pattern_file(self):
+        import os
+        import tempfile
+        from ovos_padatious.domain_container import DomainIntentContainer
+        cache = tempfile.mkdtemp()
+        engine = DomainIntentContainer(cache_dir=cache)
+        engine.add_domain_intent("a.skill", "a.skill:hello", ["hello there"])
+        engine.add_domain_intent("b/skill", "b/skill:bye", ["bye now"])
+        files = {c.padaos._patterns.path for c in
+                 [engine.domain_engine, *engine.domains.values()]}
+        self.assertEqual(len(files), 3)
+        self.assertTrue(all(os.path.dirname(f) == cache for f in files))

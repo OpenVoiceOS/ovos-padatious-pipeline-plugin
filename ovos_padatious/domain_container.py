@@ -1,9 +1,17 @@
+import re
 import threading
 from collections import defaultdict
 from typing import Dict, List, Optional
 from ovos_utils.log import LOG
 from ovos_padatious.intent_container import IntentContainer
 from ovos_padatious.match_data import MatchData
+
+
+def _pattern_cache_name(domain_name: str) -> str:
+    """The padaos pattern-cache file of one domain's container. Every
+    container of a DomainIntentContainer shares its cache_dir, and a save
+    keeps only the saving container's lines, so each needs its own file."""
+    return "padaos-patterns." + re.sub(r"[^A-Za-z0-9_.-]", "_", domain_name) + ".json"
 
 
 class DomainIntentContainer:
@@ -28,7 +36,8 @@ class DomainIntentContainer:
         self.inference_workers = inference_workers
         self.domain_engine = IntentContainer(cache_dir=cache_dir,
                                              disable_padaos=disable_padaos,
-                                             inference_workers=inference_workers)
+                                             inference_workers=inference_workers,
+                                             pattern_cache_name="padaos-patterns.domains.json")
         self.domains: Dict[str, IntentContainer] = {}
         self.training_data: Dict[str, List[str]] = defaultdict(list)
         self.instantiate_from_disk()
@@ -130,7 +139,8 @@ class DomainIntentContainer:
         if domain_name not in self.domains:
             self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir,
                                                         disable_padaos=self.disable_padaos,
-                                                        inference_workers=self.inference_workers)
+                                                        inference_workers=self.inference_workers,
+                                                        pattern_cache_name=_pattern_cache_name(domain_name))
             self.domains[domain_name].instantiate_from_disk()
 
         self.domains[domain_name].add_intent(intent_name, intent_samples,
@@ -161,7 +171,8 @@ class DomainIntentContainer:
         if domain_name not in self.domains:
             self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir,
                                                         disable_padaos=self.disable_padaos,
-                                                        inference_workers=self.inference_workers)
+                                                        inference_workers=self.inference_workers,
+                                                        pattern_cache_name=_pattern_cache_name(domain_name))
         self.domains[domain_name].add_entity(entity_name, entity_samples)
 
     def remove_domain_entity(self, domain_name: str, entity_name: str):
