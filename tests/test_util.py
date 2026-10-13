@@ -66,3 +66,25 @@ def test_str_enum():
         b = '2'
 
     assert set(MyEnum.values()) == {'1', '2'}
+
+
+def test_a_network_trained_on_split_marks_is_retrained():
+    # tokens now keep their combining marks: an intent whose lines hold one
+    # gets a new cache key (its network retrains), every other intent keeps
+    # its key and its cached network
+    import os
+    import tempfile
+    import ovos_padatious
+    from ovos_padatious.intent import Intent
+    from ovos_padatious.training_manager import TrainingManager
+    from ovos_padatious.util import has_combining_marks
+    assert has_combining_marks(['मौसम कैसा है'])
+    assert not has_combining_marks(['what time is it', 'quelle heure est-il'])
+    min_ver = os.path.splitext(ovos_padatious.__version__)[0]
+    with tempfile.TemporaryDirectory() as cache:
+        manager = TrainingManager(Intent, cache)
+        manager.add("hi", ["मौसम कैसा है"])
+        manager.add("en", ["what time is it"])
+        keys = {o.name: o.hash for o in manager.objects_to_train}
+    assert keys["en"] == lines_hash([min_ver, "format2", "what time is it"])
+    assert keys["hi"] == lines_hash([min_ver, "format2", "marks", "मौसम कैसा है"])
