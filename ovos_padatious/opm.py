@@ -365,6 +365,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._no_query_waiting = Event()
         self._no_query_waiting.set()
         self._queries_waiting = 0
+        # deadlines of the utterances being handled right now (see
+        # _utterance_started): background work waits for them too
+        self._utterances_in_flight: List[float] = []
         self._queries_lock = RLock()
         self._init_time = time.monotonic()
         # when the last registration (any language) arrived; None until one
@@ -456,6 +459,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on('mycroft.skills.train', self.train)
         Thread(target=self._watch_boot, name="padatious-boot-settle",
                daemon=True).start()
+        self.bus.on('recognizer_loop:utterance', self._utterance_started)
+        self.bus.on('ovos.utterance.handled', self._utterance_finished)
 
         # OVOS-INTENT-4 spec registration contract (in addition to legacy).
         # Padatious is a TEMPLATE engine, so register.template is its primary
@@ -741,10 +746,42 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     and container.needs_compile)
         return container.needs_compile
 
+    #: an utterance that never reports handled stops holding background
+    #: work back after this long
+    _UTTERANCE_HOLD_S = 15.0
+
+    def _utterance_started(self, message=None) -> None:
+        """``recognizer_loop:utterance``: someone is waiting for an answer."""
+        with self._queries_lock:
+            self._utterances_in_flight.append(time.monotonic() + self._UTTERANCE_HOLD_S)
+            self._no_query_waiting.clear()
+
+    def _utterance_finished(self, message=None) -> None:
+        """``ovos.utterance.handled``: that answer is out."""
+        with self._queries_lock:
+            if self._utterances_in_flight:
+                self._utterances_in_flight.pop(0)
+            self._update_no_query_waiting()
+
+    def _update_no_query_waiting(self) -> None:
+        """Set the event when nothing waits: no query compiling a held
+        language and no utterance in flight (expired ones are dropped).
+        Callers hold ``_queries_lock``."""
+        now = time.monotonic()
+        self._utterances_in_flight = [d for d in self._utterances_in_flight if d > now]
+        if not self._queries_waiting and not self._utterances_in_flight:
+            self._no_query_waiting.set()
+
     def _yield_to_queries(self) -> None:
         """Background work: wait while a query applies or compiles a held
-        language (bounded, so a stuck query cannot stall the settle)."""
-        self._no_query_waiting.wait(30)
+        language, or while an utterance is being answered, so a user's
+        question gets the GIL first (bounded: 30 s at most)."""
+        deadline = time.monotonic() + 30
+        while not self._no_query_waiting.wait(0.5):
+            with self._queries_lock:
+                self._update_no_query_waiting()
+            if time.monotonic() >= deadline:
+                return
 
     def _apply_held(self, lang: str, rearm: bool = True,
                     background: bool = False) -> bool:
@@ -1606,8 +1643,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             finally:
                 with self._queries_lock:
                     self._queries_waiting -= 1
-                    if not self._queries_waiting:
-                        self._no_query_waiting.set()
+                    self._update_no_query_waiting()
 
         sess = SessionManager.get(message)
         # Session is unhashable under ovos-bus-client 2.x, so it cannot be an
@@ -1814,6 +1850,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._boot_settled.set()  # stops the boot watcher
         for container in self.containers.values():
             container.shutdown(wait=False)
+        self.bus.remove('recognizer_loop:utterance', self._utterance_started)
+        self.bus.remove('ovos.utterance.handled', self._utterance_finished)
         self.bus.remove('padatious:register_intent', self.register_intent)
         self.bus.remove('padatious:register_entity', self.register_entity)
         self.bus.remove('intent.service.padatious.get', self.handle_get_padatious)
