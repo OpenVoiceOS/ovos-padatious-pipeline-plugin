@@ -722,9 +722,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         with lock:
             apply()
 
-    def _apply_held(self, lang: str) -> bool:
+    def _apply_held(self, lang: str, rearm: bool = True) -> bool:
         """Apply ``lang``'s held registrations, in the order they arrived.
         A caller that finds another thread applying them waits for it.
+        ``rearm=False`` leaves training to the caller (a query compiles the
+        language itself instead of racing the background trainer).
         Returns whether this call applied any."""
         with self._held_lock:
             lock = self._apply_locks[lang]
@@ -733,7 +735,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 held = self._held.pop(lang, [])
             for _kind, _name, apply in held:
                 try:
-                    apply()
+                    apply(rearm)
                 except Exception:
                     LOG.exception(f"held padatious registration failed ({lang})")
         return bool(held)
@@ -1194,7 +1196,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                                      blacklisted_words=blacklisted_words)
                 return lang
 
-            def apply():
+            def apply(rearm: bool = True):
                 # The copy of this registration on the other wire contract
                 # returned as soon as it saw the claim, so a failure here
                 # would lose both: try once more on its behalf before
@@ -1211,7 +1213,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 if applied_lang is None:
                     self._forget_registration(key, content)
                     return
-                self._rearm_training(applied_lang)
+                if rearm:
+                    self._rearm_training(applied_lang)
                 # A re-registration (e.g. new samples replacing an existing
                 # intent's) must retire the old regex/model answer immediately,
                 # not only once the next compile lands - otherwise a query
@@ -1271,7 +1274,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 or standardize_lang(e.get("lang") or self.lang) != lang]
             self.registered_entities.append(message.data)
 
-            def apply():
+            def apply(rearm: bool = True):
                 unpacked = self._unpack_object(message)
                 if unpacked is None:
                     return
@@ -1281,7 +1284,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     self.containers[lang].add_domain_entity(skill_id, name, samples)
                 else:
                     self.containers[lang].add_entity(name, samples)
-                self._rearm_training(lang)
+                if rearm:
+                    self._rearm_training(lang)
                 # See register_intent: a replaced entity's slot values must stop
                 # matching immediately, not only after the next compile.
                 _calc_padatious_intent.cache_clear()
@@ -1533,7 +1537,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # asked while its registrations are held (or being applied): apply
         # them and compile right here, since this query is waiting for them
         # (the background trainer would first wait out its debounce window)
-        if self._apply_held(lang):
+        if self._apply_held(lang, rearm=False):
             started = time.monotonic()
             self.containers[lang].train()
             LOG.info(f"padatious: {lang} applied and compiled for its first "
