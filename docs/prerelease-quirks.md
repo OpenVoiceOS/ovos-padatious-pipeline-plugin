@@ -34,10 +34,14 @@ was about half of a restart's CPU:
   first and waits for their first compile. The plugin listens for no
   outside event (`mycroft.ready` included). Held languages are then applied,
   compiled and given their prefilters in the background; the log says
-  `padatious: every language compiled` when that is done. The primary
+  `padatious: every language compiled` when that is done; that background
+  work pauses while a query applies or compiles a held language. The primary
   language never waits, nor does any language listed in the plugin's
   `eager_langs` setting (for example `"eager_langs": ["fr-FR"]` for a
-  device whose users switch between English and French all day).
+  device whose users switch between English and French all day). While
+  skills load, those languages compile after each 0.5 s pause in their
+  registrations rather than after the usual 2 s debounce, so they are
+  compiled when the last skill is loaded.
 - A template line of words separated by spaces and plain symbols (no slot,
   digit, group, `#`, `:`, `\` or `~`) gets no regex: it matches a query
   exactly when their words, split on non-word characters, are the same,

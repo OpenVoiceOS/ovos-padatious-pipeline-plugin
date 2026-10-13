@@ -283,6 +283,25 @@ class TestSecondaryLanguagesWaitForTheBoot(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertIn(f"{SKILL_ID}:time", en.intent_names)
 
+    def test_an_eager_language_compiles_while_skills_load(self):
+        # a long debounce would hold the compile until registrations stop;
+        # an eager language only waits for a short pause during the boot
+        with mock.patch.object(IntentContainer, "_TRAIN_DEBOUNCE_S", 30.0):
+            self.register("en-US")
+            en = self.pipeline.containers["en-US"]
+            self.assertTrue(self.wait(lambda: not en.needs_compile, 10))
+        self.assertFalse(self.pipeline._boot_settled.is_set())
+
+    def test_the_settle_waits_while_a_query_compiles_its_language(self):
+        self.register("fr-FR")
+        self.pipeline._no_query_waiting.clear()  # a query is busy
+        self.pipeline._settle_boot()
+        fr = self.pipeline.containers["fr-FR"]
+        time.sleep(0.5)
+        self.assertEqual(fr.intent_names, [])
+        self.pipeline._no_query_waiting.set()
+        self.assertTrue(self.wait(lambda: fr.intent_names and not fr.needs_compile))
+
     def test_no_ready_event_is_needed(self):
         self.assertFalse(self.pipeline.bus.ee.listeners("mycroft.ready"))
 

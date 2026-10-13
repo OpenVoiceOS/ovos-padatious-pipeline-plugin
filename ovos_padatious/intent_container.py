@@ -502,15 +502,17 @@ class IntentContainer:
     # making every query pay a long cap for an answer it will not get.
     FIRST_COMPILE_WAIT_S = 3.0
 
-    def _wait_for_quiet(self) -> None:
+    def _wait_for_quiet(self, window: Optional[float] = None) -> None:
         """Block until no registration has dirtied this container for
-        ``_TRAIN_DEBOUNCE_S``, or until ``_TRAIN_MAX_DEFER_S`` total has
-        elapsed since this wait started - whichever comes first."""
+        ``window`` (default ``_TRAIN_DEBOUNCE_S``), or until
+        ``_TRAIN_MAX_DEFER_S`` total has elapsed since this wait started -
+        whichever comes first."""
+        window = self._TRAIN_DEBOUNCE_S if window is None else window
         deadline = time.monotonic() + self._TRAIN_MAX_DEFER_S
         while True:
             snapshot = self._last_dirty_at
             now = time.monotonic()
-            if now - snapshot >= self._TRAIN_DEBOUNCE_S:
+            if now - snapshot >= window:
                 # already quiet for a full window: a worker draining several
                 # containers one after another used to sleep a whole window
                 # on each of them anyway (11 languages: over 20 s idle)
@@ -521,7 +523,7 @@ class IntentContainer:
             # wait on the shutdown flag rather than sleeping blindly, so a
             # retiring container does not hold shutdown() for a whole
             # debounce interval before the worker notices
-            if self._shutdown.wait(min(self._TRAIN_DEBOUNCE_S, remaining)):
+            if self._shutdown.wait(min(window, remaining)):
                 return
             if self._last_dirty_at == snapshot:
                 return
