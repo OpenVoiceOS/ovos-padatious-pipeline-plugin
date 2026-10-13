@@ -20,7 +20,7 @@ from ovos_utils.log import LOG
 import ovos_padatious
 from ovos_padatious.trainable import Trainable
 from ovos_padatious.train_data import TrainData
-from ovos_padatious.util import lines_hash
+from ovos_padatious.util import has_combining_marks, lines_hash
 
 
 def _train_and_save(obj: Trainable, cache: str, data: TrainData, print_updates: bool) -> None:
@@ -116,7 +116,13 @@ class TrainingManager:
             # cache format 2: entities persist their value set in a .samples
             # sidecar for the exact-match path; salting the hash retrains
             # pre-sidecar caches once so the sidecar exists everywhere
-            new_hsh = lines_hash([min_ver, "format2"] + lines)
+            salt = [min_ver, "format2"]
+            if has_combining_marks(lines):
+                # tokenize() keeps a combining mark inside its word since
+                # #178; a network trained on the old split tokens must not
+                # load as unchanged (only these intents retrain)
+                salt.append("marks")
+            new_hsh = lines_hash(salt + lines)
 
             if isfile(hash_fn):
                 with open(hash_fn, 'rb') as g:

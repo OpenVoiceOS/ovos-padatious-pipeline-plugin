@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
+import re
+import unicodedata
+
 from ovos_utils import flatten_list
 from ovos_utils.log import LOG, log_deprecation
 from ovos_spec_tools import expand as expand_template
@@ -36,6 +40,21 @@ def lines_hash(lines):
     for i in sorted(lines):
         x.update(i.encode())
     return x.digest()
+
+
+@functools.lru_cache(maxsize=1)
+def _combining_marks():
+    """One character class of every combining mark (Unicode category M*)
+    in the Basic Multilingual Plane, built once."""
+    marks = ''.join(chr(c) for c in range(0x10000)
+                    if unicodedata.category(chr(c)).startswith('M'))
+    return re.compile('[' + re.escape(marks) + ']')
+
+
+def has_combining_marks(lines):
+    """Whether any of *lines* holds a combining mark, i.e. tokenizes
+    differently since marks stay inside their word (see tokenize)."""
+    return _combining_marks().search(''.join(lines)) is not None
 
 
 def tokenize(sentence):
@@ -88,7 +107,14 @@ def tokenize(sentence):
         elif c == '}':
             Vars.in_brace = False
 
-        if c.isalpha() or c in '-_{}' or (Vars.in_brace and (c.isdigit() or c == '#')):
+        # A combining mark (Unicode category M*: Devanagari, Bengali, Thai,
+        # Tamil vowel signs and viramas, Latin combining accents) is part of
+        # the word it modifies, but str.isalpha() is False for it. Without
+        # this, 'मौसम' tokenized as ['म', 'ौ', 'सम']: every vowel sign became
+        # a token of its own, and a template whose slot comes first could
+        # absorb any sentence that shares a few letters with the rest of it.
+        if c.isalpha() or c in '-_{}' or unicodedata.category(c).startswith('M') \
+                or (Vars.in_brace and (c.isdigit() or c == '#')):
             t = 'a'
         elif c.isdigit() or c == '#':
             t = 'n'
