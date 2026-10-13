@@ -294,12 +294,16 @@ class TestSecondaryLanguagesWaitForTheBoot(unittest.TestCase):
 
     def test_the_settle_waits_while_a_query_compiles_its_language(self):
         self.register("fr-FR")
-        self.pipeline._no_query_waiting.clear()  # a query is busy
+        with self.pipeline._queries_lock:  # a query is busy
+            self.pipeline._queries_waiting += 1
+            self.pipeline._no_query_waiting.clear()
         self.pipeline._settle_boot()
         fr = self.pipeline.containers["fr-FR"]
-        time.sleep(0.5)
+        time.sleep(0.6)
         self.assertEqual(fr.intent_names, [])
-        self.pipeline._no_query_waiting.set()
+        with self.pipeline._queries_lock:
+            self.pipeline._queries_waiting -= 1
+            self.pipeline._update_no_query_waiting()
         self.assertTrue(self.wait(lambda: fr.intent_names and not fr.needs_compile))
 
     def test_a_query_never_trains_a_network(self):
@@ -310,6 +314,26 @@ class TestSecondaryLanguagesWaitForTheBoot(unittest.TestCase):
                                side_effect=AssertionError("trained on the query thread")):
             self.pipeline.calc_intent("bonjour tout le monde", "fr-FR")
         self.assertNotIn("fr-FR", self.pipeline._held)
+
+    def test_the_settle_waits_while_an_utterance_is_answered(self):
+        self.register("fr-FR")
+        self.pipeline.bus.emit(Message("recognizer_loop:utterance",
+                                       {"utterances": ["what time is it"]}))
+        self.pipeline._settle_boot()
+        fr = self.pipeline.containers["fr-FR"]
+        time.sleep(0.6)
+        self.assertEqual(fr.intent_names, [])
+        self.pipeline.bus.emit(Message("ovos.utterance.handled", {}))
+        self.assertTrue(self.wait(lambda: fr.intent_names and not fr.needs_compile))
+
+    def test_an_utterance_that_never_finishes_stops_holding_back(self):
+        with mock.patch.object(PadatiousPipeline, "_UTTERANCE_HOLD_S", 0.3):
+            self.register("fr-FR")
+            self.pipeline.bus.emit(Message("recognizer_loop:utterance",
+                                           {"utterances": ["lost"]}))
+            self.pipeline._settle_boot()
+            fr = self.pipeline.containers["fr-FR"]
+            self.assertTrue(self.wait(lambda: fr.intent_names and not fr.needs_compile))
 
     def test_no_ready_event_is_needed(self):
         self.assertFalse(self.pipeline.bus.ee.listeners("mycroft.ready"))
