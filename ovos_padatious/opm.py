@@ -302,11 +302,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._background_trainer: Optional[Thread] = None
         core_config = Configuration()
         self.lang = standardize_lang(core_config.get("lang", "en-US"))
-        # languages registered, compiled and warmed while skills load; every
-        # other configured language waits for the boot to settle (see
-        # _hold_or_apply). The primary language always is one.
-        self.eager_langs = {self.lang} | {standardize_lang(l) for l in
-                                          self.config.get("eager_langs") or []}
         langs = core_config.get('secondary_langs') or []
         langs = [standardize_lang(l) for l in langs]
         if self.lang not in langs:
@@ -351,27 +346,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.stemmers = {}
 
         self.first_train = Event()
-        # Secondary languages hold their padaos compile until the skill load
-        # settles (see _compile_deferred).
-        self._boot_settled = Event()
-        # ...and hold their registrations too: (kind, name, apply) per
-        # language, applied in arrival order (see _hold_or_apply).
-        self._held: Dict[str, List[tuple]] = defaultdict(list)
-        self._held_lock = RLock()
-        self._apply_locks: Dict[str, RLock] = defaultdict(RLock)
-        # set while no query is applying/compiling a held language: the
-        # background settle waits on it between units of work, so the
-        # language a user is asking in goes first
-        self._no_query_waiting = Event()
-        self._no_query_waiting.set()
-        self._queries_waiting = 0
-        # deadlines of the utterances being handled right now (see
-        # _utterance_started): background work waits for them too
-        self._utterances_in_flight: List[float] = []
-        self._queries_lock = RLock()
         self._init_time = time.monotonic()
-        # when the last registration (any language) arrived; None until one
-        self._last_registration_at: Optional[float] = None
         # set once the "every language compiled" line has been logged
         self._reported_all_compiled = False
         self.finished_training_event = Event()
@@ -457,10 +432,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on('intent.service.padatious.manifest.get', self.handle_padatious_manifest)
         self.bus.on('intent.service.padatious.entities.manifest.get', self.handle_entity_manifest)
         self.bus.on('mycroft.skills.train', self.train)
-        Thread(target=self._watch_boot, name="padatious-boot-settle",
-               daemon=True).start()
-        self.bus.on('recognizer_loop:utterance', self._utterance_started)
-        self.bus.on('ovos.utterance.handled', self._utterance_finished)
 
         # OVOS-INTENT-4 spec registration contract (in addition to legacy).
         # Padatious is a TEMPLATE engine, so register.template is its primary
@@ -669,184 +640,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._compile_giveup.discard(lang)
         self._spawn_background_trainer()
 
-    #: Secondary languages wait while skills are loading, which is while
-    #: registrations keep arriving: their registrations are held and applied
-    #: once no registration (in any language) has arrived for this long, or
-    #: as soon as a query in that language needs them. Production's longest
-    #: gap between two registrations during a boot was under 7 s. A language
-    #: in ``eager_langs`` (the primary language always is) is never held.
-    _SECONDARY_QUIET_S = 10.0
-    #: ...and never longer than this after the plugin started.
-    _SECONDARY_HOLD_MAX_S = 300.0
-    #: While skills load, an eager language's compile waits only for this
-    #: short a pause in its registrations (see _train_worker).
-    _EAGER_BOOT_DEBOUNCE_S = 0.5
-
-    def _watch_boot(self) -> None:
-        """Settle the boot once registrations have gone quiet (see
-        ``_SECONDARY_QUIET_S``); the plugin needs no outside signal."""
-        while not self._boot_settled.wait(1.0):
-            now = time.monotonic()
-            last = self._last_registration_at
-            if ((last is not None and now - last >= self._SECONDARY_QUIET_S)
-                    or now - self._init_time >= self._SECONDARY_HOLD_MAX_S):
-                self._settle_boot()
-
-    def _settle_boot(self) -> None:
-        """Release the held secondary languages, once: their registrations
-        are applied, the trainer compiles them, and the languages already
-        compiled get their prefilters."""
-        with self._train_spawn_lock:
-            if self._boot_settled.is_set():
-                return
-            self._boot_settled.set()
-        clean = [lang for lang, engine in self.containers.items()
-                 if not engine.needs_compile]
-
-        def warm():
-            for lang in list(self._held):
-                self._apply_held(lang, background=True)
-            for lang in clean:
-                self._warm_prefilters(lang)
-            if any(engine.needs_compile for engine in self.containers.values()):
-                self._spawn_background_trainer()
-
-        Thread(target=warm, name="padatious-prefilter-warm", daemon=True).start()
-
-    def _hold_or_apply(self, lang: str, kind: str, name: str, apply) -> None:
-        """Run a registration's engine work now, or hold it until the boot
-        settles when ``lang`` is a secondary language.
-
-        Skill loading registers every intent in every configured language.
-        For a secondary language that work (template expansion, the training
-        data, loading each model from the cache) only competes for the GIL
-        with the skills still loading, and nothing asks that language
-        anything before the runtime is ready. ``_settle_boot`` applies what
-        was held on a background thread; a query in a held language applies
-        that language's registrations first (see ``calc_intent``). A
-        registration that arrives while its language is still held queues
-        behind the held ones, so the order of arrival is kept.
-        """
-        self._last_registration_at = time.monotonic()
-        with self._held_lock:
-            if lang not in self.eager_langs and (not self._boot_settled.is_set()
-                                      or lang in self._held):
-                self._held[lang].append((kind, name, apply))
-                return
-            lock = self._apply_locks[lang]
-        with lock:
-            apply()
-
-    def _never_compiled(self, lang: str) -> bool:
-        """Whether ``lang``'s container has registrations but never compiled:
-        a query to it would get nothing back."""
-        container = self.containers[lang]
-        if isinstance(container, IntentContainer):
-            return (not container._first_compile_done.is_set()
-                    and container.needs_compile)
-        return container.needs_compile
-
-    #: an utterance that never reports handled stops holding background
-    #: work back after this long
-    _UTTERANCE_HOLD_S = 15.0
-
-    def _utterance_started(self, message=None) -> None:
-        """``recognizer_loop:utterance``: someone is waiting for an answer."""
-        with self._queries_lock:
-            self._utterances_in_flight.append(time.monotonic() + self._UTTERANCE_HOLD_S)
-            self._no_query_waiting.clear()
-
-    def _utterance_finished(self, message=None) -> None:
-        """``ovos.utterance.handled``: that answer is out."""
-        with self._queries_lock:
-            if self._utterances_in_flight:
-                self._utterances_in_flight.pop(0)
-            self._update_no_query_waiting()
-
-    def _update_no_query_waiting(self) -> None:
-        """Set the event when nothing waits: no query compiling a held
-        language and no utterance in flight (expired ones are dropped).
-        Callers hold ``_queries_lock``."""
-        now = time.monotonic()
-        self._utterances_in_flight = [d for d in self._utterances_in_flight if d > now]
-        if not self._queries_waiting and not self._utterances_in_flight:
-            self._no_query_waiting.set()
-
-    def _yield_to_queries(self) -> None:
-        """Background work: wait while a query applies or compiles a held
-        language, or while an utterance is being answered, so a user's
-        question gets the GIL first (bounded: 30 s at most)."""
-        deadline = time.monotonic() + 30
-        while not self._no_query_waiting.wait(0.5):
-            with self._queries_lock:
-                self._update_no_query_waiting()
-            if time.monotonic() >= deadline:
-                return
-
-    def _apply_held(self, lang: str, rearm: bool = True,
-                    background: bool = False) -> bool:
-        """Apply ``lang``'s held registrations, in the order they arrived.
-        A caller that finds another thread applying them waits for it.
-        ``rearm=False`` leaves training to the caller (a query compiles the
-        language itself instead of racing the background trainer).
-        ``background`` applies one registration at a time and yields to
-        queries between them without holding the language's lock, which a
-        query waiting to apply the rest needs.
-        Returns whether this call applied any."""
-        applied = False
-        while True:
-            if background:
-                self._yield_to_queries()
-            with self._held_lock:
-                lock = self._apply_locks[lang]
-            with lock:
-                with self._held_lock:
-                    held = self._held.get(lang)
-                    if not held:
-                        self._held.pop(lang, None)
-                        return applied
-                    if background:
-                        batch = [held.pop(0)]
-                    else:
-                        batch = list(held)
-                        held.clear()
-                    if not held:
-                        self._held.pop(lang, None)
-                for _kind, _name, apply in batch:
-                    try:
-                        apply(rearm)
-                    except Exception:
-                        LOG.exception(f"held padatious registration failed ({lang})")
-                applied = True
-            if not background:
-                return applied
-
-    def _drop_held(self, kind: str, name: str) -> None:
-        """Forget held registrations of ``name`` (a removal while held)."""
-        with self._held_lock:
-            for lang in list(self._held):
-                self._held[lang] = [h for h in self._held[lang]
-                                    if not (h[0] == kind and h[1] == name)]
-
-    def _compile_deferred(self, lang: str) -> bool:
-        """Whether ``lang``'s pending work may wait for the boot to settle.
-
-        Only a padaos compile ever waits: an intent that needs its network
-        trained (``must_train``) is not matchable at all until it is, so that
-        work is never held.
-        """
-        if lang in self.eager_langs or self._boot_settled.is_set():
-            return False
-        engine = self.containers[lang]
-        if isinstance(engine, DomainIntentContainer):
-            # a domain child can need its network trained while the outer
-            # container's own flag is clear
-            must_train = (engine.must_train or engine.domain_engine.must_train
-                          or any(d.must_train for d in engine.domains.values()))
-        else:
-            must_train = engine.must_train
-        return not must_train
-
     def _warm_prefilters(self, lang: str) -> None:
         """Build ``lang``'s padaos prefilters now, on this background thread,
         so the first query in that language does not pay for them."""
@@ -877,11 +670,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         while True:
             dirty = [lang for lang, engine in self.containers.items()
                      if engine.needs_compile and lang not in self._compile_giveup]
-            pending = [lang for lang in dirty if not self._compile_deferred(lang)]
-            if dirty and not pending:
-                # only held secondary languages are left: check again shortly
-                self._boot_settled.wait(0.5)
-                continue
+            pending = dirty
             if not pending:
                 # Retiring the worker has to be atomic against
                 # _spawn_background_trainer, which is now the only thing
@@ -895,7 +684,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     if any(engine.needs_compile and lang not in self._compile_giveup
                            for lang, engine in self.containers.items()):
                         continue
-                    if self._boot_settled.is_set() and not self._reported_all_compiled:
+                    if not self._reported_all_compiled:
                         self._reported_all_compiled = True
                         LOG.info(f"padatious: every language compiled "
                                  f"({len(self.containers)}), "
@@ -908,13 +697,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 time.sleep(max(0.05, min(self._compile_backoff_until[lang] - now for lang in pending)))
                 continue
             for lang in due:
-                if lang in self.eager_langs and not self._boot_settled.is_set():
-                    # while skills load, an eager language compiles as it
-                    # goes (padaos only rebuilds what changed), so it is
-                    # ready when the last skill is, not a debounce later
-                    self.containers[lang]._wait_for_quiet(self._EAGER_BOOT_DEBOUNCE_S)
-                else:
-                    self.containers[lang]._wait_for_quiet()
+                self.containers[lang]._wait_for_quiet()
             self._train_sync(only_langs=set(due))
 
     def _train_sync(self, only_langs: Optional[set] = None) -> None:
@@ -945,17 +728,12 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.finished_training_event.clear()
             any_success = False
             for lang in target_langs:
-                if self._boot_settled.is_set():
-                    # a query compiling its own language goes first
-                    self._yield_to_queries()
                 try:
                     #LOG.debug(f"Training padatious for lang '{lang}'")
                     self.containers[lang].train()
-                    if self._boot_settled.is_set():
-                        # prefilters only speed queries up; while skills load
-                        # they would compete with them (_settle_boot warms
-                        # the languages compiled before it)
-                        self._warm_prefilters(lang)
+                    # prefilters only speed queries up: built here, in the
+                    # background, never on a query's thread
+                    self._warm_prefilters(lang)
                 except Exception as e:
                     # a raising _compile()/train() must never leave
                     # finished_training_event cleared - every later
@@ -1073,7 +851,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # collapsed onto, so unregistering by either the legacy `.intent`
         # alias or the OVOS-INTENT-4 canonical id works (ovos-core#831).
         intent_name = _dealias_intent_name(intent_name)
-        self._drop_held("intent", intent_name)
         with self._applied_registrations_lock:
             for key in [k for k in self._applied_registrations if k[1] == intent_name]:
                 del self._applied_registrations[key]
@@ -1289,7 +1066,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                                                      blacklisted_words=blacklisted_words)
                 return lang
 
-            def apply(rearm: bool = True):
+            def apply():
                 # The copy of this registration on the other wire contract
                 # returned as soon as it saw the claim, so a failure here
                 # would lose both: try once more on its behalf before
@@ -1306,8 +1083,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 if applied_lang is None:
                     self._forget_registration(key, content)
                     return
-                if rearm:
-                    self._rearm_training(applied_lang)
+                self._rearm_training(applied_lang)
                 # A re-registration (e.g. new samples replacing an existing
                 # intent's) must retire the old regex/model answer immediately,
                 # not only once the next compile lands - otherwise a query
@@ -1315,7 +1091,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 # stale definition at conf 1.0 from the lru_cache.
                 _calc_padatious_intent.cache_clear()
 
-            self._hold_or_apply(lang, "intent", message.data['name'], apply)
+            apply()
 
         if self.config.get("instant_train", False) or self.first_train.is_set():
             self.train(message)
@@ -1367,7 +1143,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 or standardize_lang(e.get("lang") or self.lang) != lang]
             self.registered_entities.append(message.data)
 
-            def apply(rearm: bool = True):
+            def apply():
                 unpacked = self._unpack_object(message)
                 if unpacked is None:
                     return
@@ -1377,13 +1153,12 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     self.containers[lang].add_domain_entity(skill_id, name, samples)
                 else:
                     self.containers[lang].add_entity(name, samples)
-                if rearm:
-                    self._rearm_training(lang)
+                self._rearm_training(lang)
                 # See register_intent: a replaced entity's slot values must stop
                 # matching immediately, not only after the next compile.
                 _calc_padatious_intent.cache_clear()
 
-            self._hold_or_apply(lang, "entity", message.data['name'], apply)
+            apply()
 
     # ------------------------------------------------------------------ #
     # OVOS-INTENT-4 spec registration handlers                           #
@@ -1526,7 +1301,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         skill_id, entity_name, full = self._spec_identity(message, "entity_name")
         if full is None:
             return
-        self._drop_held("entity", full)
         for lang in self.containers:
             try:
                 self.containers[lang].remove_entity(full)
@@ -1560,9 +1334,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 self._intent_slot_types.pop((lang, full), None)
         # drop the skill's entities too
         prefix = f"{skill_id}:"
-        for ent in [e.get("name") for e in self.registered_entities
-                    if str(e.get("name", "")).startswith(prefix)]:
-            self._drop_held("entity", ent)
         for lang in self.containers:
             for ent in [e.get("name") for e in self.registered_entities
                         if str(e.get("name", "")).startswith(prefix)]:
@@ -1627,47 +1398,6 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         lang = self._get_closest_lang(lang)
         if lang is None:  # no intents registered for this lang
             return None
-        # asked while its registrations are held (or being applied): apply
-        # them and compile right here, since this query is waiting for them
-        # (the background trainer would first wait out its debounce window)
-        if lang in self._held or self._never_compiled(lang):
-            # asked while its registrations are held, or before the language
-            # ever compiled (the settle may be applying it right now): apply
-            # and compile it here, ahead of the background work, which
-            # waits for it. A language with a compiled state keeps serving
-            # it while the background trainer recompiles.
-            with self._queries_lock:
-                self._queries_waiting += 1
-                self._no_query_waiting.clear()
-            try:
-                started = time.monotonic()
-                applied = self._apply_held(lang, rearm=False)
-                container = self.containers[lang]
-                if (isinstance(container, IntentContainer) and not container.must_train
-                        and (applied or self._never_compiled(lang))):
-                    # every network loaded from the cache: what is left is
-                    # the padaos compile, which this query needs anyway
-                    container.train()
-                    LOG.info(f"padatious: {lang} applied and compiled for its "
-                             f"first query in {time.monotonic() - started:.2f}s")
-                    Thread(target=self._warm_prefilters, args=(lang,),
-                           name="padatious-prefilter-warm", daemon=True).start()
-                elif applied:
-                    # a network to train (or a domain engine): that stays on
-                    # the pipeline's worker. The exact-match tier needs no
-                    # network, so compile it here: an exact sentence still
-                    # routes while the networks train.
-                    if isinstance(container, IntentContainer) and container.padaos is not None:
-                        with container._train_lock:
-                            container.padaos.compile()
-                        LOG.info(f"padatious: {lang} exact matches compiled for its "
-                                 f"first query in {time.monotonic() - started:.2f}s; "
-                                 f"its networks train in the background")
-                    self._rearm_training(lang)
-            finally:
-                with self._queries_lock:
-                    self._queries_waiting -= 1
-                    self._update_no_query_waiting()
 
         sess = SessionManager.get(message)
         # Session is unhashable under ovos-bus-client 2.x, so it cannot be an
@@ -1871,11 +1601,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         return None
 
     def shutdown(self):
-        self._boot_settled.set()  # stops the boot watcher
         for container in self.containers.values():
             container.shutdown(wait=False)
-        self.bus.remove('recognizer_loop:utterance', self._utterance_started)
-        self.bus.remove('ovos.utterance.handled', self._utterance_finished)
         self.bus.remove('padatious:register_intent', self.register_intent)
         self.bus.remove('padatious:register_entity', self.register_entity)
         self.bus.remove('intent.service.padatious.get', self.handle_get_padatious)
