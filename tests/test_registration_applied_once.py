@@ -302,6 +302,15 @@ class TestSecondaryLanguagesWaitForTheBoot(unittest.TestCase):
         self.pipeline._no_query_waiting.set()
         self.assertTrue(self.wait(lambda: fr.intent_names and not fr.needs_compile))
 
+    def test_a_query_never_trains_a_network(self):
+        # no cache: the held intent needs its network trained, which stays
+        # on the pipeline's worker; the query thread only rearms it
+        self.register("fr-FR", name="fresh", samples=["bonjour tout le monde"])
+        with mock.patch.object(IntentContainer, "train",
+                               side_effect=AssertionError("trained on the query thread")):
+            self.pipeline.calc_intent("bonjour tout le monde", "fr-FR")
+        self.assertNotIn("fr-FR", self.pipeline._held)
+
     def test_no_ready_event_is_needed(self):
         self.assertFalse(self.pipeline.bus.ee.listeners("mycroft.ready"))
 

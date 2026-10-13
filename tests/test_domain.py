@@ -223,7 +223,10 @@ class TestDomainPatternCacheFiles(unittest.TestCase):
         engine = DomainIntentContainer(cache_dir=cache)
         engine.add_domain_intent("a.skill", "a.skill:hello", ["hello there"])
         engine.add_domain_intent("b/skill", "b/skill:bye", ["bye now"])
+        # lossy readable names must not collide, nor hit the cross-domain file
+        engine.add_domain_intent("b_skill", "b_skill:bye", ["bye now"])
+        engine.add_domain_intent("domains", "domains:x", ["x y"])
         files = {c.padaos._patterns.path for c in
                  [engine.domain_engine, *engine.domains.values()]}
-        self.assertEqual(len(files), 3)
+        self.assertEqual(len(files), 5)
         self.assertTrue(all(os.path.dirname(f) == cache for f in files))
