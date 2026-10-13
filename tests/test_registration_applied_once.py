@@ -315,6 +315,15 @@ class TestSecondaryLanguagesWaitForTheBoot(unittest.TestCase):
             self.pipeline.calc_intent("bonjour tout le monde", "fr-FR")
         self.assertNotIn("fr-FR", self.pipeline._held)
 
+    def test_an_exact_sentence_routes_while_its_networks_train(self):
+        # no cache and a long training: the exact-match tier is compiled on
+        # the query's thread, so the sentence still matches
+        self.register("fr-FR", name="fresh", samples=["bonjour tout le monde"])
+        with mock.patch.object(IntentContainer, "train", lambda *a, **k: time.sleep(5)):
+            match = self.pipeline.calc_intent("bonjour tout le monde", "fr-FR")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.name, f"{SKILL_ID}:fresh")
+
     def test_the_settle_waits_while_an_utterance_is_answered(self):
         self.register("fr-FR")
         self.pipeline.bus.emit(Message("recognizer_loop:utterance",

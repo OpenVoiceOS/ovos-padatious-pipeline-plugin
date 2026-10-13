@@ -522,8 +522,9 @@ class IntentContainer:
                 return
             # wait on the shutdown flag rather than sleeping blindly, so a
             # retiring container does not hold shutdown() for a whole
-            # debounce interval before the worker notices
-            if self._shutdown.wait(min(window, remaining)):
+            # debounce interval before the worker notices; only the part of
+            # the window not already quiet is left to wait
+            if self._shutdown.wait(min(window - (now - snapshot), remaining)):
                 return
             if self._last_dirty_at == snapshot:
                 return

@@ -789,20 +789,37 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         A caller that finds another thread applying them waits for it.
         ``rearm=False`` leaves training to the caller (a query compiles the
         language itself instead of racing the background trainer).
+        ``background`` applies one registration at a time and yields to
+        queries between them without holding the language's lock, which a
+        query waiting to apply the rest needs.
         Returns whether this call applied any."""
-        with self._held_lock:
-            lock = self._apply_locks[lang]
-        with lock:
+        applied = False
+        while True:
+            if background:
+                self._yield_to_queries()
             with self._held_lock:
-                held = self._held.pop(lang, [])
-            for _kind, _name, apply in held:
-                if background:
-                    self._yield_to_queries()
-                try:
-                    apply(rearm)
-                except Exception:
-                    LOG.exception(f"held padatious registration failed ({lang})")
-        return bool(held)
+                lock = self._apply_locks[lang]
+            with lock:
+                with self._held_lock:
+                    held = self._held.get(lang)
+                    if not held:
+                        self._held.pop(lang, None)
+                        return applied
+                    if background:
+                        batch = [held.pop(0)]
+                    else:
+                        batch = list(held)
+                        held.clear()
+                    if not held:
+                        self._held.pop(lang, None)
+                for _kind, _name, apply in batch:
+                    try:
+                        apply(rearm)
+                    except Exception:
+                        LOG.exception(f"held padatious registration failed ({lang})")
+                applied = True
+            if not background:
+                return applied
 
     def _drop_held(self, kind: str, name: str) -> None:
         """Forget held registrations of ``name`` (a removal while held)."""
@@ -1637,8 +1654,15 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                            name="padatious-prefilter-warm", daemon=True).start()
                 elif applied:
                     # a network to train (or a domain engine): that stays on
-                    # the pipeline's worker; the container waits for its
-                    # first compile as it always did
+                    # the pipeline's worker. The exact-match tier needs no
+                    # network, so compile it here: an exact sentence still
+                    # routes while the networks train.
+                    if isinstance(container, IntentContainer) and container.padaos is not None:
+                        with container._train_lock:
+                            container.padaos.compile()
+                        LOG.info(f"padatious: {lang} exact matches compiled for its "
+                                 f"first query in {time.monotonic() - started:.2f}s; "
+                                 f"its networks train in the background")
                     self._rearm_training(lang)
             finally:
                 with self._queries_lock:
