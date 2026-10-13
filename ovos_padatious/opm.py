@@ -350,6 +350,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # settles (see _compile_deferred).
         self._boot_settled = Event()
         self._init_time = time.monotonic()
+        # set once the "every language compiled" line has been logged
+        self._reported_all_compiled = False
         self.finished_training_event = Event()
         self.finished_training_event.set()  # is cleared when training starts
 
@@ -685,27 +687,28 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         trained (``must_train``) is not matchable at all until it is, so that
         work is never held.
         """
-        settled = getattr(self, "_boot_settled", None)
-        if settled is None or lang == self.lang or settled.is_set():
+        if lang == self.lang or self._boot_settled.is_set():
             return False
         now = time.monotonic()
-        last_dirty = max((getattr(c, "_last_dirty_at", 0.0) for c in self.containers.values()),
-                         default=0.0)
+        # a DomainIntentContainer keeps no dirty timestamp of its own
+        last_dirty = max((c._last_dirty_at for c in self.containers.values()
+                          if isinstance(c, IntentContainer)), default=0.0)
         if (now - last_dirty >= self._SECONDARY_QUIET_S
                 or now - self._init_time >= self._SECONDARY_HOLD_MAX_S):
             self._settle_boot()
             return False
-        return not getattr(self.containers[lang], "must_train", False)
+        return not self.containers[lang].must_train
 
     def _warm_prefilters(self, lang: str) -> None:
         """Build ``lang``'s padaos prefilters now, on this background thread,
         so the first query in that language does not pay for them."""
-        padaos = getattr(self.containers.get(lang), "padaos", None)
-        intents = getattr(padaos, "intents", None)
-        if not isinstance(intents, dict):
+        container = self.containers[lang]
+        # a DomainIntentContainer has no padaos of its own; disable_padaos
+        # leaves an IntentContainer without one
+        if not isinstance(container, IntentContainer) or container.padaos is None:
             return
-        for regexes in list(intents.values()):
-            getattr(regexes, "prefilter", None)
+        for regexes in list(container.padaos.intents.values()):
+            _ = regexes.prefilter  # the property compiles and caches it
 
     def _train_worker(self) -> None:
         """Background-thread entry point for ``train()``: waits for a quiet
@@ -744,9 +747,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     if any(engine.needs_compile and lang not in self._compile_giveup
                            for lang, engine in self.containers.items()):
                         continue
-                    settled = getattr(self, "_boot_settled", None)
-                    if (settled is not None and settled.is_set()
-                            and not getattr(self, "_reported_all_compiled", False)):
+                    if self._boot_settled.is_set() and not self._reported_all_compiled:
                         self._reported_all_compiled = True
                         LOG.info(f"padatious: every language compiled "
                                  f"({len(self.containers)}), "
@@ -793,8 +794,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 try:
                     #LOG.debug(f"Training padatious for lang '{lang}'")
                     self.containers[lang].train()
-                    settled = getattr(self, "_boot_settled", None)
-                    if lang == self.lang or settled is None or settled.is_set():
+                    if lang == self.lang or self._boot_settled.is_set():
                         self._warm_prefilters(lang)
                 except Exception as e:
                     # a raising _compile()/train() must never leave
