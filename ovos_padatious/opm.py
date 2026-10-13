@@ -30,6 +30,15 @@ from ovos_config.meta import get_xdg_base
 
 from ovos_bus_client.client import MessageBusClient
 from ovos_bus_client.message import Message
+
+#: OVOS-READY-1 (proposed): a pipeline's own warm/cold transition. A
+#: fresh process is cold (``warm``: False) until every configured
+#: language has finished its first compile; a container that later needs
+#: to retrain (a new registration) does NOT go cold again -- it already
+#: has a usable compiled state to serve, which is the one already-warm
+#: case this signal exists to distinguish from.
+PADATIOUS_PIPELINE_ID = "ovos-padatious-pipeline-plugin"
+PIPELINE_WARM_STATE = "ovos.pipeline.warm_state"
 from ovos_bus_client.session import SessionManager, Session
 from ovos_padatious import IntentContainer
 from ovos_padatious.domain_container import DomainIntentContainer
@@ -444,6 +453,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self.bus.on(SpecMessage.INTENT_ENABLE, self.handle_enable_intent_spec)
         self.bus.on(SpecMessage.INTENT_DISABLE, self.handle_disable_intent_spec)
 
+        # OVOS-READY-1 (proposed): announce cold at once, before any
+        # registration can arrive, so an aggregator that only starts
+        # counting pipelines once it sees one never misses this one.
+        self.bus.emit(Message(PIPELINE_WARM_STATE,
+                             {"pipeline_id": PADATIOUS_PIPELINE_ID,
+                              "warm": False}))
+
         LOG.debug('Loaded Padatious intent pipeline')
 
     @property
@@ -689,6 +705,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                         LOG.info(f"padatious: every language compiled "
                                  f"({len(self.containers)}), "
                                  f"{time.monotonic() - self._init_time:.1f}s after start")
+                        self.bus.emit(Message(PIPELINE_WARM_STATE,
+                                             {"pipeline_id": PADATIOUS_PIPELINE_ID,
+                                              "warm": True}))
                     self._retire()
                     return
             now = time.monotonic()
