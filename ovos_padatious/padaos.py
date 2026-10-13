@@ -57,13 +57,16 @@ class _IntentRegexes(list):
     Two threads racing on the first use both compile the same pattern and
     store equal regexes, so no lock is needed.
     """
-    __slots__ = ('_prefilter',)
+    __slots__ = ('_prefilter', 'plain')
 
     _UNBUILT = object()
 
-    def __init__(self, regexes=()):
+    def __init__(self, regexes=(), plain=frozenset()):
         super().__init__(regexes)
         self._prefilter = self._UNBUILT
+        #: the intent's plain lines (words and spaces only) as lowercased
+        #: word tuples; see ``IntentContainer._plain_words``
+        self.plain = plain
 
     @property
     def prefilter(self):
@@ -98,6 +101,23 @@ class _IntentRegexes(list):
 #: Bumped whenever ``_create_pattern``'s rewrite rules change, so a pattern
 #: cache written by older rules is ignored rather than trusted.
 PATTERN_RULES_VERSION = 1
+
+#: A template line of words separated by spaces and plain symbols, and
+#: nothing else: no digit (``_create_pattern`` turns each into ``\d``), no
+#: slot or entity (``{}``), no group or alternation (``()|``), no ``#``,
+#: ``:``, ``\`` or ``~`` (each has its own rewrite rule). ``_create_pattern``
+#: makes such a symbol optional and puts ``\W+`` between words, so the line
+#: matches a query exactly when their words, split on non-word characters,
+#: are the same (case-insensitively).
+_PLAIN_SYMBOL = r'[^\w\s{}()|#:\\~]'
+_PLAIN_LINE = re.compile(r'^(?:\s|{s})*[^\W\d]+(?:(?:\s|{s})+[^\W\d]+)*(?:\s|{s})*$'.format(
+    s=_PLAIN_SYMBOL))
+_NON_WORD = re.compile(r'\W+')
+
+
+def _words(text):
+    """``text`` lowercased and split on runs of non-word characters."""
+    return tuple(w for w in _NON_WORD.split(text.lower()) if w)
 
 
 class _PatternCache:
@@ -397,12 +417,25 @@ class IntentContainer:
     def create_regexes(self, lines, intent_name, entities, counter):
         regexes = [self._create_regex(line, intent_name, entities, counter)
                    for line in sorted(lines, key=len, reverse=True)
-                   if line.strip()]
+                   if line.strip() and not _PLAIN_LINE.match(line)]
         # Filter out all regexes that fails
         return [r for r in regexes if r is not None]
 
     @staticmethod
-    def _with_prefilter(regexes):
+    def _plain_words(lines):
+        """The word tuples of an intent's plain lines (``_PLAIN_LINE``).
+
+        Such a line becomes ``^\\W*w1\\W+...w2\\W*$`` under
+        ``_create_pattern`` (symbols optional, matched case-insensitively): a
+        query matches it exactly when the query's words, split on non-word
+        characters, are the line's words. So such a line needs no regex at all: ``calc_intents``
+        compares word tuples, and a match carries no entities, which is also
+        the least-greedy answer any line of the intent could give.
+        """
+        return frozenset(_words(line) for line in lines if _PLAIN_LINE.match(line))
+
+    @staticmethod
+    def _with_prefilter(regexes, plain=frozenset()):
         """Wrap an intent's line regexes in an ``_IntentRegexes`` carrying a
         prefilter: one regex that is the alternation of them all, or None
         when the intent has no lines (or just one, which is its own
@@ -416,7 +449,7 @@ class IntentContainer:
         the per-line scan to pick the winning line.
         """
         # the prefilter itself is built on first use (see _IntentRegexes)
-        return _IntentRegexes(regexes)
+        return _IntentRegexes(regexes, plain)
 
     def compile(self):
         """Compile the container. Callers must serialize compiles among
@@ -487,7 +520,8 @@ class IntentContainer:
                 # each intent's regexes travel with their prefilter in one
                 # object, both built off-lock like the regexes themselves.
                 compiled = self._with_prefilter(
-                    self.create_regexes(lines, intent_name, entities, count()))
+                    self.create_regexes(lines, intent_name, entities, count()),
+                    self._plain_words(lines))
             intent_cache[intent_name] = (key, compiled)
             intents[intent_name] = compiled
         self._entity_cache = entity_cache
@@ -578,7 +612,13 @@ class IntentContainer:
                 self._warned_pending_compile = True
         else:
             self._warned_pending_compile = False
+        words = _words(query)
         for intent_name, regexes in self.intents.items():
+            if words in regexes.plain:
+                # a plain line matched: no entities, which no other line of
+                # the intent can beat (see _plain_words)
+                yield {'name': intent_name, 'entities': {}}
+                continue
             prefilter = regexes.built_prefilter
             if prefilter is not None and prefilter.match(query) is None:
                 # one C-level match rules the whole intent out; the vast
