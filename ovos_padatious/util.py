@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import unicodedata
+
 from ovos_utils import flatten_list
 from ovos_utils.log import LOG, log_deprecation
 from ovos_spec_tools import expand as expand_template
@@ -88,7 +90,14 @@ def tokenize(sentence):
         elif c == '}':
             Vars.in_brace = False
 
-        if c.isalpha() or c in '-_{}' or (Vars.in_brace and (c.isdigit() or c == '#')):
+        # A combining mark (Unicode category M*: Devanagari, Bengali, Thai,
+        # Tamil vowel signs and viramas, Latin combining accents) is part of
+        # the word it modifies, but str.isalpha() is False for it. Without
+        # this, 'मौसम' tokenized as ['म', 'ौ', 'सम']: every vowel sign became
+        # a token of its own, and a template whose slot comes first could
+        # absorb any sentence that shares a few letters with the rest of it.
+        if c.isalpha() or c in '-_{}' or unicodedata.category(c).startswith('M') \
+                or (Vars.in_brace and (c.isdigit() or c == '#')):
             t = 'a'
         elif c.isdigit() or c == '#':
             t = 'n'

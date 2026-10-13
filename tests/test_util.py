@@ -27,6 +27,19 @@ def test_tokenize():
     assert tokenize('test:') == ['test', ':']
 
 
+def test_tokenize_keeps_combining_marks_in_words():
+    # Devanagari vowel signs are category Mc/Mn, not alphabetic
+    assert tokenize('मौसम कैसा है') == ['मौसम', 'कैसा', 'है']
+    assert tokenize('मुझे याद दिलाना') == ['मुझे', 'याद', 'दिलाना']
+    # Thai vowel and tone marks
+    assert tokenize('สวัสดี ครับ') == ['สวัสดี', 'ครับ']
+    # a decomposed Latin accent stays with its letter
+    assert tokenize('cafe\u0301 noir') == ['cafe\u0301', 'noir']
+    # slots and punctuation are unchanged
+    assert tokenize('{location} में मौसम') == ['{location}', 'में', 'मौसम']
+    assert tokenize('है:') == ['है', ':']
+
+
 def test_expand_parentheses():
     def xp(s): return {''.join(sent) for sent in expand_parentheses(tokenize(s))}
     assert xp('1 (2|3) 4 (5|6) 7') == {'12457', '12467', '13457', '13467'}
