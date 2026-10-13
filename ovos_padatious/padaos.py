@@ -2,9 +2,10 @@ import json
 import os
 import re
 import time
+import uuid
 from itertools import count
 from typing import Dict, Optional
-from threading import Lock
+from threading import Lock, get_ident
 from ovos_utils.log import LOG
 
 #: Upper bound on the number of values inlined into a padaos entity
@@ -167,7 +168,10 @@ class _PatternCache:
     def save(self) -> None:
         if not (self.path and self._dirty and self._patterns is not None):
             return
-        tmp = f"{self.path}.{os.getpid()}.tmp"
+        # pid alone collides within one process: two threads (or two calls
+        # racing on the same container) saving the same path at once would
+        # both write the same temp name and race each other's os.replace.
+        tmp = f"{self.path}.{os.getpid()}.{get_ident()}.{uuid.uuid4().hex[:8]}.tmp"
         try:
             with open(tmp, "w", encoding="utf-8") as f:
                 # only the lines this process compiled: retired lines drop out

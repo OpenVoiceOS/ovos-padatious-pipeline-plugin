@@ -80,6 +80,11 @@ def test_a_network_trained_on_split_marks_is_retrained():
     from ovos_padatious.util import has_combining_marks
     assert has_combining_marks(['मौसम कैसा है'])
     assert not has_combining_marks(['what time is it', 'quelle heure est-il'])
+    # a supplementary-plane combining mark (U+10000 and up) must be seen
+    # too, not only the Basic Multilingual Plane: U+101FD (PHAISTOS DISC
+    # SIGN COMBINING OBLIQUE STROKE, category Mn) is a real Unicode mark
+    # outside the BMP
+    assert has_combining_marks(['a\U000101FDb'])
     min_ver = os.path.splitext(ovos_padatious.__version__)[0]
     with tempfile.TemporaryDirectory() as cache:
         manager = TrainingManager(Intent, cache)

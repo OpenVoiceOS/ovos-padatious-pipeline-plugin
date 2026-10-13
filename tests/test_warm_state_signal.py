@@ -5,12 +5,14 @@ configured pipeline warm" instead of gating on process status alone
 ``IntentService.status`` reported ready, while padatious was still
 "compiling in background, serving last compiled state in the meantime")."""
 import tempfile
+import time
 import unittest
 from unittest import mock
 
 from ovos_bus_client.message import Message
 from ovos_utils.fakebus import FakeBus
 
+from ovos_padatious.intent_container import IntentContainer
 from ovos_padatious.opm import (PADATIOUS_PIPELINE_ID, PIPELINE_WARM_STATE,
                                 PadatiousPipeline)
 
@@ -79,6 +81,33 @@ class TestWarmStateSignal(unittest.TestCase):
         self.assertFalse(
             any(e.data.get("warm") is False for e in self.events[1:]),
             "no cold announcement after the first one at construction")
+
+    def test_no_warm_announcement_while_a_language_has_given_up(self):
+        """`pending` excludes a lang in `_compile_giveup` by design, so a
+        container whose only dirty languages have all given up looks like
+        'nothing left to compile' -- it must not be reported warm, since a
+        permanently-failing language never produced a usable state."""
+        pipeline = self._pipeline()
+        self.addCleanup(pipeline.shutdown)
+        lang = pipeline.lang
+
+        def always_boom(self, *args, **kwargs):
+            raise RuntimeError("compile exploded")
+
+        with mock.patch.object(IntentContainer, "train", always_boom):
+            pipeline.register_intent(Message("padatious:register_intent", {
+                "name": f"{SKILL_ID}:hello", "samples": ["hello", "hi"],
+                "lang": lang, "skill_id": SKILL_ID}, {"skill_id": SKILL_ID}))
+            pipeline.train()
+            # 5 consecutive failures at 2,4,8,16,32s backoff before giveup
+            time.sleep(40)
+
+        self.assertIn(lang, pipeline._compile_giveup, "the lang must have "
+                     "given up for this test to mean anything")
+        self.assertFalse(
+            any(e.data.get("warm") is True for e in self.events),
+            "warm must never be announced while a language has given up "
+            "without ever producing a compiled state")
 
 
 if __name__ == "__main__":

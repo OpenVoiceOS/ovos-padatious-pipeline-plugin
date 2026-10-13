@@ -21,7 +21,7 @@ from collections import defaultdict
 from copy import deepcopy
 from functools import lru_cache
 from os.path import expanduser, isfile
-from threading import Event, RLock, Thread, current_thread
+from threading import Event, Lock, RLock, Thread, current_thread
 from typing import Optional, Dict, List, Union, Type
 
 import snowballstemmer
@@ -431,6 +431,16 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # entry, so a later registration of the same content applies again.
         self._applied_registrations: Dict[tuple, tuple] = {}
         self._applied_registrations_lock = RLock()
+        # Serializes claim-through-apply per (lang, name) key: the claim at
+        # the top of register_intent and the add()/apply() that materializes
+        # it are two separate steps, and two concurrent registrations for
+        # the SAME key with DIFFERENT content (not the dual-emit same-content
+        # case _applied_registrations_lock already covers) could otherwise
+        # interleave, leaving the claim recording one registration's content
+        # while the container actually holds the other's. Per-key, not
+        # global, so unrelated keys still apply concurrently.
+        self._registration_key_locks: Dict[tuple, Lock] = {}
+        self._registration_key_locks_guard = Lock()
 
         # legacy registration contract (kept for back-compat)
         self.bus.on('padatious:register_intent', self.register_intent)
@@ -700,7 +710,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     if any(engine.needs_compile and lang not in self._compile_giveup
                            for lang, engine in self.containers.items()):
                         continue
-                    if not self._reported_all_compiled:
+                    if not self._reported_all_compiled and not self._compile_giveup:
                         self._reported_all_compiled = True
                         LOG.info(f"padatious: every language compiled "
                                  f"({len(self.containers)}), "
@@ -1060,57 +1070,64 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 self.registered_intents.append(message.data['name'])
             key = (lang, message.data['name'])
             content = self._registration_content(message)
-            with self._applied_registrations_lock:
-                if content is not None and self._applied_registrations.get(key) == content:
-                    LOG.debug('Padatious intent already registered with the same '
-                              'samples: ' + message.data['name'])
-                    return
-                # claimed before the work, so the copy arriving on the other
-                # wire contract while this one is still being applied is
-                # recognised too (bus handlers run concurrently)
-                if content is not None:
-                    self._applied_registrations[key] = content
-            LOG.debug('Registering Padatious intent: ' + message.data['name'])
+            # Claim-through-apply is one atomic step per key: two concurrent
+            # registrations for the SAME key with DIFFERENT content (not the
+            # dual-emit same-content case the dict check below covers) must
+            # not interleave their claim and their add(), or the claim can
+            # end up recording one registration's content while the
+            # container actually holds the other's.
+            with self._lock_for_key(key):
+                with self._applied_registrations_lock:
+                    if content is not None and self._applied_registrations.get(key) == content:
+                        LOG.debug('Padatious intent already registered with the same '
+                                  'samples: ' + message.data['name'])
+                        return
+                    # claimed before the work, so the copy arriving on the other
+                    # wire contract while this one is still being applied is
+                    # recognised too (bus handlers run concurrently)
+                    if content is not None:
+                        self._applied_registrations[key] = content
+                LOG.debug('Registering Padatious intent: ' + message.data['name'])
 
-            def add():
-                unpacked = self._unpack_object(message)
-                if unpacked is None:
-                    return None
-                lang, skill_id, name, samples, blacklisted_words = unpacked
-                if self.engine_class == DomainIntentContainer:
-                    self.containers[lang].add_domain_intent(skill_id, name, samples,
-                                                            blacklisted_words=blacklisted_words)
-                else:
-                    self.containers[lang].add_intent(name, samples,
-                                                     blacklisted_words=blacklisted_words)
-                return lang
+                def add():
+                    unpacked = self._unpack_object(message)
+                    if unpacked is None:
+                        return None
+                    lang, skill_id, name, samples, blacklisted_words = unpacked
+                    if self.engine_class == DomainIntentContainer:
+                        self.containers[lang].add_domain_intent(skill_id, name, samples,
+                                                                blacklisted_words=blacklisted_words)
+                    else:
+                        self.containers[lang].add_intent(name, samples,
+                                                         blacklisted_words=blacklisted_words)
+                    return lang
 
-            def apply():
-                # The copy of this registration on the other wire contract
-                # returned as soon as it saw the claim, so a failure here
-                # would lose both: try once more on its behalf before
-                # releasing the claim.
-                try:
+                def apply():
+                    # The copy of this registration on the other wire contract
+                    # returned as soon as it saw the claim, so a failure here
+                    # would lose both: try once more on its behalf before
+                    # releasing the claim.
                     try:
-                        applied_lang = add()
-                    except Exception:
-                        LOG.exception(f"padatious registration of {key} failed; retrying once")
-                        applied_lang = add()
-                except BaseException:
-                    self._forget_registration(key, content)
-                    raise
-                if applied_lang is None:
-                    self._forget_registration(key, content)
-                    return
-                self._rearm_training(applied_lang)
-                # A re-registration (e.g. new samples replacing an existing
-                # intent's) must retire the old regex/model answer immediately,
-                # not only once the next compile lands - otherwise a query
-                # served between this call and that compile keeps matching the
-                # stale definition at conf 1.0 from the lru_cache.
-                _calc_padatious_intent.cache_clear()
+                        try:
+                            applied_lang = add()
+                        except Exception:
+                            LOG.exception(f"padatious registration of {key} failed; retrying once")
+                            applied_lang = add()
+                    except BaseException:
+                        self._forget_registration(key, content)
+                        raise
+                    if applied_lang is None:
+                        self._forget_registration(key, content)
+                        return
+                    self._rearm_training(applied_lang)
+                    # A re-registration (e.g. new samples replacing an existing
+                    # intent's) must retire the old regex/model answer immediately,
+                    # not only once the next compile lands - otherwise a query
+                    # served between this call and that compile keeps matching the
+                    # stale definition at conf 1.0 from the lru_cache.
+                    _calc_padatious_intent.cache_clear()
 
-            apply()
+                apply()
 
         if self.config.get("instant_train", False) or self.first_train.is_set():
             self.train(message)
@@ -1136,6 +1153,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         with self._applied_registrations_lock:
             if content is not None and self._applied_registrations.get(key) == content:
                 del self._applied_registrations[key]
+
+    def _lock_for_key(self, key: tuple) -> Lock:
+        """The one lock that serializes claim-through-apply for ``key``,
+        created on first use. Per-key so registrations for different
+        (lang, name) keys still apply concurrently."""
+        with self._registration_key_locks_guard:
+            return self._registration_key_locks.setdefault(key, Lock())
 
     def register_entity(self, message):
         """Messagebus handler for registering entities.
