@@ -153,26 +153,30 @@ class TestPrefilterBuiltOnFirstUse(unittest.TestCase):
 
 
 class TestSecondaryLanguagesWaitForTheBoot(unittest.TestCase):
-    """A secondary language's padaos compile waits for ``mycroft.ready`` (or
-    for the plugin to go quiet); the primary language and any network that
-    needs training never wait."""
+    """While registrations keep arriving, a secondary language's
+    registrations are held, and applied (then compiled) once the plugin has
+    gone quiet, or when a query in that language needs them. The primary
+    language never waits, and no outside event is involved."""
 
     def setUp(self):
         self.cache = tempfile.mkdtemp()
-        conf = {"lang": "en-US", "secondary_langs": ["fr-FR"]}
-        with mock.patch("ovos_padatious.opm.Configuration", return_value=conf):
-            self.pipeline = PadatiousPipeline(FakeBus(), config={"intent_cache": self.cache})
-        # the hold must outlast the test, so only `mycroft.ready` releases it
+        # the hold must outlast the test unless a test shortens it
         hold = mock.patch.object(PadatiousPipeline, "_SECONDARY_QUIET_S", 60.0)
         hold.start()
         self.addCleanup(hold.stop)
         debounce = mock.patch.object(IntentContainer, "_TRAIN_DEBOUNCE_S", 0.05)
         debounce.start()
         self.addCleanup(debounce.stop)
+        self.pipeline = self.new_pipeline()
 
     def tearDown(self):
         self.pipeline.shutdown()
         shutil.rmtree(self.cache, ignore_errors=True)
+
+    def new_pipeline(self, **config):
+        conf = {"lang": "en-US", "secondary_langs": ["fr-FR"]}
+        with mock.patch("ovos_padatious.opm.Configuration", return_value=conf):
+            return PadatiousPipeline(FakeBus(), config={"intent_cache": self.cache, **config})
 
     def register(self, lang, name="time", samples=SAMPLES):
         self.pipeline.register_intent(Message("padatious:register_intent", {
@@ -188,43 +192,75 @@ class TestSecondaryLanguagesWaitForTheBoot(unittest.TestCase):
     def warm_restart(self):
         """Train both languages once, then start over on the same cache: the
         networks load from it, so only padaos is left to compile."""
-        self.pipeline.handle_ready()
+        self.pipeline._settle_boot()
         self.register("en-US")
         self.register("fr-FR")
+        self.assertTrue(self.wait(lambda: not self.pipeline.containers["fr-FR"].needs_compile))
         self.assertTrue(self.pipeline.wait_until_trained(timeout=30))
         self.pipeline.shutdown()
-        conf = {"lang": "en-US", "secondary_langs": ["fr-FR"]}
-        with mock.patch("ovos_padatious.opm.Configuration", return_value=conf):
-            self.pipeline = PadatiousPipeline(FakeBus(), config={"intent_cache": self.cache})
+        self.pipeline = self.new_pipeline()
         self.register("en-US")
         self.register("fr-FR")
 
-    def test_secondary_padaos_waits_for_ready_primary_does_not(self):
+    def test_secondary_registrations_wait_primary_does_not(self):
         self.warm_restart()
         en, fr = self.pipeline.containers["en-US"], self.pipeline.containers["fr-FR"]
         self.assertTrue(self.wait(lambda: not en.needs_compile))
         time.sleep(0.5)
-        self.assertTrue(fr.needs_compile, "the secondary language compiled before ready")
-        self.assertFalse(fr.must_train)
-        # the primary's prefilters were built in the background
-        self.assertIsNot(next(iter(en.padaos.intents.values()))._prefilter,
-                         padaos._IntentRegexes._UNBUILT)
-        self.pipeline.bus.emit(Message("mycroft.ready"))
-        self.assertTrue(self.wait(lambda: not fr.needs_compile))
+        self.assertEqual(fr.intent_names, [], "the secondary language was applied mid-boot")
+        self.assertEqual(len(self.pipeline._held["fr-FR"]), 1)
+        # the primary's prefilters are built once the boot settles
+        self.pipeline._settle_boot()
+        self.assertTrue(self.wait(lambda: not fr.needs_compile and fr.intent_names))
         self.assertTrue(self.wait(lambda: next(iter(fr.padaos.intents.values()))._prefilter
                                   is not padaos._IntentRegexes._UNBUILT))
+        self.assertIsNot(next(iter(en.padaos.intents.values()))._prefilter,
+                         padaos._IntentRegexes._UNBUILT)
 
-    def test_a_network_to_train_never_waits(self):
-        self.register("fr-FR", name="fresh", samples=["bonjour tout le monde"])
-        fr = self.pipeline.containers["fr-FR"]
-        self.assertTrue(self.wait(lambda: not fr.needs_compile))
-
-    def test_quiet_plugin_settles_without_ready(self):
+    def test_a_query_applies_its_language_first(self):
         self.warm_restart()
+        self.assertEqual(self.pipeline.containers["fr-FR"].intent_names, [])
+        match = self.pipeline.calc_intent("what time is it", "fr-FR")
+        self.assertEqual(match.name, f"{SKILL_ID}:time")
+        self.assertNotIn("fr-FR", self.pipeline._held)
+        self.assertFalse(self.pipeline._boot_settled.is_set())
+
+    def test_a_registration_while_held_keeps_its_order(self):
+        self.register("fr-FR", name="time", samples=["quelle heure est-il"])
+        self.register("fr-FR", name="time", samples=["donne moi l'heure"])
+        self.pipeline._settle_boot()
         fr = self.pipeline.containers["fr-FR"]
-        with mock.patch.object(PadatiousPipeline, "_SECONDARY_QUIET_S", 0.3):
-            self.assertTrue(self.wait(lambda: not fr.needs_compile))
-        self.assertTrue(self.pipeline._boot_settled.is_set())
+        self.assertTrue(self.wait(lambda: not fr.needs_compile and fr.intent_names))
+        self.assertEqual(self.pipeline.calc_intent("donne moi l'heure", "fr-FR").name,
+                         f"{SKILL_ID}:time")
+
+    def test_a_detach_while_held_drops_the_registration(self):
+        self.register("fr-FR")
+        self.pipeline.handle_detach_intent(Message("detach_intent",
+                                                   {"intent_name": f"{SKILL_ID}:time"}))
+        self.assertEqual(self.pipeline._held["fr-FR"], [])
+
+    def test_quiet_plugin_settles_by_itself(self):
+        self.pipeline.shutdown()
+        with mock.patch.object(PadatiousPipeline, "_SECONDARY_QUIET_S", 1.0):
+            self.pipeline = self.new_pipeline()
+            self.register("en-US")
+            self.register("fr-FR")
+            fr = self.pipeline.containers["fr-FR"]
+            self.assertTrue(self.wait(lambda: self.pipeline._boot_settled.is_set(), 10))
+            self.assertTrue(self.wait(lambda: not fr.needs_compile and fr.intent_names, 30))
+
+    def test_an_eager_language_is_not_held(self):
+        self.pipeline.shutdown()
+        self.pipeline = self.new_pipeline(eager_langs=["fr-fr"])
+        self.register("fr-FR")
+        fr = self.pipeline.containers["fr-FR"]
+        self.assertNotIn("fr-FR", self.pipeline._held)
+        self.assertTrue(self.wait(lambda: not fr.needs_compile and fr.intent_names))
+        self.assertFalse(self.pipeline._boot_settled.is_set())
+
+    def test_no_ready_event_is_needed(self):
+        self.assertFalse(self.pipeline.bus.ee.listeners("mycroft.ready"))
 
 
 class TestPadaosPatternsSurviveARestart(unittest.TestCase):

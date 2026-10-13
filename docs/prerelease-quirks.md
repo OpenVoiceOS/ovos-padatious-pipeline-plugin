@@ -24,14 +24,19 @@ was about half of a restart's CPU:
 - A padaos intent's prefilter (the alternation of all its line regexes) is
   no longer compiled with the line regexes. It is built by the background
   trainer once the runtime is ready, or by the first query that needs it.
-- Until `mycroft.ready` (or until the plugin has been quiet for 90 s, or
-  5 minutes after it started), a secondary language whose only pending work
-  is a padaos compile waits. Skill loading registers every intent in every
-  language over a minute or more, and the 60 s defer cap forced a full padaos
-  compile of each secondary language in the middle of it. The primary
-  language and any network that needs training never wait. Each language is
-  compiled and its prefilters built right after; the log says
-  `padatious: every language compiled` when that is done.
+- While skills load, a secondary language's registrations are held: the
+  expansion, the training data and the model loads wait until no
+  registration (in any language) has arrived for 10 s, or 5 minutes after
+  the plugin started. Skill loading registers every intent in every
+  language, and that work only competed for the GIL with the skills still
+  loading. A query in a held language applies that language's registrations
+  first and waits for their first compile. The plugin listens for no
+  outside event (`mycroft.ready` included). Held languages are then applied,
+  compiled and given their prefilters in the background; the log says
+  `padatious: every language compiled` when that is done. The primary
+  language never waits, nor does any language listed in the plugin's
+  `eager_langs` setting (for example `"eager_langs": ["fr-FR"]` for a
+  device whose users switch between English and French all day).
 - Each template line's regex source is kept in `padaos-patterns.json` in
   the language's intent cache, so a restart does not rewrite it again.
 - The training worker no longer sleeps a full debounce window on each
