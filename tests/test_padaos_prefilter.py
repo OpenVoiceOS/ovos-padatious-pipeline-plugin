@@ -86,6 +86,18 @@ class TestPrefilterEquivalence(unittest.TestCase):
             got = {m['name']: m['entities'] for m in c.calc_intents(q)}
             self.assertEqual(got, _brute_force(c, q), q)
 
+    def test_a_dotted_capital_i_folds_like_the_regex(self):
+        # "İ".lower() is "i" plus a combining dot, which is no word character
+        c = padaos.IntentContainer()
+        c.add_intent("weather", ["İstanbul hava durumu"])
+        c.add_intent("city", ["istanbul"])
+        c.compile()
+        for q in ["İstanbul hava durumu", "istanbul hava durumu", "ISTANBUL HAVA DURUMU",
+                  "İSTANBUL HAVA DURUMU", "İstanbul", "istanbul"]:
+            got = {m['name']: m['entities'] for m in c.calc_intents(q)}
+            self.assertEqual(got, _brute_force(c, q), q)
+            self.assertTrue(got, q)
+
     def test_least_greedy_line_wins(self):
         # both "book {a}" and "book {a} for {b}" match; the least-greedy
         # rule (smallest total captured length) must pick the same line
