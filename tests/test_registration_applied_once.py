@@ -259,6 +259,25 @@ class TestSecondaryLanguagesWaitForTheBoot(unittest.TestCase):
         self.assertTrue(self.wait(lambda: not fr.needs_compile and fr.intent_names))
         self.assertFalse(self.pipeline._boot_settled.is_set())
 
+    def test_a_failed_application_is_retried_for_the_other_copy(self):
+        self.pipeline.shutdown()
+        self.pipeline = self.new_pipeline()
+        en = self.pipeline.containers["en-US"]
+        real_add = en.add_intent
+        calls = []
+
+        def flaky(*args, **kwargs):
+            calls.append(args[0])
+            if len(calls) == 1:
+                raise OSError("transient")
+            return real_add(*args, **kwargs)
+
+        with mock.patch.object(en, "add_intent", side_effect=flaky):
+            self.register("en-US")
+            self.register("en-US")  # the other wire contract's copy
+        self.assertEqual(len(calls), 2)
+        self.assertIn(f"{SKILL_ID}:time", en.intent_names)
+
     def test_no_ready_event_is_needed(self):
         self.assertFalse(self.pipeline.bus.ee.listeners("mycroft.ready"))
 

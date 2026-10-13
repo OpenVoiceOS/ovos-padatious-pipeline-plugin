@@ -67,10 +67,14 @@ class IntentContainer:
 
     def __init__(self, cache_dir: Optional[str] = None,
                  disable_padaos: bool = False,
-                 inference_workers: Optional[int] = None) -> None:
+                 inference_workers: Optional[int] = None,
+                 pattern_cache_name: str = "padaos-patterns.json") -> None:
         cache_dir = cache_dir or f"{xdg_data_home()}/{get_xdg_base()}/intent_cache"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir: str = cache_dir
+        # containers sharing a cache_dir (a DomainIntentContainer's) each
+        # need their own file: a save keeps only that container's lines
+        self.pattern_cache_name = pattern_cache_name
         self.must_train: bool = False
         self.inference_workers = inference_workers
         self.intents: IntentManager = IntentManager(
@@ -81,7 +85,7 @@ class IntentContainer:
             self.padaos = None
         else:
             self.padaos: padaos.IntentContainer = padaos.IntentContainer(
-                pattern_cache=os.path.join(self.cache_dir, "padaos-patterns.json"))
+                pattern_cache=os.path.join(self.cache_dir, self.pattern_cache_name))
         self.train_thread: Optional[Any] = None  # deprecated
         self.serialized_args: List[Dict[str, Any]] = []  # Serialized calls for training intents/entities
         self.blacklisted_words: Dict[str, List[str]] = collections.defaultdict(list)
@@ -179,7 +183,7 @@ class IntentContainer:
             self.padaos = None
         else:
             self.padaos: padaos.IntentContainer = padaos.IntentContainer(
-                pattern_cache=os.path.join(self.cache_dir, "padaos-patterns.json"))
+                pattern_cache=os.path.join(self.cache_dir, self.pattern_cache_name))
         self.serialized_args = []
         self._ever_trained = False
         self._first_compile_done.clear()

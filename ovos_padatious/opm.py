@@ -754,7 +754,15 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         """
         if lang in self.eager_langs or self._boot_settled.is_set():
             return False
-        return not self.containers[lang].must_train
+        engine = self.containers[lang]
+        if isinstance(engine, DomainIntentContainer):
+            # a domain child can need its network trained while the outer
+            # container's own flag is clear
+            must_train = (engine.must_train or engine.domain_engine.must_train
+                          or any(d.must_train for d in engine.domains.values()))
+        else:
+            must_train = engine.must_train
+        return not must_train
 
     def _warm_prefilters(self, lang: str) -> None:
         """Build ``lang``'s padaos prefilters now, on this background thread,
@@ -1173,23 +1181,37 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     self._applied_registrations[key] = content
             LOG.debug('Registering Padatious intent: ' + message.data['name'])
 
+            def add():
+                unpacked = self._unpack_object(message)
+                if unpacked is None:
+                    return None
+                lang, skill_id, name, samples, blacklisted_words = unpacked
+                if self.engine_class == DomainIntentContainer:
+                    self.containers[lang].add_domain_intent(skill_id, name, samples,
+                                                            blacklisted_words=blacklisted_words)
+                else:
+                    self.containers[lang].add_intent(name, samples,
+                                                     blacklisted_words=blacklisted_words)
+                return lang
+
             def apply():
+                # The copy of this registration on the other wire contract
+                # returned as soon as it saw the claim, so a failure here
+                # would lose both: try once more on its behalf before
+                # releasing the claim.
                 try:
-                    unpacked = self._unpack_object(message)
-                    if unpacked is None:
-                        self._forget_registration(key, content)
-                        return
-                    lang, skill_id, name, samples, blacklisted_words = unpacked
-                    if self.engine_class == DomainIntentContainer:
-                        self.containers[lang].add_domain_intent(skill_id, name, samples,
-                                                                blacklisted_words=blacklisted_words)
-                    else:
-                        self.containers[lang].add_intent(name, samples,
-                                                         blacklisted_words=blacklisted_words)
+                    try:
+                        applied_lang = add()
+                    except Exception:
+                        LOG.exception(f"padatious registration of {key} failed; retrying once")
+                        applied_lang = add()
                 except BaseException:
                     self._forget_registration(key, content)
                     raise
-                self._rearm_training(lang)
+                if applied_lang is None:
+                    self._forget_registration(key, content)
+                    return
+                self._rearm_training(applied_lang)
                 # A re-registration (e.g. new samples replacing an existing
                 # intent's) must retire the old regex/model answer immediately,
                 # not only once the next compile lands - otherwise a query
