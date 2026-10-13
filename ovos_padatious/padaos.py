@@ -1,6 +1,9 @@
+import json
+import os
 import re
 import time
 from itertools import count
+from typing import Dict, Optional
 from threading import Lock
 from ovos_utils.log import LOG
 
@@ -45,12 +48,150 @@ class _IntentRegexes(list):
     object, a single ``self.intents`` swap publishes both atomically: a
     lock-free reader in ``calc_intents`` can never pair one compile's
     regexes with another compile's prefilter.
+
+    The prefilter is not compiled with the line regexes: compiling it is a
+    second full regex compile of every line and it only speeds up queries.
+    A background warm builds it after a compile; queries use it once it is
+    there (``built_prefilter``) and scan the lines until then. At boot that
+    halved the cost of every padaos compile.
+    Two threads racing on the first use both compile the same pattern and
+    store equal regexes, so no lock is needed.
     """
-    __slots__ = ('prefilter',)
+    __slots__ = ('_prefilter', 'plain')
+
+    _UNBUILT = object()
+
+    def __init__(self, regexes=(), plain=frozenset()):
+        super().__init__(regexes)
+        self._prefilter = self._UNBUILT
+        #: the intent's plain lines (words and spaces only) as lowercased
+        #: word tuples; see ``IntentContainer._plain_words``
+        self.plain = plain
+
+    @property
+    def prefilter(self):
+        prefilter = self._prefilter
+        if prefilter is self._UNBUILT:
+            if not self:
+                prefilter = None
+            elif len(self) == 1:
+                prefilter = self[0]
+            else:
+                prefilter = re.compile(
+                    '|'.join('(?:{})'.format(r.pattern) for r in self),
+                    re.IGNORECASE)
+            self._prefilter = prefilter
+        return prefilter
+
+    @prefilter.setter
+    def prefilter(self, value):
+        self._prefilter = value
+
+    @property
+    def built_prefilter(self):
+        """The prefilter if something already built it, else None. The query
+        path reads this one: building it costs a second compile of every
+        line, which a query that just compiled its language (or one asked
+        before the background warm got to it) should not pay; the scan
+        without it gives the same answer."""
+        prefilter = self._prefilter
+        return None if prefilter is self._UNBUILT else prefilter
+
+
+#: Bumped whenever ``_create_pattern``'s rewrite rules change, so a pattern
+#: cache written by older rules is ignored rather than trusted.
+PATTERN_RULES_VERSION = 1
+
+#: A template line of words separated by spaces and plain symbols, and
+#: nothing else: no digit (``_create_pattern`` turns each into ``\d``), no
+#: slot or entity (``{}``), no group or alternation (``()|``), no ``#``,
+#: ``:``, ``\`` or ``~`` (each has its own rewrite rule). ``_create_pattern``
+#: makes such a symbol optional and puts ``\W+`` between words, so the line
+#: matches a query exactly when their words, split on non-word characters,
+#: are the same (case-insensitively).
+_PLAIN_SYMBOL = r'[^\w\s{}()|#:\\~]'
+_PLAIN_LINE = re.compile(r'^(?:\s|{s})*[^\W\d]+(?:(?:\s|{s})+[^\W\d]+)*(?:\s|{s})*$'.format(
+    s=_PLAIN_SYMBOL))
+_NON_WORD = re.compile(r'\W+')
+
+
+def _words(text):
+    """``text`` split on runs of non-word characters, each word lowercased.
+
+    Split before lowercasing: ``str.lower()`` turns a dotted capital I
+    ("İstanbul") into "i" plus a combining dot, and a combining mark is not a
+    word character. The dotted I folds to a plain "i", as the regex's
+    IGNORECASE matching folds it."""
+    return tuple(w.replace('İ', 'i').lower() for w in _NON_WORD.split(text) if w)
+
+
+class _PatternCache:
+    """``line -> _create_pattern(line)``, optionally persisted to a JSON file.
+
+    Rewriting a template line into its regex source runs about twenty regex
+    substitutions over it, and was two thirds of a padaos compile; the
+    result depends on the line alone. A container given a file reads it on
+    first use and writes it back after a compile that added lines, so a
+    restart with unchanged skills rewrites nothing. A file that cannot be
+    read, or was written by other rules, is ignored.
+    """
+
+    def __init__(self, path: Optional[str] = None):
+        self.path = path
+        self._patterns: Optional[Dict[str, str]] = None
+        self._used = set()
+        self._dirty = False
+
+    def _load(self) -> Dict[str, str]:
+        if self._patterns is None:
+            self._patterns = {}
+            if self.path:
+                try:
+                    with open(self.path, encoding="utf-8") as f:
+                        data = json.load(f)
+                    if data.get("rules") == PATTERN_RULES_VERSION:
+                        self._patterns = {str(k): str(v) for k, v in data["patterns"].items()}
+                except (OSError, ValueError, KeyError, AttributeError, TypeError):
+                    self._patterns = {}
+        return self._patterns
+
+    def get(self, line: str, create) -> str:
+        patterns = self._load()
+        self._used.add(line)
+        pattern = patterns.get(line)
+        if pattern is None:
+            pattern = patterns[line] = create(line)
+            self._dirty = True
+        return pattern
+
+    def save(self) -> None:
+        if not (self.path and self._dirty and self._patterns is not None):
+            return
+        tmp = f"{self.path}.{os.getpid()}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                # only the lines this process compiled: retired lines drop out
+                json.dump({"rules": PATTERN_RULES_VERSION,
+                           "patterns": {line: self._patterns[line] for line in self._used
+                                        if line in self._patterns}}, f)
+            os.replace(tmp, self.path)
+            self._dirty = False
+        except OSError as e:
+            LOG.debug(f"padaos pattern cache not written to {self.path}: {e}")
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 class IntentContainer:
-    def __init__(self):
+    def __init__(self, pattern_cache: Optional[str] = None):
+        """
+        Args:
+            pattern_cache: optional file keeping each template line's regex
+                source across restarts (see ``_PatternCache``).
+        """
+        self._patterns = _PatternCache(pattern_cache)
         self.intent_lines, self.entity_lines = {}, {}
         self.intents, self.entities = {}, {}
         self.must_compile = True
@@ -239,7 +380,7 @@ class IntentContainer:
     def _create_intent_pattern(self, line, intent_name, entities, counter):
         namespace = intent_name.split(':')[0] + ':'
         line = self._cap_line_alternations(line)
-        line = self._create_pattern(line)
+        line = self._patterns.get(line, self._create_pattern)
         replacements = {}
         for ent_name in set(re.findall(r'{([a-z_:]+)}', line)):
             replacements[ent_name] = r'(?P<{}__{{}}>.*?\w.*?)'.format(ent_name)
@@ -281,12 +422,25 @@ class IntentContainer:
     def create_regexes(self, lines, intent_name, entities, counter):
         regexes = [self._create_regex(line, intent_name, entities, counter)
                    for line in sorted(lines, key=len, reverse=True)
-                   if line.strip()]
+                   if line.strip() and not _PLAIN_LINE.match(line)]
         # Filter out all regexes that fails
         return [r for r in regexes if r is not None]
 
     @staticmethod
-    def _with_prefilter(regexes):
+    def _plain_words(lines):
+        """The word tuples of an intent's plain lines (``_PLAIN_LINE``).
+
+        Such a line becomes ``^\\W*w1\\W+...w2\\W*$`` under
+        ``_create_pattern`` (symbols optional, matched case-insensitively): a
+        query matches it exactly when the query's words, split on non-word
+        characters, are the line's words. So such a line needs no regex at all: ``calc_intents``
+        compares word tuples, and a match carries no entities, which is also
+        the least-greedy answer any line of the intent could give.
+        """
+        return frozenset(_words(line) for line in lines if _PLAIN_LINE.match(line))
+
+    @staticmethod
+    def _with_prefilter(regexes, plain=frozenset()):
         """Wrap an intent's line regexes in an ``_IntentRegexes`` carrying a
         prefilter: one regex that is the alternation of them all, or None
         when the intent has no lines (or just one, which is its own
@@ -299,15 +453,8 @@ class IntentContainer:
         matches. The prefilter is a membership test only; the caller re-runs
         the per-line scan to pick the winning line.
         """
-        wrapped = _IntentRegexes(regexes)
-        if not regexes:
-            wrapped.prefilter = None
-        elif len(regexes) == 1:
-            wrapped.prefilter = regexes[0]
-        else:
-            source = '|'.join('(?:{})'.format(r.pattern) for r in regexes)
-            wrapped.prefilter = re.compile(source, re.IGNORECASE)
-        return wrapped
+        # the prefilter itself is built on first use (see _IntentRegexes)
+        return _IntentRegexes(regexes, plain)
 
     def compile(self):
         """Compile the container. Callers must serialize compiles among
@@ -353,7 +500,7 @@ class IntentContainer:
                 pattern = cached[1]
             else:
                 pattern = r'({})'.format('|'.join(
-                    self._create_pattern(line) for line in values
+                    self._patterns.get(line, self._create_pattern) for line in values
                 ))
             entity_cache[ent_name] = (key, pattern)
             entities[ent_name] = pattern
@@ -378,11 +525,13 @@ class IntentContainer:
                 # each intent's regexes travel with their prefilter in one
                 # object, both built off-lock like the regexes themselves.
                 compiled = self._with_prefilter(
-                    self.create_regexes(lines, intent_name, entities, count()))
+                    self.create_regexes(lines, intent_name, entities, count()),
+                    self._plain_words(lines))
             intent_cache[intent_name] = (key, compiled)
             intents[intent_name] = compiled
         self._entity_cache = entity_cache
         self._intent_cache = intent_cache
+        self._patterns.save()
         duration = time.monotonic() - start
 
         with self.compile_lock:
@@ -468,8 +617,14 @@ class IntentContainer:
                 self._warned_pending_compile = True
         else:
             self._warned_pending_compile = False
+        words = _words(query)
         for intent_name, regexes in self.intents.items():
-            prefilter = getattr(regexes, 'prefilter', None)
+            if words in regexes.plain:
+                # a plain line matched: no entities, which no other line of
+                # the intent can beat (see _plain_words)
+                yield {'name': intent_name, 'entities': {}}
+                continue
+            prefilter = regexes.built_prefilter
             if prefilter is not None and prefilter.match(query) is None:
                 # one C-level match rules the whole intent out; the vast
                 # majority of intents are rejected here without touching the

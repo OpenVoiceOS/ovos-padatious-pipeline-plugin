@@ -346,6 +346,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.stemmers = {}
 
         self.first_train = Event()
+        self._init_time = time.monotonic()
+        # set once the "every language compiled" line has been logged
+        self._reported_all_compiled = False
         self.finished_training_event = Event()
         self.finished_training_event.set()  # is cleared when training starts
 
@@ -410,6 +413,15 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # here as a locale resource rather than hardcoded.
         self._intent_slot_blacklists = {}
         self._intent_slot_types = {}
+
+        # The engine content of the last registration applied per
+        # (lang, internal name), so the second copy of a dual-emitted intent
+        # (ovos-workshop sends every intent on the legacy topic and on
+        # OVOS-INTENT-4 with the same samples) is recognised before it is
+        # expanded, normalised, hashed and loaded again. A detach drops the
+        # entry, so a later registration of the same content applies again.
+        self._applied_registrations: Dict[tuple, tuple] = {}
+        self._applied_registrations_lock = RLock()
 
         # legacy registration contract (kept for back-compat)
         self.bus.on('padatious:register_intent', self.register_intent)
@@ -628,6 +640,17 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._compile_giveup.discard(lang)
         self._spawn_background_trainer()
 
+    def _warm_prefilters(self, lang: str) -> None:
+        """Build ``lang``'s padaos prefilters now, on this background thread,
+        so the first query in that language does not pay for them."""
+        container = self.containers[lang]
+        # a DomainIntentContainer has no padaos of its own; disable_padaos
+        # leaves an IntentContainer without one
+        if not isinstance(container, IntentContainer) or container.padaos is None:
+            return
+        for regexes in list(container.padaos.intents.values()):
+            _ = regexes.prefilter  # the property compiles and caches it
+
     def _train_worker(self) -> None:
         """Background-thread entry point for ``train()``: waits for a quiet
         window (see ``IntentContainer._wait_for_quiet``) before each pass so
@@ -645,8 +668,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         never succeed.
         """
         while True:
-            pending = [lang for lang, engine in self.containers.items()
-                      if engine.needs_compile and lang not in self._compile_giveup]
+            dirty = [lang for lang, engine in self.containers.items()
+                     if engine.needs_compile and lang not in self._compile_giveup]
+            pending = dirty
             if not pending:
                 # Retiring the worker has to be atomic against
                 # _spawn_background_trainer, which is now the only thing
@@ -660,6 +684,11 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     if any(engine.needs_compile and lang not in self._compile_giveup
                            for lang, engine in self.containers.items()):
                         continue
+                    if not self._reported_all_compiled:
+                        self._reported_all_compiled = True
+                        LOG.info(f"padatious: every language compiled "
+                                 f"({len(self.containers)}), "
+                                 f"{time.monotonic() - self._init_time:.1f}s after start")
                     self._retire()
                     return
             now = time.monotonic()
@@ -702,6 +731,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 try:
                     #LOG.debug(f"Training padatious for lang '{lang}'")
                     self.containers[lang].train()
+                    # prefilters only speed queries up: built here, in the
+                    # background, never on a query's thread
+                    self._warm_prefilters(lang)
                 except Exception as e:
                     # a raising _compile()/train() must never leave
                     # finished_training_event cleared - every later
@@ -819,6 +851,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # collapsed onto, so unregistering by either the legacy `.intent`
         # alias or the OVOS-INTENT-4 canonical id works (ovos-core#831).
         intent_name = _dealias_intent_name(intent_name)
+        with self._applied_registrations_lock:
+            for key in [k for k in self._applied_registrations if k[1] == intent_name]:
+                del self._applied_registrations[key]
         if intent_name in self.registered_intents:
             self.registered_intents.remove(intent_name)
             for lang in self.containers:
@@ -1004,27 +1039,84 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if lang in self.containers:
             if message.data['name'] not in self.registered_intents:
                 self.registered_intents.append(message.data['name'])
+            key = (lang, message.data['name'])
+            content = self._registration_content(message)
+            with self._applied_registrations_lock:
+                if content is not None and self._applied_registrations.get(key) == content:
+                    LOG.debug('Padatious intent already registered with the same '
+                              'samples: ' + message.data['name'])
+                    return
+                # claimed before the work, so the copy arriving on the other
+                # wire contract while this one is still being applied is
+                # recognised too (bus handlers run concurrently)
+                if content is not None:
+                    self._applied_registrations[key] = content
             LOG.debug('Registering Padatious intent: ' + message.data['name'])
-            unpacked = self._unpack_object(message)
-            if unpacked is None:
-                return
-            lang, skill_id, name, samples, blacklisted_words = unpacked
-            if self.engine_class == DomainIntentContainer:
-                self.containers[lang].add_domain_intent(skill_id, name, samples,
-                                                        blacklisted_words=blacklisted_words)
-            else:
-                self.containers[lang].add_intent(name, samples,
-                                                 blacklisted_words=blacklisted_words)
-            self._rearm_training(lang)
-            # A re-registration (e.g. new samples replacing an existing
-            # intent's) must retire the old regex/model answer immediately,
-            # not only once the next compile lands - otherwise a query
-            # served between this call and that compile keeps matching the
-            # stale definition at conf 1.0 from the lru_cache.
-            _calc_padatious_intent.cache_clear()
+
+            def add():
+                unpacked = self._unpack_object(message)
+                if unpacked is None:
+                    return None
+                lang, skill_id, name, samples, blacklisted_words = unpacked
+                if self.engine_class == DomainIntentContainer:
+                    self.containers[lang].add_domain_intent(skill_id, name, samples,
+                                                            blacklisted_words=blacklisted_words)
+                else:
+                    self.containers[lang].add_intent(name, samples,
+                                                     blacklisted_words=blacklisted_words)
+                return lang
+
+            def apply():
+                # The copy of this registration on the other wire contract
+                # returned as soon as it saw the claim, so a failure here
+                # would lose both: try once more on its behalf before
+                # releasing the claim.
+                try:
+                    try:
+                        applied_lang = add()
+                    except Exception:
+                        LOG.exception(f"padatious registration of {key} failed; retrying once")
+                        applied_lang = add()
+                except BaseException:
+                    self._forget_registration(key, content)
+                    raise
+                if applied_lang is None:
+                    self._forget_registration(key, content)
+                    return
+                self._rearm_training(applied_lang)
+                # A re-registration (e.g. new samples replacing an existing
+                # intent's) must retire the old regex/model answer immediately,
+                # not only once the next compile lands - otherwise a query
+                # served between this call and that compile keeps matching the
+                # stale definition at conf 1.0 from the lru_cache.
+                _calc_padatious_intent.cache_clear()
+
+            apply()
 
         if self.config.get("instant_train", False) or self.first_train.is_set():
             self.train(message)
+
+    @staticmethod
+    def _registration_content(message) -> Optional[tuple]:
+        """What the engine is given for an intent registration, or None when
+        it cannot be told from the payload alone (samples read from a file).
+
+        Everything else a registration carries (context gates, slot types,
+        slot blacklists, the retained definition) is stored by
+        ``register_intent`` before this is consulted, on every copy.
+        """
+        samples = message.data.get('samples')
+        if not samples:
+            return None
+        return (message.data.get('skill_id'),
+                tuple(samples),
+                tuple(message.data.get('blacklisted_words') or ()))
+
+    def _forget_registration(self, key: tuple, content: Optional[tuple]) -> None:
+        """Release a claim taken in ``register_intent`` that was not applied."""
+        with self._applied_registrations_lock:
+            if content is not None and self._applied_registrations.get(key) == content:
+                del self._applied_registrations[key]
 
     def register_entity(self, message):
         """Messagebus handler for registering entities.
@@ -1050,19 +1142,23 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 if e.get("name") != message.data['name']
                 or standardize_lang(e.get("lang") or self.lang) != lang]
             self.registered_entities.append(message.data)
-            unpacked = self._unpack_object(message)
-            if unpacked is None:
-                return
-            lang, skill_id, name, samples, _ = unpacked
-            LOG.debug('Registering Padatious entity: ' + message.data['name'])
-            if self.engine_class == DomainIntentContainer:
-                self.containers[lang].add_domain_entity(skill_id, name, samples)
-            else:
-                self.containers[lang].add_entity(name, samples)
-            self._rearm_training(lang)
-            # See register_intent: a replaced entity's slot values must stop
-            # matching immediately, not only after the next compile.
-            _calc_padatious_intent.cache_clear()
+
+            def apply():
+                unpacked = self._unpack_object(message)
+                if unpacked is None:
+                    return
+                lang, skill_id, name, samples, _ = unpacked
+                LOG.debug('Registering Padatious entity: ' + message.data['name'])
+                if self.engine_class == DomainIntentContainer:
+                    self.containers[lang].add_domain_entity(skill_id, name, samples)
+                else:
+                    self.containers[lang].add_entity(name, samples)
+                self._rearm_training(lang)
+                # See register_intent: a replaced entity's slot values must stop
+                # matching immediately, not only after the next compile.
+                _calc_padatious_intent.cache_clear()
+
+            apply()
 
     # ------------------------------------------------------------------ #
     # OVOS-INTENT-4 spec registration handlers                           #

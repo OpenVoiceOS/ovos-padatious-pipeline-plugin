@@ -132,7 +132,9 @@ class TestLineAlternationOverCap(unittest.TestCase):
         c.add_intent('go', [f'({self.branches}) there', 'a normal line here'])
         c.compile()
 
-        self.assertEqual(len(c.intents['go']), 1)
+        # the over-cap line is dropped; the plain sibling needs no regex
+        self.assertEqual(len(c.intents['go']), 0)
+        self.assertEqual(c.intents['go'].plain, {('a', 'normal', 'line', 'here')})
         matches = list(c.calc_intents(' a normal line here '))
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0]['name'], 'go')
@@ -184,8 +186,11 @@ class TestOverCapLineStillTrainsOnTheNeuralSide(unittest.TestCase):
         # the over-cap line contributed nothing; only the normal sibling
         # line got a padaos pattern
         patterns = self.container.padaos.intents['go']
-        self.assertEqual(len(patterns), 1)
-        self.assertTrue(patterns[0].match(' go there right now '))
+        # the sibling is a plain line: it matches by its words, no regex
+        self.assertEqual(len(patterns), 0)
+        self.assertEqual(patterns.plain, {('go', 'there', 'right', 'now')})
+        self.assertEqual([m['name'] for m in self.container.padaos.calc_intents(' go there right now ')],
+                         ['go'])
 
     def test_neural_tier_still_scores_an_in_group_utterance(self):
         # expand_template turned the over-cap group into per-branch

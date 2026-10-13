@@ -21,23 +21,41 @@ class TrainData:
     """
     Training data used to access collections
     of tokenized sentences in intent files
+
+    Lines are tokenized the first time something reads them. Only training
+    reads them, and a restart with unchanged skills loads every model from
+    the cache: tokenizing every registration's lines up front was more than
+    a tenth of the plugin's share of such a restart.
     """
 
     def __init__(self):
-        self.sent_lists = {}
+        self._sents = {}
+        #: name -> raw lines not expanded and tokenized yet
+        self._pending = {}
+
+    @property
+    def sent_lists(self):
+        for name in list(self._pending):
+            self._materialize(name)
+        return self._sents
+
+    @sent_lists.setter
+    def sent_lists(self, value):
+        self._sents = value
+        self._pending = {}
 
     def copy(self) -> 'TrainData':
         # NOTE: new samples might be added to TrainData object during obj.train(data)
         # which would result in ovos_padatious.training_manager:train:153 - ERROR - Error training XXX: dictionary changed size during iteration
         data = TrainData()
-        data.sent_lists = dict(self.sent_lists)
+        data._sents = dict(self._sents)
+        data._pending = dict(self._pending)
         return data
 
     def add_lines(self, name, lines):
         warn_hash_wildcard(name, lines)
-        lines = expand_lines(lines)
-        sents = [tokenize(line) for line in lines if line.strip()]
-        if not sents:
+        lines = [line for line in expand_lines(lines) if line.strip()]
+        if not lines:
             # every line was malformed and skipped by expand_lines: adding
             # an empty entry would register a dead intent/entity that can
             # never match (conf 0.0 forever) instead of surfacing the
@@ -49,11 +67,17 @@ class TrainData:
             )
             self.remove_lines(name)
             return
-        self.sent_lists[name] = sents
+        self._sents.pop(name, None)
+        self._pending[name] = lines
+
+    def _materialize(self, name):
+        lines = self._pending.pop(name, None)
+        if lines is not None:
+            self._sents[name] = [tokenize(line) for line in lines]
 
     def remove_lines(self, name):
-        if name in self.sent_lists:
-            del self.sent_lists[name]
+        self._pending.pop(name, None)
+        self._sents.pop(name, None)
 
     def add_file(self, name, file_name):
         with open(file_name, 'r') as f:
@@ -65,7 +89,8 @@ class TrainData:
                 yield i
 
     def my_sents(self, my_name):
-        for i in self.sent_lists[my_name]:
+        self._materialize(my_name)
+        for i in self._sents[my_name]:
             yield i
 
     def other_sents(self, my_name):

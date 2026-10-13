@@ -67,10 +67,14 @@ class IntentContainer:
 
     def __init__(self, cache_dir: Optional[str] = None,
                  disable_padaos: bool = False,
-                 inference_workers: Optional[int] = None) -> None:
+                 inference_workers: Optional[int] = None,
+                 pattern_cache_name: str = "padaos-patterns.json") -> None:
         cache_dir = cache_dir or f"{xdg_data_home()}/{get_xdg_base()}/intent_cache"
         os.makedirs(cache_dir, exist_ok=True)
         self.cache_dir: str = cache_dir
+        # containers sharing a cache_dir (a DomainIntentContainer's) each
+        # need their own file: a save keeps only that container's lines
+        self.pattern_cache_name = pattern_cache_name
         self.must_train: bool = False
         self.inference_workers = inference_workers
         self.intents: IntentManager = IntentManager(
@@ -80,7 +84,8 @@ class IntentContainer:
         if self.disable_padaos:
             self.padaos = None
         else:
-            self.padaos: padaos.IntentContainer = padaos.IntentContainer()
+            self.padaos: padaos.IntentContainer = padaos.IntentContainer(
+                pattern_cache=os.path.join(self.cache_dir, self.pattern_cache_name))
         self.train_thread: Optional[Any] = None  # deprecated
         self.serialized_args: List[Dict[str, Any]] = []  # Serialized calls for training intents/entities
         self.blacklisted_words: Dict[str, List[str]] = collections.defaultdict(list)
@@ -177,7 +182,8 @@ class IntentContainer:
         if self.disable_padaos:
             self.padaos = None
         else:
-            self.padaos: padaos.IntentContainer = padaos.IntentContainer()
+            self.padaos: padaos.IntentContainer = padaos.IntentContainer(
+                pattern_cache=os.path.join(self.cache_dir, self.pattern_cache_name))
         self.serialized_args = []
         self._ever_trained = False
         self._first_compile_done.clear()
@@ -496,20 +502,29 @@ class IntentContainer:
     # making every query pay a long cap for an answer it will not get.
     FIRST_COMPILE_WAIT_S = 3.0
 
-    def _wait_for_quiet(self) -> None:
+    def _wait_for_quiet(self, window: Optional[float] = None) -> None:
         """Block until no registration has dirtied this container for
-        ``_TRAIN_DEBOUNCE_S``, or until ``_TRAIN_MAX_DEFER_S`` total has
-        elapsed since this wait started - whichever comes first."""
+        ``window`` (default ``_TRAIN_DEBOUNCE_S``), or until
+        ``_TRAIN_MAX_DEFER_S`` total has elapsed since this wait started -
+        whichever comes first."""
+        window = self._TRAIN_DEBOUNCE_S if window is None else window
         deadline = time.monotonic() + self._TRAIN_MAX_DEFER_S
         while True:
             snapshot = self._last_dirty_at
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            if now - snapshot >= window:
+                # already quiet for a full window: a worker draining several
+                # containers one after another used to sleep a whole window
+                # on each of them anyway (11 languages: over 20 s idle)
+                return
+            remaining = deadline - now
             if remaining <= 0:
                 return
             # wait on the shutdown flag rather than sleeping blindly, so a
             # retiring container does not hold shutdown() for a whole
-            # debounce interval before the worker notices
-            if self._shutdown.wait(min(self._TRAIN_DEBOUNCE_S, remaining)):
+            # debounce interval before the worker notices; only the part of
+            # the window not already quiet is left to wait
+            if self._shutdown.wait(min(window - (now - snapshot), remaining)):
                 return
             if self._last_dirty_at == snapshot:
                 return

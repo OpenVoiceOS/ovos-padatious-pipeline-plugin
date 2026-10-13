@@ -4,6 +4,47 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.2.8a1 — a restart redoes less registration work
+
+Measured on a runtime with 18 skills serving 11 languages, where this plugin
+was about half of a restart's CPU:
+
+- The second copy of a dual-emitted intent (ovos-workshop sends every intent
+  on `padatious:register_intent` and on `ovos.intent.register.template` with
+  the same samples) is recognised before it is expanded, normalised, hashed
+  and loaded again. Context gates, slot types and slot blacklists from either
+  copy are still recorded. A detach or deregistration forgets it, so the same
+  content registered again afterwards is applied.
+- A registration whose training hash matches the model already loaded for
+  that name keeps it instead of parsing its networks from the cache again.
+- Cached networks are parsed in one numpy pass instead of one Python
+  `float()` per weight. The loaded weights are bit-identical.
+- `lines_hash` hashes the sorted lines in one call. The digest is unchanged,
+  so every existing intent cache stays valid.
+- A padaos intent's prefilter (the alternation of all its line regexes) is
+  no longer compiled with the line regexes. It is built by a background warm
+  after a language compiles; a query uses it once it is built and scans the
+  line regexes until then, so a query never pays for building it.
+- Every configured language is registered and compiled the same way, once
+  its registrations have been quiet for the debounce window; the plugin
+  waits for no outside event. Prefilters are then built in the background.
+  The log says `padatious: every language compiled` when that is done.
+- A template line of words separated by spaces and plain symbols (no slot,
+  digit, group, `#`, `:`, `\` or `~`) gets no regex: it matches a query
+  exactly when their words, split on non-word characters, are the same,
+  which is what its regex matched. About half of a hub's lines are like
+  that; compiling a language costs half as much, and so does its memory.
+- Each template line's regex source is kept in `padaos-patterns.json` in
+  the language's intent cache, so a restart does not rewrite it again.
+- The training worker no longer sleeps a full debounce window on each
+  language that is already quiet (11 languages: over 20 s idle).
+- Training data is tokenized when training reads it, not at registration.
+  A restart that loads every model from the cache tokenizes nothing.
+  Malformed lines are still reported, and still refused, at registration.
+
+Measured on the same runtime: the first utterance in a secondary language
+after boot went from 1-7 s to 0.3-0.4 s.
+
 ## 2.0.13a3 — re-registration cache invalidation and bounded compile retries
 
 Two more gaps in the 2.0.13a2 entry below, found by a further adversarial
