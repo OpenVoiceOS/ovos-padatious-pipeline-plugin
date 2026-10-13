@@ -98,8 +98,9 @@ class TestPrefilterEquivalence(unittest.TestCase):
 class TestPrefilterTracksRegexes(unittest.TestCase):
     def test_prefilter_tracks_intents_across_mutation(self):
         c = padaos.IntentContainer()
-        c.add_intent("a", ["alpha one!", "alpha two!"])
-        c.add_intent("b", ["bravo!"])
+        # digits keep these lines on regexes (plain lines have none)
+        c.add_intent("a", ["alpha 1", "alpha 2"])
+        c.add_intent("b", ["bravo 3"])
         c.compile()
         self.assertIsNotNone(c.intents["a"].prefilter)
 
@@ -113,11 +114,11 @@ class TestPrefilterTracksRegexes(unittest.TestCase):
         c.compile()
         self.assertEqual([m['name'] for m in c.calc_intents(" completely different ")],
                          ["a"])
-        self.assertEqual(list(c.calc_intents(" alpha one ")), [])
+        self.assertEqual(list(c.calc_intents(" alpha 1 ")), [])
 
     def test_single_line_intent_reuses_its_regex_as_prefilter(self):
         c = padaos.IntentContainer()
-        c.add_intent("one", ["just one line?"])
+        c.add_intent("one", ["just 1 line"])
         c.compile()
         self.assertIs(c.intents["one"].prefilter, c.intents["one"][0])
 
