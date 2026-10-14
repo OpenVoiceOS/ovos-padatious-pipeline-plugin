@@ -133,7 +133,15 @@ class TrainingManager:
                 LOG.debug(f"First time training '{name}")
 
             retrain = reload_cache or old_hsh != new_hsh
-            if not retrain:
+            live = next((i for i in self.objects if i.name == name), None)
+            if not retrain and live is not None and live.hash == new_hsh:
+                # the live object was trained on exactly these lines (it was
+                # loaded or trained under this hash): reloading it from the
+                # cache would rebuild an identical object. Every intent is
+                # registered twice at boot (the legacy and the OVOS-INTENT-4
+                # contract), and each reload parses its networks again.
+                LOG.debug(f"{name} unchanged, keeping the loaded model")
+            elif not retrain:
                 try:
                     LOG.debug(f"Loading {name} from intent cache")
                     _replace_live_object(self.cls.from_file(name=name, folder=self.cache))

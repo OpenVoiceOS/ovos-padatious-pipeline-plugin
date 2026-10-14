@@ -36,10 +36,10 @@ def lines_hash(lines):
     Returns:
         bytearray: Binary hash
     """
-    x = xxh32()
-    for i in sorted(lines):
-        x.update(i.encode())
-    return x.digest()
+    # xxh32 is a streaming hash: one update over the concatenation equals
+    # one update per line, so the digest (and every cache keyed on it) is
+    # unchanged, without a Python-level encode and update call per line.
+    return xxh32("".join(sorted(lines)).encode()).digest()
 
 
 @functools.lru_cache(maxsize=1)
