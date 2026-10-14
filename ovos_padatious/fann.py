@@ -341,7 +341,7 @@ class neural_net:
 
         neurons = _parse_tuples(fields[
             "neurons (num_inputs, activation_function, activation_steepness)"])
-        conns = _parse_tuples(fields["connections (connected_to_neuron, weight)"])
+        weights = _parse_weights(fields["connections (connected_to_neuron, weight)"])
 
         # per-layer activation/steepness from the first real neuron of the layer
         pos = sizes[0]
@@ -354,16 +354,34 @@ class neural_net:
                 self.hidden_activation = func
             pos += sizes[layer_idx]
 
+        # connections are written neuron by neuron (outer j), each neuron's
+        # inputs in order (inner k), so a layer's block is its weight matrix
+        # transposed. Parsed in one numpy pass instead of one Python float()
+        # and one item assignment per weight: a restart reloads every cached
+        # intent's net in every configured language, and the per-weight loop
+        # was most of that.
         self.weights = []
         ci = 0
         for n_in, n_out in zip(self.layers[:-1], self.layers[1:]):
-            w = np.empty((n_in + 1, n_out))
-            for j in range(n_out):
-                for k in range(n_in + 1):
-                    w[k, j] = float(conns[ci][1])
-                    ci += 1
-            self.weights.append(w)
+            n = (n_in + 1) * n_out
+            block = weights[ci:ci + n]
+            if len(block) != n:
+                raise ValueError(f"{path}: expected {n} connection weights "
+                                 f"for a {n_in}->{n_out} layer, found {len(block)}")
+            self.weights.append(np.ascontiguousarray(block.reshape(n_out, n_in + 1).T))
+            ci += n
         return True
+
+
+def _parse_weights(text: str) -> np.ndarray:
+    """The weights of a ``(connected_to_neuron, weight) ...`` field, in order.
+
+    Every tuple is ``(index, weight)``, so after dropping the punctuation the
+    tokens alternate index, weight. ``np.array(..., dtype=float64)`` parses each
+    token exactly as ``float()`` does, so the loaded net is bit-identical.
+    """
+    tokens = text.replace("(", " ").replace(")", " ").replace(",", " ").split()
+    return np.array(tokens[1::2], dtype=np.float64)
 
 
 def _parse_tuples(text: str) -> List[List[str]]:
