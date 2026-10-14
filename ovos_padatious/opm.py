@@ -21,7 +21,7 @@ from collections import defaultdict
 from copy import deepcopy
 from functools import lru_cache
 from os.path import expanduser, isfile
-from threading import Event, RLock, Thread, current_thread
+from threading import Event, Lock, RLock, Thread, current_thread
 from typing import Optional, Dict, List, Union, Type
 
 import snowballstemmer
@@ -410,6 +410,25 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # here as a locale resource rather than hardcoded.
         self._intent_slot_blacklists = {}
         self._intent_slot_types = {}
+
+        # The engine content of the last registration applied per
+        # (lang, internal name), so the second copy of a dual-emitted intent
+        # (ovos-workshop sends every intent on the legacy topic and on
+        # OVOS-INTENT-4 with the same samples) is recognised before it is
+        # expanded, normalised, hashed and loaded again. A detach drops the
+        # entry, so a later registration of the same content applies again.
+        self._applied_registrations: Dict[tuple, tuple] = {}
+        self._applied_registrations_lock = RLock()
+        # Serializes claim-through-apply per (lang, name) key: the claim at
+        # the top of register_intent and the add()/apply() that materializes
+        # it are two separate steps, and two concurrent registrations for
+        # the SAME key with DIFFERENT content (not the dual-emit same-content
+        # case _applied_registrations_lock already covers) could otherwise
+        # interleave, leaving the claim recording one registration's content
+        # while the container actually holds the other's. Per-key, not
+        # global, so unrelated keys still apply concurrently.
+        self._registration_key_locks: Dict[tuple, Lock] = {}
+        self._registration_key_locks_guard = Lock()
 
         # legacy registration contract (kept for back-compat)
         self.bus.on('padatious:register_intent', self.register_intent)
@@ -819,6 +838,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # collapsed onto, so unregistering by either the legacy `.intent`
         # alias or the OVOS-INTENT-4 canonical id works (ovos-core#831).
         intent_name = _dealias_intent_name(intent_name)
+        with self._applied_registrations_lock:
+            for key in [k for k in self._applied_registrations if k[1] == intent_name]:
+                del self._applied_registrations[key]
         if intent_name in self.registered_intents:
             self.registered_intents.remove(intent_name)
             for lang in self.containers:
@@ -1004,27 +1026,98 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         if lang in self.containers:
             if message.data['name'] not in self.registered_intents:
                 self.registered_intents.append(message.data['name'])
-            LOG.debug('Registering Padatious intent: ' + message.data['name'])
-            unpacked = self._unpack_object(message)
-            if unpacked is None:
-                return
-            lang, skill_id, name, samples, blacklisted_words = unpacked
-            if self.engine_class == DomainIntentContainer:
-                self.containers[lang].add_domain_intent(skill_id, name, samples,
-                                                        blacklisted_words=blacklisted_words)
-            else:
-                self.containers[lang].add_intent(name, samples,
-                                                 blacklisted_words=blacklisted_words)
-            self._rearm_training(lang)
-            # A re-registration (e.g. new samples replacing an existing
-            # intent's) must retire the old regex/model answer immediately,
-            # not only once the next compile lands - otherwise a query
-            # served between this call and that compile keeps matching the
-            # stale definition at conf 1.0 from the lru_cache.
-            _calc_padatious_intent.cache_clear()
+            key = (lang, message.data['name'])
+            content = self._registration_content(message)
+            # Claim-through-apply is one atomic step per key: two concurrent
+            # registrations for the SAME key with DIFFERENT content (not the
+            # dual-emit same-content case the dict check below covers) must
+            # not interleave their claim and their add(), or the claim can
+            # end up recording one registration's content while the
+            # container actually holds the other's.
+            with self._lock_for_key(key):
+                with self._applied_registrations_lock:
+                    if content is not None and self._applied_registrations.get(key) == content:
+                        LOG.debug('Padatious intent already registered with the same '
+                                  'samples: ' + message.data['name'])
+                        return
+                    # claimed before the work, so the copy arriving on the other
+                    # wire contract while this one is still being applied is
+                    # recognised too (bus handlers run concurrently)
+                    if content is not None:
+                        self._applied_registrations[key] = content
+                LOG.debug('Registering Padatious intent: ' + message.data['name'])
+
+                def add():
+                    unpacked = self._unpack_object(message)
+                    if unpacked is None:
+                        return None
+                    lang, skill_id, name, samples, blacklisted_words = unpacked
+                    if self.engine_class == DomainIntentContainer:
+                        self.containers[lang].add_domain_intent(skill_id, name, samples,
+                                                                blacklisted_words=blacklisted_words)
+                    else:
+                        self.containers[lang].add_intent(name, samples,
+                                                         blacklisted_words=blacklisted_words)
+                    return lang
+
+                def apply():
+                    # The copy of this registration on the other wire contract
+                    # returned as soon as it saw the claim, so a failure here
+                    # would lose both: try once more on its behalf before
+                    # releasing the claim.
+                    try:
+                        try:
+                            applied_lang = add()
+                        except Exception:
+                            LOG.exception(f"padatious registration of {key} failed; retrying once")
+                            applied_lang = add()
+                    except BaseException:
+                        self._forget_registration(key, content)
+                        raise
+                    if applied_lang is None:
+                        self._forget_registration(key, content)
+                        return
+                    self._rearm_training(applied_lang)
+                    # A re-registration (e.g. new samples replacing an existing
+                    # intent's) must retire the old regex/model answer immediately,
+                    # not only once the next compile lands - otherwise a query
+                    # served between this call and that compile keeps matching the
+                    # stale definition at conf 1.0 from the lru_cache.
+                    _calc_padatious_intent.cache_clear()
+
+                apply()
 
         if self.config.get("instant_train", False) or self.first_train.is_set():
             self.train(message)
+
+    @staticmethod
+    def _registration_content(message) -> Optional[tuple]:
+        """What the engine is given for an intent registration, or None when
+        it cannot be told from the payload alone (samples read from a file).
+
+        Everything else a registration carries (context gates, slot types,
+        slot blacklists, the retained definition) is stored by
+        ``register_intent`` before this is consulted, on every copy.
+        """
+        samples = message.data.get('samples')
+        if not samples:
+            return None
+        return (message.data.get('skill_id'),
+                tuple(samples),
+                tuple(message.data.get('blacklisted_words') or ()))
+
+    def _forget_registration(self, key: tuple, content: Optional[tuple]) -> None:
+        """Release a claim taken in ``register_intent`` that was not applied."""
+        with self._applied_registrations_lock:
+            if content is not None and self._applied_registrations.get(key) == content:
+                del self._applied_registrations[key]
+
+    def _lock_for_key(self, key: tuple) -> Lock:
+        """The one lock that serializes claim-through-apply for ``key``,
+        created on first use. Per-key so registrations for different
+        (lang, name) keys still apply concurrently."""
+        with self._registration_key_locks_guard:
+            return self._registration_key_locks.setdefault(key, Lock())
 
     def register_entity(self, message):
         """Messagebus handler for registering entities.
