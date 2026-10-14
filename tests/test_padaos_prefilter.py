@@ -13,13 +13,20 @@ from ovos_padatious import padaos
 
 
 def _brute_force(container, query):
-    """Reference implementation: scan every line of every intent, ignore
-    the prefilter entirely, and apply the same least-greedy rule."""
+    """Reference implementation: compile a regex for EVERY line of every
+    intent (plain lines included, as padaos always did), ignore the
+    prefilter and the plain-line shortcut, and apply the same least-greedy
+    rule."""
+    from itertools import count
     q = ' ' + query + ' '
     out = {}
-    for name, regexes in container.intents.items():
+    for name, lines in container.intent_lines.items():
+        regexes = [container._create_regex(line, name, container.entities, count())
+                   for line in sorted(lines, key=len, reverse=True) if line.strip()]
         best, best_len = None, None
         for rx in regexes:
+            if rx is None:
+                continue
             m = rx.match(q)
             if m is None:
                 continue
@@ -56,6 +63,41 @@ class TestPrefilterEquivalence(unittest.TestCase):
                   "travel to nowhere"]:
             self._assert_equiv(q)
 
+    def test_plain_lines_match_like_their_regexes(self):
+        c = padaos.IntentContainer()
+        c.add_entity("city", ["porto", "lisbon"])
+        c.add_intent("time", ["what time is it", "quelle heure est-il", "l'heure",
+                              "  hoe  laat is het ", "¿qué hora es?", "à quelle heure"])
+        c.add_intent("travel", ["travel to {city}", "travel there"])
+        c.add_intent("count", ["count to 3", "count now"])
+        c.compile()
+        self.assertEqual(c.intents["time"].plain,
+                         {("what", "time", "is", "it"), ("quelle", "heure", "est", "il"),
+                          ("l", "heure"), ("hoe", "laat", "is", "het"),
+                          ("qué", "hora", "es"), ("à", "quelle", "heure")})
+        for q in ["what time is it", "WHAT TIME IS IT?", "  what   time is it!! ",
+                  "what-time is it", "what time is it now", "whatever time is it",
+                  "what time is", "Qué hora es", "QUÉ HORA ES", "que hora es",
+                  "hoe laat is het", "à quelle heure ?", "quelle heure est-il",
+                  "quelle heure est il", "quelle heure estil", "l heure", "lheure",
+                  "L'HEURE ?", "qué hora es?", "travel there", "travel to porto",
+                  "travel to lisbon", "count now", "count to 3", "count to 4",
+                  "what_time is it", "what time is it 2", ""]:
+            got = {m['name']: m['entities'] for m in c.calc_intents(q)}
+            self.assertEqual(got, _brute_force(c, q), q)
+
+    def test_a_dotted_capital_i_folds_like_the_regex(self):
+        # "İ".lower() is "i" plus a combining dot, which is no word character
+        c = padaos.IntentContainer()
+        c.add_intent("weather", ["İstanbul hava durumu"])
+        c.add_intent("city", ["istanbul"])
+        c.compile()
+        for q in ["İstanbul hava durumu", "istanbul hava durumu", "ISTANBUL HAVA DURUMU",
+                  "İSTANBUL HAVA DURUMU", "İstanbul", "istanbul"]:
+            got = {m['name']: m['entities'] for m in c.calc_intents(q)}
+            self.assertEqual(got, _brute_force(c, q), q)
+            self.assertTrue(got, q)
+
     def test_least_greedy_line_wins(self):
         # both "book {a}" and "book {a} for {b}" match; the least-greedy
         # rule (smallest total captured length) must pick the same line
@@ -68,8 +110,9 @@ class TestPrefilterEquivalence(unittest.TestCase):
 class TestPrefilterTracksRegexes(unittest.TestCase):
     def test_prefilter_tracks_intents_across_mutation(self):
         c = padaos.IntentContainer()
-        c.add_intent("a", ["alpha one", "alpha two"])
-        c.add_intent("b", ["bravo"])
+        # digits keep these lines on regexes (plain lines have none)
+        c.add_intent("a", ["alpha 1", "alpha 2"])
+        c.add_intent("b", ["bravo 3"])
         c.compile()
         self.assertIsNotNone(c.intents["a"].prefilter)
 
@@ -83,11 +126,11 @@ class TestPrefilterTracksRegexes(unittest.TestCase):
         c.compile()
         self.assertEqual([m['name'] for m in c.calc_intents(" completely different ")],
                          ["a"])
-        self.assertEqual(list(c.calc_intents(" alpha one ")), [])
+        self.assertEqual(list(c.calc_intents(" alpha 1 ")), [])
 
     def test_single_line_intent_reuses_its_regex_as_prefilter(self):
         c = padaos.IntentContainer()
-        c.add_intent("one", ["just one line"])
+        c.add_intent("one", ["just 1 line"])
         c.compile()
         self.assertIs(c.intents["one"].prefilter, c.intents["one"][0])
 
