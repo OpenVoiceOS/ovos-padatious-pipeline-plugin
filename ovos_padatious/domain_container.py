@@ -76,8 +76,9 @@ class DomainIntentContainer:
             self._background_trainer = threading.Thread(target=self.train, daemon=True)
             self._background_trainer.start()
 
-    def _wait_for_quiet(self) -> None:
-        """Delegates quiescence to ``domain_engine`` and every dirty
+    def _wait_for_quiet(self, window: Optional[float] = None) -> None:
+        """Delegates quiescence (``window`` as in
+        ``IntentContainer._wait_for_quiet``) to ``domain_engine`` and every dirty
         per-domain sub-container - unlike ``IntentContainer``, this class
         has no debounce timer of its own; each underlying container
         already implements the correct wait-for-quiet/max-defer algorithm
@@ -89,10 +90,10 @@ class DomainIntentContainer:
         emitted and nothing ever trained outside of a query forcing it.
         """
         if self.domain_engine.needs_compile:
-            self.domain_engine._wait_for_quiet()
+            self.domain_engine._wait_for_quiet(window)
         for engine in list(self.domains.values()):
             if engine.needs_compile:
-                engine._wait_for_quiet()
+                engine._wait_for_quiet(window)
 
     def instantiate_from_disk(self) -> None:
         """
