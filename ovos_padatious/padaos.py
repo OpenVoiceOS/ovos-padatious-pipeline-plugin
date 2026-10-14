@@ -116,6 +116,12 @@ _PLAIN_LINE = re.compile(r'^(?:\s|{s})*[^\W\d]+(?:(?:\s|{s})+[^\W\d]+)*(?:\s|{s}
 _NON_WORD = re.compile(r'\W+')
 
 
+#: Characters ``re.IGNORECASE`` treats as one letter although ``str.lower()``
+#: keeps them apart (dotless i, long s, micro sign, final sigma, ...), mapped
+#: to one form so word comparison folds exactly as the line regexes did.
+_SRE_FOLD = {0x0131: 'i', 0x017F: 's', 0x0399: 'ι', 0x039C: 'µ', 0x03B9: 'ι', 0x03BC: 'µ', 0x03C2: 'σ', 0x03D0: 'β', 0x03D1: 'θ', 0x03D5: 'φ', 0x03D6: 'π', 0x03F0: 'κ', 0x03F1: 'ρ', 0x03F5: 'ε', 0x1C80: 'в', 0x1C81: 'д', 0x1C82: 'о', 0x1C83: 'с', 0x1C84: 'т', 0x1C85: 'т', 0x1C86: 'ъ', 0x1C87: 'ѣ', 0x1E9B: 'ṡ', 0x1FBE: 'ι', 0x1FD3: 'ΐ', 0x1FE3: 'ΰ', 0xA64A: 'ᲈ', 0xA64B: 'ᲈ', 0xFB06: 'ﬅ'}
+
+
 def _words(text):
     """``text`` split on runs of non-word characters, each word lowercased.
 
@@ -123,7 +129,7 @@ def _words(text):
     ("İstanbul") into "i" plus a combining dot, and a combining mark is not a
     word character. The dotted I folds to a plain "i", as the regex's
     IGNORECASE matching folds it."""
-    return tuple(w.replace('İ', 'i').lower() for w in _NON_WORD.split(text) if w)
+    return tuple(w.replace('İ', 'i').lower().translate(_SRE_FOLD) for w in _NON_WORD.split(text) if w)
 
 
 class _PatternCache:
