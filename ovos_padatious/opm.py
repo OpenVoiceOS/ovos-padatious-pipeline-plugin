@@ -628,6 +628,17 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         self._compile_giveup.discard(lang)
         self._spawn_background_trainer()
 
+    def _warm_prefilters(self, lang: str) -> None:
+        """Build ``lang``'s padaos prefilters now, on this background thread,
+        so the first query in that language does not pay for them."""
+        container = self.containers[lang]
+        # a DomainIntentContainer has no padaos of its own; disable_padaos
+        # leaves an IntentContainer without one
+        if not isinstance(container, IntentContainer) or container.padaos is None:
+            return
+        for regexes in list(container.padaos.intents.values()):
+            _ = regexes.prefilter  # the property compiles and caches it
+
     def _train_worker(self) -> None:
         """Background-thread entry point for ``train()``: waits for a quiet
         window (see ``IntentContainer._wait_for_quiet``) before each pass so
@@ -702,6 +713,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                 try:
                     #LOG.debug(f"Training padatious for lang '{lang}'")
                     self.containers[lang].train()
+                    # prefilters only speed queries up: built here, in the
+                    # background, never on a query's thread
+                    self._warm_prefilters(lang)
                 except Exception as e:
                     # a raising _compile()/train() must never leave
                     # finished_training_event cleared - every later
