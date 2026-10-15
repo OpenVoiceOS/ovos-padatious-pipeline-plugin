@@ -45,8 +45,10 @@ def lines_hash(lines):
 @functools.lru_cache(maxsize=1)
 def _combining_marks():
     """One character class of every combining mark (Unicode category M*)
-    in the Basic Multilingual Plane, built once."""
-    marks = ''.join(chr(c) for c in range(0x10000)
+    across the full Unicode range, built once: historic scripts and the
+    combiners used with emoji modifiers live outside the Basic Multilingual
+    Plane."""
+    marks = ''.join(chr(c) for c in range(0x110000)
                     if unicodedata.category(chr(c)).startswith('M'))
     return re.compile('[' + re.escape(marks) + ']')
 
