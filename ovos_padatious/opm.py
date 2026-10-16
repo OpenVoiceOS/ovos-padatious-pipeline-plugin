@@ -61,6 +61,10 @@ PadatiousEngine = Union[Type[IntentContainer], Type[DomainIntentContainer]]
 # padaos parser recognises the same lowercase/underscore/colon name form.
 _SLOT_RE = re.compile(r"{([a-z_:]+)}")
 
+PADATIOUS_PIPELINE_ID = "ovos-padatious-pipeline-plugin"
+PIPELINE_LOADING = "ovos.pipeline.loading"
+PIPELINE_LOADED = "ovos.pipeline.loaded"
+
 
 
 def normalize_utterances(utterances: List[str], lang: str, cast_to_ascii: bool = True,
@@ -346,6 +350,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             self.stemmers = {}
 
         self.first_train = Event()
+        self._init_time = time.monotonic()
+        self._reported_all_compiled = False
         self.finished_training_event = Event()
         self.finished_training_event.set()  # is cleared when training starts
 
@@ -563,6 +569,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             if self._background_trainer is not None and self._background_trainer.is_alive():
                 return
             self._background_trainer = Thread(target=self._guarded_train_worker, daemon=True)
+            self.bus.emit(Message(PIPELINE_LOADING,
+                                  {"pipeline_id": PADATIOUS_PIPELINE_ID}))
             self._background_trainer.start()
 
     def _retire(self) -> None:
@@ -592,6 +600,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         finally:
             with self._train_spawn_lock:
                 if self._background_trainer is current_thread():
+                    self.bus.emit(Message(PIPELINE_LOADED,
+                                          {"pipeline_id": PADATIOUS_PIPELINE_ID}))
                     self._retire()
 
     # Backoff schedule for a lang container whose compile keeps raising:
@@ -671,6 +681,13 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     if any(engine.needs_compile and lang not in self._compile_giveup
                            for lang, engine in self.containers.items()):
                         continue
+                    if not self._reported_all_compiled and not self._compile_giveup:
+                        self._reported_all_compiled = True
+                        LOG.info(f"padatious: every language compiled "
+                                 f"({len(self.containers)}), "
+                                 f"{time.monotonic() - self._init_time:.1f}s after start")
+                    self.bus.emit(Message(PIPELINE_LOADED,
+                                          {"pipeline_id": PADATIOUS_PIPELINE_ID}))
                     self._retire()
                     return
             now = time.monotonic()
