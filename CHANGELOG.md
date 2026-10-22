@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.2.8a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.8a1) (2026-10-22)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.7a1...2.2.8a1)
+
+**Merged pull requests:**
+
+- fix\(deps\): accept ovos-plugin-manager 3 [\#187](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/187) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+- fix: plain lines fold letters the way re.IGNORECASE does [\#186](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/186) ([goldyfruit](https://github.com/goldyfruit))
+- fix: combining marks outside the BMP count as combining marks [\#185](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/185) ([goldyfruit](https://github.com/goldyfruit))
+- perf: the training worker does not wait out a window that is already quiet [\#184](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/184) ([goldyfruit](https://github.com/goldyfruit))
+- perf: padaos plain lines match by words; prefilters and patterns are cached [\#183](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/183) ([goldyfruit](https://github.com/goldyfruit))
+- perf: a restart parses cached networks, hashes and tokenizes less [\#182](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/182) ([goldyfruit](https://github.com/goldyfruit))
+- fix: keep combining marks inside tokens [\#178](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/178) ([goldyfruit](https://github.com/goldyfruit))
+- perf: padaos rebuilds only the intents a registration changed [\#176](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/176) ([goldyfruit](https://github.com/goldyfruit))
+
 ## [2.2.7a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.2.7a1) (2026-09-26)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.2.6a1...2.2.7a1)
@@ -353,41 +368,21 @@
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.7.0a1...1.7.1a1)
 
-**Merged pull requests:**
-
-- fix: lift ovos-spec-tools upper bound \(spec-tools 1.x\) [\#78](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/78) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.7.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.7.0a1) (2026-06-28)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.6.2a1...1.7.0a1)
-
-**Merged pull requests:**
-
-- feat: consume OVOS-INTENT-4 template registration \(alongside legacy\) [\#72](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/72) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.6.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.6.2a1) (2026-06-27)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.6.1a1...1.6.2a1)
 
-**Merged pull requests:**
-
-- fix: drop unhashable Session from lru\_cache key \(ovos-bus-client 2.x compat\) [\#75](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/75) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.6.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.6.1a1) (2026-06-27)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.6.0a1...1.6.1a1)
 
-**Merged pull requests:**
-
-- fix\(deps\): allow ovos-workshop 9.x \(widen \<9.0.0 -\> \<10.0.0\) [\#73](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/73) ([JarbasAl](https://github.com/JarbasAl))
-
 ## [1.6.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.6.0a1) (2026-06-24)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.5.0a1...1.6.0a1)
-
-**Merged pull requests:**
-
-- refactor: migrate to ovos-spec-tools [\#70](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/70) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.5.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.5.0a1) (2026-05-14)
 
