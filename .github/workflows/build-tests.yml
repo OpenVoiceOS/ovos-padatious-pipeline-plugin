@@ -1,0 +1,16 @@
+name: Build Tests
+
+on:
+  pull_request:
+    branches: [dev, master, main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: OpenVoiceOS/gh-automations/.github/workflows/build-tests.yml@dev
+    with:
+      # fann2 1.0.7 (C extension via swig) only builds on Python <= 3.12
+      python_versions: '["3.10", "3.11", "3.12"]'
+      install_extras: 'test'
+      test_path: 'tests'
+      system_deps: 'swig libfann-dev'

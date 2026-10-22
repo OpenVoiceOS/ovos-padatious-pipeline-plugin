@@ -121,8 +121,9 @@ class TestAll(unittest.TestCase):
         assert data.conf < 0.5
 
     def test_entity_recognition(self):
+        # OVOS-INTENT-1 §3.6: a literal word must separate two slots
         self.cont.add_intent('weather', [
-            'weather for {place} {time}'
+            'weather for {place} at {time}'
         ], True)
         self.cont.add_intent('time', [
             'what time is it',
@@ -142,7 +143,7 @@ class TestAll(unittest.TestCase):
             'at the moment',
         ])
         self.cont.train(False)
-        data = self.cont.calc_intent('weather for los angeles right now')
+        data = self.cont.calc_intent('weather for los angeles at right now')
         assert data.name == 'weather'
         assert data.matches == {'place': 'los angeles', 'time': 'right now'}
         assert data.conf > 0.5
