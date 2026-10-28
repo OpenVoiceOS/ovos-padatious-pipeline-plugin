@@ -20,6 +20,7 @@ from functools import wraps
 from typing import List, Dict, Any, Optional
 
 from ovos_config.meta import get_xdg_base
+from ovos_spec_tools import split_unspaced
 from ovos_utils.log import LOG
 from ovos_utils.xdg_utils import xdg_data_home
 
@@ -600,10 +601,11 @@ class IntentContainer:
         # blacklisted words and required keywords match at word boundaries:
         # "install" suppresses "install firefox" but not "what is an
         # installment loan", and "wikihow" does not occur in "wikihowto"
-        q = query.lower()
+        q = split_unspaced(query.lower())
 
         def occurs(keyword: str) -> bool:
-            return re.search(rf"\b{re.escape(keyword.lower())}\b", q) is not None
+            keyword = split_unspaced(keyword.lower())
+            return re.search(rf"\b{re.escape(keyword)}\b", q) is not None
 
         required = self.required_keywords[intent_name]
         return (any(occurs(k) for k in self.blacklisted_words[intent_name])
