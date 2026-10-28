@@ -29,7 +29,8 @@ IntentContainer(cache_dir: str = None, disable_padaos: bool = False,
 add_intent(name: str, lines: List[str],
            reload_cache: bool = False,
            must_train: bool = True,
-           blacklisted_words: List[str] = None) -> None
+           blacklisted_words: List[str] = None,
+           required_keywords: List[str] = None) -> None
 ```
 
 Register an intent from a list of sample utterances.
@@ -41,6 +42,7 @@ Register an intent from a list of sample utterances.
 | `reload_cache` | Ignore cached model and force re-training. |
 | `must_train` | Mark the container as needing training. |
 | `blacklisted_words` | Suppress matches that contain any of these words. |
+| `required_keywords` | When not empty, suppress matches that contain none of these keywords. |
 
 #### `load_intent`
 
@@ -176,7 +178,8 @@ Same parameters as `IntentContainer`.
 ```python
 add_domain_intent(domain_name: str, intent_name: str,
                   intent_samples: List[str],
-                  blacklisted_words: List[str] = None) -> None
+                  blacklisted_words: List[str] = None,
+                  required_keywords: List[str] = None) -> None
 ```
 
 Register an intent within a named domain.
