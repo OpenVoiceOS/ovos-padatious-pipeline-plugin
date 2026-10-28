@@ -22,7 +22,7 @@ from copy import deepcopy
 from functools import lru_cache
 from os.path import expanduser, isfile
 from threading import Event, RLock, Thread, current_thread
-from typing import Optional, Dict, List, Union, Type
+from typing import Optional, Dict, List, Tuple, Union, Type
 
 import snowballstemmer
 from ovos_config.config import Configuration
@@ -282,6 +282,38 @@ def _closest_typed_entry(entries, utterance, bound, used=None):
                 best, best_overlap = entry, overlap
         pos = lower.find(token, pos + 1)
     return best
+
+
+def _shares_a_listed_span(entries, utterance, bound) -> bool:
+    """Whether the bound surface overlaps one of the listed *entries*.
+
+    OVOS-INTENT-1 §5.6 lets an engine require a span the typed-slot map lists
+    for a typed placeholder, and a typed placeholder takes only a value of its
+    type: "play jazz" is never a date. A bound surface that is not found in
+    the utterance cannot be placed, and is not rejected for that.
+    """
+    if not bound or bound.lower() not in utterance.lower():
+        return True
+    return _closest_typed_entry(entries, utterance, bound) is not None
+
+
+def _typed_slot_map(message: Optional[Message]) -> Dict[str, List[dict]]:
+    """The OVOS-INTENT-1 §5.6 typed-slot map the message carries.
+
+    Types outside the registry are dropped. An absent map, or a malformed one
+    (logged), reads as empty, which leaves every typed slot to the template.
+    """
+    raw = message.data.get("typed_slots") if message is not None else None
+    if not isinstance(raw, dict) or not raw:
+        return {}
+    try:
+        typed = drop_unregistered_typed_slots(raw)
+        validate_typed_slots(typed)
+    except MalformedTypedSlots as exc:
+        LOG.warning(f"ignoring a malformed typed_slots map "
+                    f"(INTENT-1 5.6): {exc}")
+        return {}
+    return typed
 
 
 class PadatiousPipeline(ConfidenceMatcherPipeline):
@@ -1344,9 +1376,12 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # returning that cached "no match" forever once a (background)
         # pass actually lands.
         compiled_generation = getattr(intent_container, "compiled_generation", 0)
+        typed = _typed_slot_map(message)
+        constraints = [self._typed_constraints(typed, utt, lang) for utt in utterances]
         intents = [_calc_padatious_intent(utt, intent_container, compiled_generation,
-                                          blacklisted_intents, blacklisted_skills)
-                   for utt in utterances]
+                                          blacklisted_intents, blacklisted_skills,
+                                          *constraint)
+                   for utt, constraint in zip(utterances, constraints)]
         # blacklisted_labels is applied here, AFTER the cached call, rather
         # than as part of _calc_padatious_intent's lru_cache key (see that
         # function's docstring for why). A blacklisted label only ever
@@ -1359,13 +1394,14 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # far until the next-best surviving candidate comes back.
         if self._label_blacklist:
             widened = []
-            for utt, i in zip(utterances, intents):
+            for utt, i, constraint in zip(utterances, intents, constraints):
                 seen = set()
                 while i is not None and self._is_blacklisted_label(i.name):
                     seen.add(i.name)
                     i = _calc_padatious_intent.__wrapped__(
                         utt, intent_container, compiled_generation,
-                        blacklisted_intents | frozenset(seen), blacklisted_skills)
+                        blacklisted_intents | frozenset(seen), blacklisted_skills,
+                        *constraint)
                 widened.append(i)
             intents = widened
         intents = [i for i in intents if i is not None]
@@ -1391,20 +1427,44 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         # select best
         if intents:
             best = max(intents, key=lambda k: k.conf)
-            self._bind_typed_slots(best, message, lang)
+            self._bind_typed_slots(best, message, typed, lang)
             self._fill_context_slots(best, sess, lang)
             return best
 
+    def _typed_constraints(self, typed: Dict[str, List[dict]], utterance: str,
+                           lang: str) -> Tuple[frozenset, frozenset]:
+        """The typed slots the map constrains on *utterance*, as hashable sets.
+
+        Returns ``(spans, slots)``: the ``(type, start, end, surface)`` of every
+        map entry read from this utterance, and the ``(intent, slot, type)``
+        of every declared typed slot whose type one of those entries has. The
+        map is computed over every candidate utterance, and an entry belongs
+        to the one where ``utterance[start:end] == surface`` holds.
+        """
+        spans = frozenset((type_name, *entry["span"], entry["surface"])
+                          for type_name, entries in typed.items()
+                          for entry in entries
+                          if utterance[entry["span"][0]:entry["span"][1]] == entry["surface"])
+        listed = {type_name for type_name, *_ in spans}
+        slots = frozenset((name, slot, type_name)
+                          for (slot_lang, name), declared in self._intent_slot_types.items()
+                          if slot_lang == lang
+                          for slot, type_name in declared.items()
+                          if type_name in listed)
+        return spans, slots
+
     def _bind_typed_slots(self, intent: PadatiousIntent,
-                          message: Optional[Message], lang: str) -> None:
+                          message: Optional[Message],
+                          typed: Dict[str, List[dict]], lang: str) -> None:
         """OVOS-INTENT-1 5.6 -- bind a typed placeholder where the map allows.
 
-        The map is a hint, not a vocabulary: it says where a datum of a kind
-        was found and what it normalizes to, and an engine MAY use it to
-        constrain where ``{type:name}`` matches. This engine prefers a listed
-        span over the template's own guess, because a template counts words
-        and a parser reads the datum -- "set a timer for twenty five minutes"
-        gives the template no reason to stop before "minutes".
+        The map says where a datum of a kind was found, and an engine MAY use
+        it to constrain where ``{type:name}`` matches. Selection already
+        dropped every candidate whose typed slot shares nothing with a listed
+        span (``_shares_a_listed_span``). This narrows the binding to the
+        listed span, because a template counts words and a parser reads the
+        datum -- "set a timer for twenty five minutes" gives the template no
+        reason to stop before "minutes".
 
         An entry applies only to a candidate satisfying the span invariant
         ``utterance[start:end] == surface``, since the entries are computed
@@ -1417,17 +1477,7 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
         which surface is bound changes.
         """
         declared = self._intent_slot_types.get((lang, intent.name))
-        if not declared or message is None:
-            return
-        raw = message.data.get("typed_slots")
-        if not isinstance(raw, dict) or not raw:
-            return
-        try:
-            typed = drop_unregistered_typed_slots(raw)
-            validate_typed_slots(typed)
-        except MalformedTypedSlots as exc:
-            LOG.warning(f"ignoring a malformed typed_slots map "
-                        f"(INTENT-1 5.6): {exc}")
+        if not declared or message is None or not typed:
             return
         # OVOS-INTENT-1 §5.6: the map is shared by every candidate, and an
         # entry applies only to a candidate that satisfies the invariant. The
@@ -1675,7 +1725,9 @@ def _calc_padatious_intent_cached(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
                            compiled_generation: int = 0,
                            blacklisted_intents: frozenset = frozenset(),
-                           blacklisted_skills: frozenset = frozenset()) -> Optional[PadatiousIntent]:
+                           blacklisted_skills: frozenset = frozenset(),
+                           typed_spans: frozenset = frozenset(),
+                           typed_slots: frozenset = frozenset()) -> Optional[PadatiousIntent]:
     """
     Try to match an utterance to an intent in an intent_container
     @param utt: str - text to match intent against
@@ -1703,10 +1755,27 @@ def _calc_padatious_intent_cached(utt: str,
     the same utterance/container/generation. See
     ``PadatiousPipeline.calc_intent`` for where that check is applied instead,
     against this function's already-cached result.
+    @param typed_spans: ``(type, start, end, surface)`` of the typed-slot map
+        entries read from *utt*, and ``typed_slots`` the ``(intent, slot,
+        type)`` they constrain (``PadatiousPipeline._typed_constraints``). A
+        candidate whose typed slot shares nothing with a listed span of its
+        type is not a match (OVOS-INTENT-1 §5.6).
     @return: matched PadatiousIntent
     """
     try:
         blacklisted_intents = _canonicalize_blacklist(blacklisted_intents)
+        entries: Dict[str, List[dict]] = defaultdict(list)
+        for type_name, start, end, surface in typed_spans:
+            entries[type_name].append({"span": [start, end], "surface": surface})
+        constrained: Dict[str, Dict[str, str]] = defaultdict(dict)
+        for name, slot, type_name in typed_slots:
+            constrained[name][slot] = type_name
+
+        def typed_fits(match):
+            return all(_shares_a_listed_span(entries[type_name], utt,
+                                             (match.matches or {}).get(slot))
+                       for slot, type_name in constrained.get(match.name, {}).items())
+
         # OVOS-INTENT-1 §2: match against the lowercase-normalized input so slot
         # values are case-insensitive, but report the original utterance as `sent`.
         # Matches are canonical by construction (registration-time alias
@@ -1715,7 +1784,8 @@ def _calc_padatious_intent_cached(utt: str,
         def allowed(candidates):
             return [m for m in candidates
                     if m.name not in blacklisted_intents
-                    and m.name.split(":")[0] not in blacklisted_skills]
+                    and m.name.split(":")[0] not in blacklisted_skills
+                    and typed_fits(m)]
 
         # Padaos exact matches carry authoritative conf=1.0, so resolving them
         # first lets a deterministic utterance skip the CPU-heavy neural pass
@@ -1741,7 +1811,9 @@ def _calc_padatious_intent(utt: str,
                            intent_container: Union[IntentContainer, DomainIntentContainer],
                            compiled_generation: int = 0,
                            blacklisted_intents: frozenset = frozenset(),
-                           blacklisted_skills: frozenset = frozenset()) -> Optional[PadatiousIntent]:
+                           blacklisted_skills: frozenset = frozenset(),
+                           typed_spans: frozenset = frozenset(),
+                           typed_slots: frozenset = frozenset()) -> Optional[PadatiousIntent]:
     """Cached match, handed to the caller as its own copy.
 
     The cached MatchData is shared by every caller that asks the same
@@ -1755,7 +1827,7 @@ def _calc_padatious_intent(utt: str,
     """
     cached = _calc_padatious_intent_cached(
         utt, intent_container, compiled_generation,
-        blacklisted_intents, blacklisted_skills)
+        blacklisted_intents, blacklisted_skills, typed_spans, typed_slots)
     return deepcopy(cached) if cached is not None else None
 
 
