@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.3.2a1) (2026-10-28)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.3.1a1...2.3.2a1)
+
+**Merged pull requests:**
+
+- fix: blacklisted words and required keywords occur in unspaced scripts [\#193](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/193) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+
 ## [2.3.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.3.1a1) (2026-10-28)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.3.0a1...2.3.1a1)
@@ -363,10 +371,6 @@
 ## [1.8.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.8.1a1) (2026-07-03)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.8.0a1...1.8.1a1)
-
-**Merged pull requests:**
-
-- fix: forward blacklisted\_words to add\_intent by keyword [\#83](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/83) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.8.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.8.0a1) (2026-07-02)
 
