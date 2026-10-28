@@ -12,43 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Dict, Optional
 
-class MatchData(object):
+
+class MatchData:
     """
-    A set of data describing how a query fits into an intent
+    A set of data describing how a query fits into an intent.
 
     Attributes:
-        name (str): Name of matched intent
-        sent (str): The query after entity extraction
-        conf (float): Confidence (from 0.0 to 1.0)
-        matches (dict of str -> str): Key is the name of the entity and
-            value is the extracted part of the sentence
+        name (str): Name of matched intent.
+        sent (str): The query after entity extraction.
+        conf (float): Confidence (from 0.0 to 1.0).
+        matches (Dict[str, str]): Key is the name of the entity and
+            value is the extracted part of the sentence.
     """
-    def __init__(self, name, sent, matches=None, conf=0.0):
+
+    def __init__(self, name: str, sent: str, matches: Optional[Dict[str, str]] = None, conf: float = 0.0) -> None:
         self.name = name
         self.sent = sent
         self.matches = matches or {}
         self.conf = conf
 
-    def __getitem__(self, item):
-        return self.matches.__getitem__(item)
+    def __getitem__(self, item: str) -> str:
+        return self.matches[item]
 
-    def __contains__(self, item):
-        return self.matches.__contains__(item)
+    def __contains__(self, item: str) -> bool:
+        return item in self.matches
 
-    def get(self, key, default=None):
+    def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
         return self.matches.get(key, default)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return repr(self.__dict__)
 
     @staticmethod
-    def handle_apostrophes(old_sentence):
+    def handle_apostrophes(old_sentence: str) -> str:
         """
-        Attempts to handle utterances with apostrophes in them
+        Attempts to handle utterances with apostrophes in them.
+
+        Args:
+            old_sentence (str): The original sentence to process.
+
+        Returns:
+            str: A new sentence with apostrophes handled appropriately.
         """
         new_sentence = ''
         apostrophe_present = False
+
         for word in old_sentence:
             if word == "'":
                 apostrophe_present = True
@@ -69,9 +79,14 @@ class MatchData(object):
                         new_sentence += " " + word
                     else:
                         new_sentence = word
+
         return new_sentence
-    # Converts parameters from lists of tokens to one combined string
-    def detokenize(self):
+
+    def detokenize(self) -> None:
+        """
+        Converts parameters from lists of tokens to one combined string,
+        updating the `sent` and `matches` attributes accordingly.
+        """
         self.sent = self.handle_apostrophes(self.sent)
 
         new_matches = {}
