@@ -134,7 +134,8 @@ class DomainIntentContainer:
             self.domain_engine.remove_intent(domain_name)
 
     def add_domain_intent(self, domain_name: str, intent_name: str, intent_samples: List[str],
-                          blacklisted_words: Optional[List[str]] = None):
+                          blacklisted_words: Optional[List[str]] = None,
+                          required_keywords: Optional[List[str]] = None):
         """
         Register an intent within a specific domain.
 
@@ -142,6 +143,8 @@ class DomainIntentContainer:
             domain_name (str): The name of the domain.
             intent_name (str): The name of the intent to register.
             intent_samples (List[str]): A list of sample sentences for the intent.
+            blacklisted_words (List[str]): The intent never matches an utterance containing one of these.
+            required_keywords (List[str]): When given, the intent matches only an utterance containing one of these.
         """
         if domain_name not in self.domains:
             self.domains[domain_name] = IntentContainer(cache_dir=self.cache_dir,
@@ -151,7 +154,8 @@ class DomainIntentContainer:
             self.domains[domain_name].instantiate_from_disk()
 
         self.domains[domain_name].add_intent(intent_name, intent_samples,
-                                             blacklisted_words=blacklisted_words)
+                                             blacklisted_words=blacklisted_words,
+                                             required_keywords=required_keywords)
         self.training_data[domain_name] += intent_samples
         self.must_train = True
 

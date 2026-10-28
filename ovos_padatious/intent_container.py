@@ -89,6 +89,7 @@ class IntentContainer:
         self.train_thread: Optional[Any] = None  # deprecated
         self.serialized_args: List[Dict[str, Any]] = []  # Serialized calls for training intents/entities
         self.blacklisted_words: Dict[str, List[str]] = collections.defaultdict(list)
+        self.required_keywords: Dict[str, List[str]] = collections.defaultdict(list)
         # training must never block the query/utterance thread: a
         # registration burst followed immediately by an utterance would
         # otherwise pay the full compile+train cost inline (see train()).
@@ -263,7 +264,8 @@ class IntentContainer:
 
     @_save_args
     def add_intent(self, name: str, lines: List[str], reload_cache: bool = False, must_train: bool = True,
-                   blacklisted_words: Optional[List[str]] = None) -> None:
+                   blacklisted_words: Optional[List[str]] = None,
+                   required_keywords: Optional[List[str]] = None) -> None:
         """
         Creates a new intent, optionally checking the cache first
 
@@ -272,8 +274,11 @@ class IntentContainer:
             lines (List[str]): Sentences that will activate the intent.
             reload_cache (bool): Whether to ignore cached intent.
             must_train (bool): Whether the model needs training after adding the intent.
+            blacklisted_words (List[str]): The intent never matches an utterance containing one of these.
+            required_keywords (List[str]): When given, the intent matches only an utterance containing one of these.
         """
         self.blacklisted_words[name] = blacklisted_words or []
+        self.required_keywords[name] = required_keywords or []
         changed = self.intents.add(name, lines, reload_cache, must_train)
         if self.padaos is not None:
             self.padaos.add_intent(name, lines)
@@ -582,6 +587,7 @@ class IntentContainer:
             self._first_compile_done.wait(self.FIRST_COMPILE_WAIT_S)
 
         # post-processing: discard any matches that contain blacklisted words
+        # or lack every required keyword
         intents = {i.name: i
                    for i in self.intents.calc_intents(query, self.entities)
                    if not self._suppressed(i.name, query)}
@@ -591,11 +597,17 @@ class IntentContainer:
         return list(intents.values())
 
     def _suppressed(self, intent_name: str, query: str) -> bool:
-        # blacklisted words match at word boundaries: "install" suppresses
-        # "install firefox" but not "what is an installment loan"
+        # blacklisted words and required keywords match at word boundaries:
+        # "install" suppresses "install firefox" but not "what is an
+        # installment loan", and "wikihow" does not occur in "wikihowto"
         q = query.lower()
-        return any(re.search(rf"\b{re.escape(k.lower())}\b", q)
-                   for k in self.blacklisted_words[intent_name])
+
+        def occurs(keyword: str) -> bool:
+            return re.search(rf"\b{re.escape(keyword.lower())}\b", q) is not None
+
+        required = self.required_keywords[intent_name]
+        return (any(occurs(k) for k in self.blacklisted_words[intent_name])
+                or (bool(required) and not any(occurs(k) for k in required)))
 
     def calc_exact_intents(self, query: str) -> List[MatchData]:
         """Return the deterministic padaos matches, skipping neural inference.
@@ -614,7 +626,8 @@ class IntentContainer:
         sent = tokenize(query)
         matches = []
         # exact template matches honor the same suppression - a perfect
-        # match must not bypass the blacklist the neural tier enforces
+        # match must not bypass the blacklist or the required keywords the
+        # neural tier enforces
         for perfect_match in self.padaos.calc_intents(query):
             name = perfect_match['name']
             if self._suppressed(name, query):

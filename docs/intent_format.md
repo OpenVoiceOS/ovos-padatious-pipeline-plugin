@@ -119,6 +119,18 @@ container.add_intent('play_music', ['play {song}'], blacklisted_words=['video'])
 
 The intent will not fire if the word `"video"` appears anywhere in the utterance.
 
+## Required keywords
+
+Pass `required_keywords` to make an intent match only when the utterance contains one of the keywords:
+
+```python
+container.add_intent('howto', ['how do i {query}'], required_keywords=['wikihow', 'wiki how'])
+```
+
+The intent fires for "how do i tie a tie on wikihow", but not for "how do i tie a tie". A keyword occurs only as whole words in sequence, so "wikihowto" does not contain `"wikihow"`. An intent without required keywords has no such condition, and the keywords of one intent do not change how another intent matches.
+
+The pipeline reads the list from the `required_keywords` field of an `ovos.intent.register.template` or `padatious:register_intent` registration.
+
 ## Tips
 
 - More varied training samples generally improve accuracy.

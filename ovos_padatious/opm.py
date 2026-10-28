@@ -1023,12 +1023,17 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             if unpacked is None:
                 return
             lang, skill_id, name, samples, blacklisted_words = unpacked
+            # INTENT-2 §4.5: the intent matches only an utterance in which one
+            # of these occurs; an empty list sets no requirement
+            required_keywords = message.data.get('required_keywords') or []
             if self.engine_class == DomainIntentContainer:
                 self.containers[lang].add_domain_intent(skill_id, name, samples,
-                                                        blacklisted_words=blacklisted_words)
+                                                        blacklisted_words=blacklisted_words,
+                                                        required_keywords=required_keywords)
             else:
                 self.containers[lang].add_intent(name, samples,
-                                                 blacklisted_words=blacklisted_words)
+                                                 blacklisted_words=blacklisted_words,
+                                                 required_keywords=required_keywords)
             self._rearm_training(lang)
             # A re-registration (e.g. new samples replacing an existing
             # intent's) must retire the old regex/model answer immediately,
@@ -1130,6 +1135,9 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
             data={"name": full, "samples": list(samples), "lang": lang,
                   "skill_id": skill_id,
                   "blacklisted_words": message.data.get("blacklist", []),
+                  # INTENT-4 §6.1 / INTENT-2 §4.5: keywords of which one must
+                  # occur for the intent to match.
+                  "required_keywords": message.data.get("required_keywords", []),
                   # OVOS-CONTEXT-1 §6: forward the optional gating declarations
                   # onto the internal registration so they are stored per intent.
                   "requires_context": message.data.get("requires_context"),
