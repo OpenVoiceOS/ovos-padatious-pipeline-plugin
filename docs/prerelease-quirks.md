@@ -4,6 +4,17 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.3.2a2 — containers sharing a padaos pattern cache keep each other's lines
+
+padatious' own pipeline, ovos-ocp-pipeline-plugin and ovos-persona each make
+an `IntentContainer` on the same `intent_cache/<lang>/` folder, so their padaos
+containers share `padaos-patterns.json`. Each used to write only the lines it
+compiled, so whichever saved last threw the others' lines away (in one OVOS
+the main container's 22,477 lines were replaced by OCP's 2), and the next
+start rewrote them all. A save now keeps the lines already in the file and
+adds its own. A line no container uses any more stays in the file until
+`PATTERN_RULES_VERSION` changes; template lines are small.
+
 ## 2.0.13a3 — re-registration cache invalidation and bounded compile retries
 
 Two more gaps in the 2.0.13a2 entry below, found by a further adversarial
