@@ -4,6 +4,31 @@ This page tracks user-visible behavior changes since the last stable release,
 `1.4.3`. Newest first. Package name on PyPI is `ovos-padatious`; this repo is
 `ovos-padatious-pipeline-plugin`. Resets to empty at the next stable release.
 
+## 2.3.2a2 — padaos builds the same patterns at every start, with less string work
+
+What matches is unchanged; the regex text a template line compiles to is
+now the same at every start:
+
+- An intent's lines and an entity's values are used longest first, then
+  alphabetically. They used to follow the order of the skill's expanded
+  samples, which is not the same from one start to the next, so an entity
+  inlined as `(groceries|todo|to do|shopping)` at one start was
+  `(groceries|shopping|todo|to do)` at the next. Patterns are anchored
+  (`^...$`), so the order of alternatives does not change what a line
+  matches, and lines of the same length were already in no particular order.
+- Capture groups are numbered in sorted slot order. They used to follow the
+  iteration order of a `set()` of slot names (per-process string hashing)
+  and of the entities dict. A match drops the numbers (`rsplit('__', 1)`),
+  so entity names in results are unchanged.
+- `_create_intent_pattern` now formats and substitutes only the slots a
+  line has. It used to format every entity's whole pattern, twice, for
+  every line and replace slots that were not there: with 22 entities and
+  22,347 lines that was 899,411 `str.format` and 779,312 `str.replace`
+  calls per compile.
+
+Anything that keys on the pattern text - a cache of compiled regexes across
+restarts, for example - can now recognise a line it saw last time.
+
 ## 2.0.13a3 — re-registration cache invalidation and bounded compile retries
 
 Two more gaps in the 2.0.13a2 entry below, found by a further adversarial

@@ -55,6 +55,10 @@ A lightweight, regex-based exact matcher that runs **before** the neural network
 - Zero training time for exact patterns.
 - Deterministic, predictable results for common utterances.
 - Optional disabling via `disable_padaos=True`.
+- The same regex for the same template line at every start: an intent's
+  lines and an entity's values are used longest first, then alphabetically,
+  and the capture groups are numbered in sorted slot order, whatever order
+  the registrations came in.
 
 A `threading.Lock` protects regex compilation for thread safety.
 
