@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.3a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.3.3a1) (2026-11-27)
+
+[Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.3.2a1...2.3.3a1)
+
+**Merged pull requests:**
+
+- fix: a file registration releases the applied-samples claim \(carries \#181\) [\#197](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/197) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+
 ## [2.3.2a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.3.2a1) (2026-10-28)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/2.3.1a1...2.3.2a1)
@@ -355,10 +363,6 @@
 ## [2.0.0a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/2.0.0a1) (2026-07-17)
 
 [Full Changelog](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/compare/1.9.1a1...2.0.0a1)
-
-**Breaking changes:**
-
-- feat!: pure numpy neural network backend, drop fann2 dependency [\#87](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/pull/87) ([JarbasAl](https://github.com/JarbasAl))
 
 ## [1.9.1a1](https://github.com/OpenVoiceOS/ovos-padatious-pipeline-plugin/tree/1.9.1a1) (2026-07-04)
 
