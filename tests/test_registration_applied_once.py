@@ -189,3 +189,21 @@ class TestFailedApplicationRetried(unittest.TestCase):
             self.register("en-US")  # the other wire contract's copy
         self.assertEqual(len(calls), 2)
         self.assertIn(f"{SKILL_ID}:time", en.intent_names)
+
+
+class TestFileRegistrationReleasesTheClaim(_Pipeline):
+    def test_samples_after_a_file_registration_are_applied_again(self):
+        intent_file = tempfile.NamedTemporaryFile("w", suffix=".intent", delete=False)
+        intent_file.write("play some music\nstart the radio\n")
+        intent_file.close()
+        self.addCleanup(lambda: shutil.os.remove(intent_file.name))
+        self.pipeline.register_intent(legacy_msg())
+        msg = legacy_msg()
+        del msg.data["samples"]
+        msg.data["file_name"] = intent_file.name
+        self.pipeline.register_intent(msg)
+        self.pipeline.register_intent(legacy_msg())
+        self.settle()
+        match = self.pipeline.calc_intent("what time is it", lang=LANG)
+        self.assertEqual(match.name, f"{SKILL_ID}:time")
+        self.assertEqual(match.conf, 1.0)

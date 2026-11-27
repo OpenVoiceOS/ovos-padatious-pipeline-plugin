@@ -1105,6 +1105,8 @@ class PadatiousPipeline(ConfidenceMatcherPipeline):
                     # recognised too (bus handlers run concurrently)
                     if content is not None:
                         self._applied_registrations[key] = content
+                    else:
+                        self._applied_registrations.pop(key, None)
                 LOG.debug('Registering Padatious intent: ' + message.data['name'])
 
                 def add():
