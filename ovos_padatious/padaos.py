@@ -141,6 +141,12 @@ class _PatternCache:
     first use and writes it back after a compile that added lines, so a
     restart with unchanged skills rewrites nothing. A file that cannot be
     read, or was written by other rules, is ignored.
+
+    Several containers may share one file: padatious' own pipeline, OCP's
+    and the persona pipeline each make an ``IntentContainer`` on the same
+    ``intent_cache/<lang>/``. A save therefore keeps the lines already in
+    the file and adds this container's; a line no container uses any more
+    stays until ``PATTERN_RULES_VERSION`` changes.
     """
 
     def __init__(self, path: Optional[str] = None):
@@ -149,17 +155,23 @@ class _PatternCache:
         self._used = set()
         self._dirty = False
 
+    def _read_file(self) -> Dict[str, str]:
+        """The lines in the file, or nothing if it cannot be read or was
+        written by other rules."""
+        if not self.path:
+            return {}
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("rules") == PATTERN_RULES_VERSION:
+                return {str(k): str(v) for k, v in data["patterns"].items()}
+        except (OSError, ValueError, KeyError, AttributeError, TypeError):
+            pass
+        return {}
+
     def _load(self) -> Dict[str, str]:
         if self._patterns is None:
-            self._patterns = {}
-            if self.path:
-                try:
-                    with open(self.path, encoding="utf-8") as f:
-                        data = json.load(f)
-                    if data.get("rules") == PATTERN_RULES_VERSION:
-                        self._patterns = {str(k): str(v) for k, v in data["patterns"].items()}
-                except (OSError, ValueError, KeyError, AttributeError, TypeError):
-                    self._patterns = {}
+            self._patterns = self._read_file()
         return self._patterns
 
     def get(self, line: str, create) -> str:
@@ -178,12 +190,14 @@ class _PatternCache:
         # racing on the same container) saving the same path at once would
         # both write the same temp name and race each other's os.replace.
         tmp = f"{self.path}.{os.getpid()}.{get_ident()}.{uuid.uuid4().hex[:8]}.tmp"
+        # what the file has now (another container sharing it may have saved
+        # since this one loaded), plus this container's lines
+        patterns = self._read_file()
+        patterns.update({line: self._patterns[line] for line in self._used
+                         if line in self._patterns})
         try:
             with open(tmp, "w", encoding="utf-8") as f:
-                # only the lines this process compiled: retired lines drop out
-                json.dump({"rules": PATTERN_RULES_VERSION,
-                           "patterns": {line: self._patterns[line] for line in self._used
-                                        if line in self._patterns}}, f)
+                json.dump({"rules": PATTERN_RULES_VERSION, "patterns": patterns}, f)
             os.replace(tmp, self.path)
             self._dirty = False
         except OSError as e:
