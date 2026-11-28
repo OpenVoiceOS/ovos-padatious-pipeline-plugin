@@ -122,6 +122,19 @@ _NON_WORD = re.compile(r'\W+')
 _SRE_FOLD = {0x0131: 'i', 0x017F: 's', 0x0399: 'ι', 0x039C: 'µ', 0x03B9: 'ι', 0x03BC: 'µ', 0x03C2: 'σ', 0x03D0: 'β', 0x03D1: 'θ', 0x03D5: 'φ', 0x03D6: 'π', 0x03F0: 'κ', 0x03F1: 'ρ', 0x03F5: 'ε', 0x1C80: 'в', 0x1C81: 'д', 0x1C82: 'о', 0x1C83: 'с', 0x1C84: 'т', 0x1C85: 'т', 0x1C86: 'ъ', 0x1C87: 'ѣ', 0x1E9B: 'ṡ', 0x1FBE: 'ι', 0x1FD3: 'ΐ', 0x1FE3: 'ΰ', 0xA64A: 'ᲈ', 0xA64B: 'ᲈ', 0xFB06: 'ﬅ'}
 
 
+def _fixed_order(lines):
+    """Longest first, then alphabetically.
+
+    An intent's lines and an entity's values arrive in the order of the
+    skill's expanded samples, which is not the same from one start to the
+    next. Every pattern is anchored (``^...$``), so the order of an
+    entity's alternatives does not change what a line matches, and the
+    order of lines of the same length was arbitrary already; a fixed order
+    makes the same template line give the same regex at every start.
+    """
+    return sorted(lines, key=lambda line: (-len(line), line))
+
+
 def _words(text):
     """``text`` split on runs of non-word characters, each word lowercased.
 
@@ -391,19 +404,30 @@ class IntentContainer:
         namespace = intent_name.split(':')[0] + ':'
         line = self._cap_line_alternations(line)
         line = self._patterns.get(line, self._create_pattern)
+        # Only the slots the line has: formatting every entity's whole
+        # pattern for every line (and replacing a slot that isn't there) was
+        # most of a compile's string work. A later entity filling the same
+        # slot still wins, and a slot no entity fills is still a wildcard.
         replacements = {}
-        for ent_name in set(re.findall(r'{([a-z_:]+)}', line)):
-            replacements[ent_name] = r'(?P<{}__{{}}>.*?\w.*?)'.format(ent_name)
+        for ent_name in re.findall(r'{([a-z_:]+)}', line):
+            replacements[ent_name] = (r'(?P<{}__{{}}>.*?\w.*?)', (ent_name,))
+        ent_regex = r'(?P<{}__{{}}>{})'
         for ent_name, ent in entities.items():
-            ent_regex = r'(?P<{}__{{}}>{})'
             if ent_name.startswith(namespace):
-                replacements[ent_name[len(namespace):]] = ent_regex.format(
-                    ent_name[len(namespace):], ent
-                )
-            else:
-                replacements[ent_name] = ent_regex.format(ent_name.replace(':', '__colon__'), ent)
-        for key, value in replacements.items():
-            line = line.replace('{' + key + '}', value.format(next(counter)), 1)
+                short = ent_name[len(namespace):]
+                if '{' + short + '}' in line:
+                    replacements[short] = (ent_regex, (short, ent))
+            elif '{' + ent_name + '}' in line:
+                replacements[ent_name] = (ent_regex, (ent_name.replace(':', '__colon__'), ent))
+        # Numbered in sorted order, not in the order of a set() (which
+        # follows the per-process string hash seed) or of the entities dict:
+        # the numbers only keep group names apart within one intent, and a
+        # match drops them (``rsplit('__', 1)``).
+        for key in sorted(replacements):
+            slot = '{' + key + '}'
+            if slot in line:
+                template, args = replacements[key]
+                line = line.replace(slot, template.format(*args).format(next(counter)), 1)
         return '^{}$'.format(line)
 
     def _create_regex(self, line, intent_name, entities, counter):
@@ -431,7 +455,7 @@ class IntentContainer:
 
     def create_regexes(self, lines, intent_name, entities, counter):
         regexes = [self._create_regex(line, intent_name, entities, counter)
-                   for line in sorted(lines, key=len, reverse=True)
+                   for line in _fixed_order(lines)
                    if line.strip() and not _PLAIN_LINE.match(line)]
         # Filter out all regexes that fails
         return [r for r in regexes if r is not None]
@@ -496,7 +520,7 @@ class IntentContainer:
         entities, capped_entities = {}, set()
         entity_cache = {}
         for ent_name, lines in entity_lines.items():
-            values = [line for line in lines if line.strip()]
+            values = _fixed_order(line for line in lines if line.strip())
             if len(values) > largest_size:
                 largest_entity, largest_size = ent_name, len(values)
             if len(values) > PADAOS_ENTITY_INLINE_CAP:

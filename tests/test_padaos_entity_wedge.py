@@ -47,8 +47,10 @@ class TestPadaosEntityCapUnderCap(unittest.TestCase):
         c.add_intent("go", ["travel to {city}"])
         c.compile()
 
+        # inlined in padaos' fixed order (longest first, then alphabetically),
+        # so the pattern is the same whatever order the values came in
         expected = r'({})'.format('|'.join(
-            c._create_pattern(line) for line in values
+            c._create_pattern(line) for line in padaos._fixed_order(values)
         ))
         self.assertEqual(c.entities["city"], expected)
 
